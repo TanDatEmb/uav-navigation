@@ -37,9 +37,12 @@ find_package(navigation_world_model REQUIRED)
 find_package(navigation_planning_backend REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 add_library(navigation_runtime_core
   src/mission_dynamics.cpp
+  src/mission_goal.cpp
+  src/mission_progress.cpp
   src/mapping_fail_stop.cpp
   src/navigation_runtime_node.cpp
 )
@@ -67,6 +70,7 @@ ament_target_dependencies(navigation_runtime_core PUBLIC
   navigation_mission
   rclcpp
   sensor_msgs
+  std_msgs
 )
 
 add_executable(navigation_runtime_node src/navigation_runtime_main.cpp)
@@ -105,6 +109,7 @@ ament_export_dependencies(
   navigation_world_model
   rclcpp
   sensor_msgs
+  std_msgs
   navigation_planning_backend
 )
 ament_export_targets(navigation_runtimeTargets HAS_LIBRARY_TARGET)
@@ -112,15 +117,26 @@ ament_export_include_directories(include)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_mission_progress test/test_mission_progress.cpp)
+  target_include_directories(test_mission_progress PRIVATE include
+    ${navigation_contracts_INCLUDE_DIRS})
+  target_link_libraries(test_mission_progress navigation_runtime_core)
+  ament_target_dependencies(test_mission_progress
+    navigation_mission navigation_contracts navigation_execution)
   ament_add_gtest(test_world_snapshot_store test/test_world_snapshot_store.cpp)
   target_include_directories(test_world_snapshot_store PRIVATE include)
   target_link_libraries(test_world_snapshot_store
     navigation_world_model::navigation_world_model
     navigation_planning_backend::navigation_planning_backend)
   ament_target_dependencies(test_world_snapshot_store navigation_mapping)
+  ament_add_gtest(test_world_temporal_assessment
+    test/test_world_temporal_assessment.cpp)
+  target_include_directories(test_world_temporal_assessment PRIVATE include)
+  ament_target_dependencies(test_world_temporal_assessment
+    navigation_execution navigation_world_model)
   ament_add_gtest(test_planner_fsm test/test_planner_fsm.cpp)
   target_include_directories(test_planner_fsm PRIVATE include)
-  ament_target_dependencies(test_planner_fsm navigation_planning navigation_contracts builtin_interfaces)
+  ament_target_dependencies(test_planner_fsm navigation_planning navigation_contracts navigation_execution builtin_interfaces)
   ament_add_gtest(test_path_relative_tracking test/test_path_relative_tracking.cpp)
   target_include_directories(test_path_relative_tracking PRIVATE include)
   ament_target_dependencies(test_path_relative_tracking navigation_planning navigation_contracts builtin_interfaces)
@@ -156,7 +172,8 @@ if(BUILD_TESTING)
   target_include_directories(test_navigation_runtime_terminal_monitor PRIVATE
     ${navigation_contracts_INCLUDE_DIRS})
   target_compile_definitions(test_navigation_runtime_terminal_monitor PRIVATE
-    NAVIGATION_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/planner.yaml")
+    NAVIGATION_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/planner.yaml"
+    NAVIGATION_REFINEMENT_MISSION_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../config/runtime/missions/long_open_featured_speed.yaml")
   target_link_libraries(test_navigation_runtime_terminal_monitor navigation_runtime_core)
   set_tests_properties(test_navigation_runtime_terminal_monitor PROPERTIES
     ENVIRONMENT
@@ -168,10 +185,20 @@ if(BUILD_TESTING)
   target_include_directories(test_kinematic_derivative_estimator PRIVATE include)
   target_link_libraries(test_kinematic_derivative_estimator
     navigation_planning::navigation_planning)
-  ament_add_gtest(test_execution_episode
-    test/test_execution_episode.cpp)
-  target_include_directories(test_execution_episode PRIVATE include)
-  ament_target_dependencies(test_execution_episode navigation_planning builtin_interfaces)
+  ament_add_gtest(test_execution_lifecycle
+    test/test_execution_lifecycle.cpp)
+  target_include_directories(test_execution_lifecycle PRIVATE include)
+  ament_target_dependencies(test_execution_lifecycle navigation_planning navigation_execution builtin_interfaces)
+  ament_add_gtest(test_desired_planning_intent
+    test/test_desired_planning_intent.cpp)
+  target_include_directories(test_desired_planning_intent PRIVATE include)
+  ament_target_dependencies(test_desired_planning_intent
+    navigation_contracts builtin_interfaces)
+  ament_add_gtest(test_desired_execution_boundary
+    test/test_desired_execution_boundary.cpp)
+  target_include_directories(test_desired_execution_boundary PRIVATE include)
+  ament_target_dependencies(test_desired_execution_boundary
+    navigation_execution navigation_planning navigation_contracts builtin_interfaces)
   ament_add_gtest(test_execution_trace_snapshot
     test/test_execution_trace_snapshot.cpp)
   target_include_directories(test_execution_trace_snapshot PRIVATE include)

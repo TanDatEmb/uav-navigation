@@ -1,0 +1,7 @@
+# Performance scope
+
+The only runtime additions are in explicit diagnostic/test runs: one native IMU metadata subscription, a 50 ms observer-loop timestamp, and a 150 ms diagnostic gap recording budget. The native observer is a separate process and never publishes flight commands. Normal product path is unchanged.
+
+The predecessor ten-run cohort predates these additions; its per-run producer/publish→callback/mutex/acceptance distributions are in `artifacts/qualification_gate_recovery/20260924T082427Z-4d184896/NOMINAL_TIMING.csv`. A new diagnostic run is required before any before/after overhead claim. No hard product deadline is inferred from the small sample.
+
+The current source produced one no-native control and three native-observer runs. In the no-native control, publish→callback p95/max were 0.193/0.663 ms and callback→accept p95/max 0.00248/0.0173 ms. In the three native runs, publish→callback p95 ranged 0.186–0.196 ms and callback→accept p95 ranged 0.00223–0.00260 ms. The normal native runs' accepted-state maxima were 27.969 and 29.733 ms versus 26.813 ms in the no-native control. The third native run contained a real 784.659 ms native simulation-progress tail and failed; it cannot be averaged away or counted as instrumentation overhead proof. The observer process consumed roughly 0.1–0.2 CPU seconds per wall second in the incident window. Four runs are insufficient to establish a latency distribution or a causal observer effect.

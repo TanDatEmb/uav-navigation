@@ -19,10 +19,15 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/NavigationGoal.msg"
   "msg/RouteSnapshot.msg"
   "msg/NavigationModeStatus.msg"
+  "msg/NavigationMissionProgress.msg"
   "msg/RegisteredScan.msg"
   "msg/PropagatedOdometry.msg"
+  "msg/OdometryTransportTrace.msg"
   "msg/EstimatorHealth.msg"
   "msg/NavigationCommand.msg"
+  "msg/NavigationCommandRejection.msg"
+  "msg/NavigationExecutionDiagnostics.msg"
+  "msg/NavigationCommandAdmission.msg"
   DEPENDENCIES builtin_interfaces nav_msgs std_msgs geometry_msgs sensor_msgs)
 
 install(DIRECTORY include/ DESTINATION include)
@@ -39,6 +44,10 @@ if(BUILD_TESTING)
     ${PROJECT_NAME} "rosidl_typesupport_cpp")
   target_link_libraries(test_typed_interfaces
     "${navigation_contracts_typesupport_target}")
+  ament_add_gtest(test_tracking_experiment_policy
+    test/test_tracking_experiment_policy.cpp)
+  target_include_directories(test_tracking_experiment_policy PRIVATE include)
+  ament_target_dependencies(test_tracking_experiment_policy navigation_common)
 endif()
 
 ament_package()

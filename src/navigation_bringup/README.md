@@ -35,7 +35,7 @@ ros2 launch navigation_bringup avoidance_mission.launch.py \
   use_sim_time:=true
 ```
 
-`mission_file` supplies the mission controller's waypoint behavior and the
+`mission_file` supplies Core-owned waypoint behavior and the
 dynamic limits used before planner backend optimizer construction. PX4 External Mode
 remains the control boundary; do not replace it with direct
 `OffboardControlMode` publishers.

@@ -201,11 +201,12 @@ inline double passThroughCornerSpeedCap(
 }
 
 // The next route piece must remain executable while the planner renews the
-// command after a measured waypoint crossing.  Derive its minimum length from
-// the current stopping envelope, two replan-forward intervals, and the
-// configured receding prefix.  This is a route-window geometry bound, not a
-// safety-gate relaxation; the selected path and the final polynomial retain
-// their existing world and dynamic certificates.
+// command after a measured waypoint crossing. Derive a route-window sizing
+// estimate from nominal speed, the configured acceleration/jerk, two
+// replan-forward intervals, and the receding prefix. This estimate is not a
+// stopping authorization or a certificate that a specific polynomial fits;
+// the selected path and final candidate retain their independent corridor,
+// extrema, flatness and world checks.
 inline double passThroughRequiredLookaheadDistance(
     const double speed_mps,
     const double maximum_velocity_mps,

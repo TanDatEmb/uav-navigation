@@ -1,0 +1,78 @@
+{
+  "accepted_count": 3164,
+  "event_count": 1,
+  "events": [
+    {
+      "accepted_gap_ms": 481.676781,
+      "after_sequence": 2722,
+      "before_sequence": 2721,
+      "classification_reason": "insufficient independent first-layer witness",
+      "first_stalled_layer": "UNRESOLVED",
+      "interval_wall_ns": [
+        1790242412072680511,
+        1790242412555386072
+      ],
+      "native_imu_interval_covered": false,
+      "native_interval_covered": false,
+      "witness": {
+        "accepted_state": {
+          "gap_ms": 482.705561,
+          "last_progress_wall_ns": 1790242412072680511,
+          "next_progress_wall_ns": 1790242412555386072,
+          "source_progress_ms": 20.0
+        },
+        "adapter_callback": {
+          "gap_ms": 482.705561,
+          "last_progress_wall_ns": 1790242412072680511,
+          "next_progress_wall_ns": 1790242412555386072,
+          "source_progress_ms": 20.0
+        },
+        "fast_lio_ingress": {
+          "gap_ms": 516.018685,
+          "last_progress_wall_ns": 1790242412049326179,
+          "next_progress_wall_ns": 1790242412565344864,
+          "source_progress_ms": 100.0
+        },
+        "gazebo_clock": null,
+        "gazebo_lidar": null,
+        "gazebo_stats": null,
+        "imu": {
+          "gap_ms": 481.517219,
+          "last_progress_wall_ns": 1790242412071316431,
+          "next_progress_wall_ns": 1790242412552833650,
+          "source_progress_ms": 4.0
+        },
+        "lidar": {
+          "gap_ms": 127.017975,
+          "last_progress_wall_ns": 1790242412291803627,
+          "next_progress_wall_ns": 1790242412418821602,
+          "source_progress_ms": 100.0
+        },
+        "native_imu": null,
+        "observer_loop": null,
+        "publisher": {
+          "gap_ms": 483.292265,
+          "last_progress_wall_ns": 1790242412071612910,
+          "next_progress_wall_ns": 1790242412554905175,
+          "source_progress_ms": 20.0
+        },
+        "ros_clock": {
+          "gap_ms": 481.869423,
+          "last_progress_wall_ns": 1790242412070012337,
+          "next_progress_wall_ns": 1790242412551881760,
+          "source_progress_ms": 4.0
+        },
+        "worker": {
+          "gap_ms": 482.652929,
+          "last_progress_wall_ns": 1790242412072539398,
+          "next_progress_wall_ns": 1790242412555192327,
+          "source_progress_ms": 20.0
+        }
+      }
+    }
+  ],
+  "native_observer_status": "NOT_RUN",
+  "session": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T093208-186236",
+  "trigger_is_diagnostic_only": true,
+  "trigger_ms": 150.0
+}

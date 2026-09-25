@@ -1,0 +1,7 @@
+# Controlled fault results
+
+No producer/executor/mutex/clock delay was injected. The pinned A2 event and instrumented pilot 3 are natural observations, not fault injections. Pilot 3 already reproduced a >150 ms accepted-state tail, so the conditional injection branch for a non-reproducing ten-run cohort was not used to fabricate a tail. The >50 ms `/clock` monitor field is diagnostic observation, never an injected delay or freshness policy change.
+
+One current-source exact `kOptimizationFailed` regression used the existing default-off semantic hot-handoff hook: session `external-mode-check-20260924T101731-232477`. Planner cycle 182 had desired request 3, active request 2, active generation 5, original backend status 0 and injected status 6. Runtime trace recorded disposition 4 (`RetainCommittedCommand`), current active valid and command available; the mission subsequently COMPLETE with accepted indices 0–4 and no unexpected Hold. This is focused injected SITL evidence; the evaluator remains `NOT_EVALUABLE` and explicitly records the experiment. It is not part of the ten nominal runs.
+
+The unchanged baseline contains focused Core-pause (350.116 ms SIGSTOP/SIGCONT → adapter stale PVA/Hold), repeated `kFailed`/BACKUP recovery, and measured terminal STOP evidence in `artifacts/failclosed_ownership_fencing/20260923T224537Z-49e9c0e8/SITL_RESULTS.md`. Those were not rerun on this diagnostic branch. Eight current nominal runs completed terminal STOP; two current runs instead entered bounded terminal recovery and safety-stopped. No safety gate was relaxed.

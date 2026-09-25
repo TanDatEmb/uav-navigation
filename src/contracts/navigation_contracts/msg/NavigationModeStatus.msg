@@ -4,6 +4,12 @@ string mission_id
 uint32 waypoint_index
 uint64 request_id
 
+# PX4-owned lifecycle observation. activation_id is monotonic within the
+# adapter process; airborne is sampled from armed state and measured height.
+# Neither field grants mission acceptance.
+uint64 activation_id
+bool airborne
+
 uint8 ACTIVE=0
 uint8 BRAKING=1
 uint8 PAUSED=2
@@ -32,10 +38,8 @@ uint8 HANDOVER_HOLD=8
 uint8 external_mode_state
 string external_mode_reason
 
-# Explicit waypoint acceptance evidence.  A rolling horizon completion or a
-# goal publication is not itself waypoint acceptance; these fields are set
-# only when MissionController has measured the vehicle inside the acceptance
-# radius with a valid velocity sample.
+# Read-only copy of Core's terminal acceptance receipt on COMPLETE. A rolling
+# horizon completion or goal publication is never acceptance evidence.
 bool waypoint_accepted
 uint32 accepted_waypoint_index
 float64 acceptance_position_error_m

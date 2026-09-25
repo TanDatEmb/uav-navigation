@@ -19,6 +19,7 @@
 #include <planner_core/replan_contract.hpp>
 #include <planner_core/route_boundary_timing.hpp>
 #include <planner_core/trajectory_world_validator.hpp>
+#include "nominal_problem_snapshot_writer.hpp"
 #include <utils/optimization/polynomial_interpolation.h>
 #include <navigation_world_model/continuous_clearance.hpp>
 #include <navigation_world_model/goal_contract.hpp>
@@ -28,15 +29,9 @@
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <atomic>
 #include <cmath>
-#include <condition_variable>
 #include <cstdlib>
-#include <deque>
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
 #include <memory>
 #include <mutex>
-#include <thread>
 #include <sstream>
 #include <stdexcept>
 #include <navigation_math/scope_timer.hpp>
@@ -128,183 +123,6 @@ AbsoluteDeadline Planner::solveDeadlineForCurrentRequest() const {
     }
     return AbsoluteDeadline(planner_context_->getSimTime(), cfg_.solve_deadline_s);
 }
-
-class NominalProblemSnapshotWriter final {
- public:
-  explicit NominalProblemSnapshotWriter(
-      const std::size_t capacity, std::string directory)
-      : capacity_(std::max<std::size_t>(1U, capacity)),
-        directory_(std::move(directory)) {
-    writeStats(false);
-    worker_ = std::thread([this] { run(); });
-  }
-
-  NominalProblemSnapshotWriter(const NominalProblemSnapshotWriter&) = delete;
-  NominalProblemSnapshotWriter& operator=(const NominalProblemSnapshotWriter&) = delete;
-
-  ~NominalProblemSnapshotWriter() noexcept {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      stopping_ = true;
-    }
-    condition_.notify_one();
-    if (worker_.joinable()) worker_.join();
-    writeStats(true);
-    const auto dropped = dropped_count_.load(std::memory_order_relaxed);
-    if (dropped != 0U) {
-      std::fprintf(stderr,
-                   "[planner] nominal snapshot writer dropped %llu bounded captures\n",
-                   static_cast<unsigned long long>(dropped));
-    }
-  }
-
-  bool enqueue(std::optional<traj_opt::NominalProblemSnapshot> snapshot,
-               const navigation_world_model::WorldModelViewPtr& world,
-               const bool include_world_snapshot) noexcept {
-    if (!snapshot.has_value() || directory_.empty()) return false;
-    submitted_count_.fetch_add(1U, std::memory_order_relaxed);
-    try {
-      Job job;
-      job.snapshot = std::move(snapshot);
-      job.world = world;
-      job.include_world_snapshot = include_world_snapshot;
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (stopping_ || queue_.size() >= capacity_) {
-          dropped_count_.fetch_add(1U, std::memory_order_relaxed);
-          return false;
-        }
-        queue_.emplace_back(std::move(job));
-        enqueued_count_.fetch_add(1U, std::memory_order_relaxed);
-      }
-      condition_.notify_one();
-      return true;
-    } catch (...) {
-      dropped_count_.fetch_add(1U, std::memory_order_relaxed);
-      return false;
-    }
-  }
-
-  [[nodiscard]] std::uint64_t droppedCount() const noexcept {
-    return dropped_count_.load(std::memory_order_relaxed);
-  }
-
- private:
-  struct Job {
-    std::optional<traj_opt::NominalProblemSnapshot> snapshot;
-    navigation_world_model::WorldModelViewPtr world;
-    bool include_world_snapshot{false};
-  };
-
-  void writeStats(const bool capture_complete) noexcept {
-    try {
-      std::size_t pending = 0U;
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        pending = queue_.size();
-      }
-      pending += static_cast<std::size_t>(
-          active_write_count_.load(std::memory_order_relaxed));
-      std::error_code directory_error;
-      std::filesystem::create_directories(directory_, directory_error);
-      if (directory_error) {
-        stats_write_error_count_.fetch_add(1U, std::memory_order_relaxed);
-        return;
-      }
-      const auto path = std::filesystem::path(directory_) /
-          "nominal_problem_snapshot_capture.json";
-      const auto temporary = std::filesystem::path(directory_) /
-          "nominal_problem_snapshot_capture.json.tmp";
-      std::ofstream output(temporary, std::ios::out | std::ios::trunc);
-      if (!output) {
-        stats_write_error_count_.fetch_add(1U, std::memory_order_relaxed);
-        return;
-      }
-      output << "{\"schema_version\":1"
-             << ",\"capacity\":" << capacity_
-             << ",\"submitted_records\":"
-             << submitted_count_.load(std::memory_order_relaxed)
-             << ",\"accepted_records\":"
-             << enqueued_count_.load(std::memory_order_relaxed)
-             << ",\"written_records\":"
-             << written_count_.load(std::memory_order_relaxed)
-             << ",\"dropped_records\":"
-             << dropped_count_.load(std::memory_order_relaxed)
-             << ",\"write_error_count\":"
-             << write_error_count_.load(std::memory_order_relaxed)
-             << ",\"stats_write_error_count\":"
-             << stats_write_error_count_.load(std::memory_order_relaxed)
-             << ",\"pending_records\":" << pending
-             << ",\"capture_complete\":"
-             << (capture_complete ? "true" : "false")
-             << "}\n";
-      output.close();
-      if (!output) {
-        stats_write_error_count_.fetch_add(1U, std::memory_order_relaxed);
-        return;
-      }
-      std::error_code rename_error;
-      std::filesystem::rename(temporary, path, rename_error);
-      if (rename_error) {
-        stats_write_error_count_.fetch_add(1U, std::memory_order_relaxed);
-        std::error_code remove_error;
-        std::filesystem::remove(temporary, remove_error);
-      }
-    } catch (...) {
-      stats_write_error_count_.fetch_add(1U, std::memory_order_relaxed);
-    }
-  }
-
-  void run() noexcept {
-    for (;;) {
-      Job job;
-      {
-        std::unique_lock<std::mutex> lock(mutex_);
-        condition_.wait(lock, [this] {
-          return stopping_ || !queue_.empty();
-        });
-        if (queue_.empty() && stopping_) return;
-        job = std::move(queue_.front());
-        queue_.pop_front();
-      }
-      active_write_count_.store(1U, std::memory_order_relaxed);
-      bool written = false;
-      try {
-        if (job.snapshot.has_value() && job.include_world_snapshot && job.world) {
-          job.snapshot->diagnostic_world_snapshot = job.world->diagnosticSnapshot();
-        }
-        if (job.snapshot.has_value()) {
-          written = !traj_opt::writeNominalProblemSnapshotJson(
-              *job.snapshot, directory_).empty();
-        }
-      } catch (...) {
-        // Diagnostic capture is best effort and cannot affect planning.
-      }
-      if (written) {
-        written_count_.fetch_add(1U, std::memory_order_relaxed);
-      } else {
-        write_error_count_.fetch_add(1U, std::memory_order_relaxed);
-      }
-      active_write_count_.store(0U, std::memory_order_relaxed);
-      writeStats(false);
-    }
-  }
-
-  const std::size_t capacity_;
-  const std::string directory_;
-  mutable std::mutex mutex_;
-  std::condition_variable condition_;
-  std::deque<Job> queue_;
-  bool stopping_{false};
-  std::atomic<std::uint64_t> submitted_count_{0U};
-  std::atomic<std::uint64_t> enqueued_count_{0U};
-  std::atomic<std::uint64_t> written_count_{0U};
-  std::atomic<std::uint64_t> dropped_count_{0U};
-  std::atomic<std::uint64_t> write_error_count_{0U};
-  std::atomic<std::uint64_t> stats_write_error_count_{0U};
-  std::atomic<std::uint64_t> active_write_count_{0U};
-  std::thread worker_;
-};
 
 namespace {
 
@@ -809,7 +627,10 @@ double mainGuideSupport(
         cg_ptr_->setCurrentBodySupport(current_body_support_);
     }
 
-    bool Planner::authorizeAndStage(CandidateCommandBundle&& candidate) {
+    bool Planner::authorizeAndStage(
+            CandidateCommandBundle&& candidate,
+            const std::optional<CommandIdentity>& explicit_identity,
+            const navigation_planning::PlanningRequest* const request_context) {
         if (commit_authorizer_ == nullptr || !map_ptr_) {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));
@@ -840,7 +661,8 @@ double mainGuideSupport(
                 maximum_yaw_acceleration, cfg_.yaw_acceleration_max_rad_s2);
             return false;
         }
-        const auto command_identity = commandIdentitySnapshot();
+        const auto command_identity = explicit_identity.has_value()
+            ? *explicit_identity : commandIdentitySnapshot();
         if (!command_identity.valid()) {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));
@@ -912,43 +734,17 @@ double mainGuideSupport(
                 // fold gate is bypassed only for this bounded STOP correction;
                 // world, dynamic, yaw, anchor, and handoff certificates still
                 // authorize the candidate independently.
-                const auto previous = planner_warm_start_.snapshot();
-                const bool previous_was_emergency =
-                    !previous.empty && previous.emergency_brake &&
-                    previous.identity.localization_epoch ==
-                        command_identity.localization_epoch &&
-                    previous.identity.goal_epoch == command_identity.goal_epoch &&
-                    previous.identity.request_id == command_identity.request_id;
-                Eigen::Vector3d previous_endpoint =
-                    Eigen::Vector3d::Constant(
-                        std::numeric_limits<double>::quiet_NaN());
-                if (previous_was_emergency) {
-                    previous_endpoint = previous.position.getState(
-                        previous.position.getTotalDuration()).col(0);
-                }
-                const double emergency_endpoint_distance =
-                    previous_endpoint.allFinite()
-                        ? (previous_endpoint - active_waypoint.position_enu).norm()
-                        : std::numeric_limits<double>::quiet_NaN();
+                const auto emergency_correction = request_context
+                    ? authorizeEmergencyCorrection(
+                          *request_context, command_identity.localization_epoch,
+                          command_identity.goal_epoch, command_identity.request_id,
+                          active_waypoint, candidate_start, candidate_end,
+                          candidate.terminal_stop,
+                          candidate.backup_suffix_available,
+                          cfg_.tracking_error_budget_m)
+                    : EmergencyCorrectionAuthorization{};
                 const bool emergency_bounded_correction =
-                    previous_was_emergency && candidate_start.allFinite() &&
-                    candidate_end.allFinite() &&
-                    ((active_waypoint.behavior ==
-                          navigation_mission::MissionWaypoint::Behavior::Stop &&
-                      candidate.terminal_stop) ||
-                     (active_waypoint.behavior ==
-                          navigation_mission::MissionWaypoint::Behavior::PassThrough &&
-                      !candidate.terminal_stop &&
-                      candidate.backup_suffix_available)) &&
-                    std::isfinite(emergency_endpoint_distance) &&
-                    std::isfinite(cfg_.tracking_error_budget_m) &&
-                    cfg_.tracking_error_budget_m >= 0.0 &&
-                    std::isfinite(recovery_radius) && recovery_radius > 0.0 &&
-                    emergency_endpoint_distance <= recovery_radius + 1.0e-9 &&
-                    (candidate_start - active_waypoint.position_enu).norm() <=
-                        recovery_radius + 1.0e-9 &&
-                    (candidate_end - active_waypoint.position_enu).norm() <=
-                        active_waypoint.acceptance_radius_m + 1.0e-9;
+                    emergency_correction.allowed;
                 bounded_terminal_stop_recovery =
                     candidate_is_bounded_correction || emergency_bounded_correction;
                 if (emergency_bounded_correction && !candidate_is_bounded_correction) {
@@ -956,8 +752,8 @@ double mainGuideSupport(
                         " -- [planner] allowing bounded waypoint correction after "
                         "certified emergency endpoint distance={} start_distance={} "
                         "acceptance_radius={}",
-                        emergency_endpoint_distance,
-                        (candidate_start - active_waypoint.position_enu).norm(),
+                        emergency_correction.predecessor_endpoint_distance_m,
+                        emergency_correction.candidate_start_distance_m,
                         active_waypoint.acceptance_radius_m);
                 }
             }
@@ -1287,19 +1083,22 @@ double mainGuideSupport(
         if (candidate.valid_until_ns < candidate.valid_from_ns) {
             return {std::nullopt, CandidateExportFailure::kInvalidTimeWindow};
         }
-        candidate.evaluator = [position = command.position,
-                               yaw = command.yaw,
-                               roles = command.roles,
+        const auto execution_command =
+            std::make_shared<const CandidateCommandBundle>(command);
+        candidate.evaluator = [execution_command,
                                emergency_candidate,
                                start_ns = *start_ns,
                                end_ns = *declared_end_ns] (
                                   const std::int64_t stamp_ns,
                                   navigation_planning::TrajectoryPoint& point) {
             const auto command_time = commandTrajectoryTime(
-                stamp_ns, start_ns, end_ns, position.getTotalDuration());
+                stamp_ns, start_ns, end_ns,
+                execution_command->position.getTotalDuration());
             if (command_time.trajectory_time_s < 0.0) return false;
-            const auto state = position.getState(command_time.trajectory_time_s);
-            const auto yaw_state = yaw.getState(command_time.trajectory_time_s);
+            const auto state = execution_command->position.getState(
+                command_time.trajectory_time_s);
+            const auto yaw_state = execution_command->yaw.getState(
+                command_time.trajectory_time_s);
             if (!state.allFinite() || !yaw_state.allFinite()) return false;
             point.position_world = state.col(0);
             point.velocity_world = state.col(1);
@@ -1317,13 +1116,13 @@ double mainGuideSupport(
                                         static_cast<__int128>(start_ns);
             const __int128 duration_ns = static_cast<__int128>(end_ns) -
                                          static_cast<__int128>(start_ns);
-            for (const auto& interval : roles) {
+            for (const auto& interval : execution_command->roles) {
                 const auto begin_ns = static_cast<__int128>(std::llround(
                     static_cast<long double>(interval.begin_tt) * 1.0e9L));
                 const auto interval_end_ns = static_cast<__int128>(std::llround(
                     static_cast<long double>(interval.end_tt) * 1.0e9L));
                 const bool at_declared_endpoint = elapsed_ns == duration_ns &&
-                    &interval == &roles.back();
+                    &interval == &execution_command->roles.back();
                 if (elapsed_ns >= begin_ns &&
                     (elapsed_ns < interval_end_ns || at_declared_endpoint) &&
                     interval.role == CandidateTrajectoryRole::BACKUP) {
@@ -1332,6 +1131,27 @@ double mainGuideSupport(
                 }
             }
             return true;
+        };
+        const auto main_unknown_policy = unknownPolicy();
+        const auto backup_unknown_policy = backupPolicy();
+        candidate.world_validator = [execution_command, certificate, generation,
+                                     main_unknown_policy, backup_unknown_policy](
+            const navigation_world_model::WorldModelViewPtr& world,
+            const double authorization_wall_time_s) {
+          navigation_planning::TrajectoryValidationResult output;
+          output.pinned_world = certificate.pinned_world;
+          output.validated_world = world ? world->identity()
+                                         : navigation_world_model::WorldSnapshotIdentity{};
+          output.evaluated_generation = generation;
+          if (!world || world->identity().localization_epoch !=
+                            certificate.pinned_world.localization_epoch) {
+            return output;
+          }
+          const auto validation = validateExecutableCandidate(
+              *world, *execution_command, authorization_wall_time_s,
+              main_unknown_policy, {}, false, backup_unknown_policy);
+          copySweptValidationDiagnostics(validation, output);
+          return output;
         };
         bool route_boundary_required = false;
         // An emergency brake is a measured-state safety replacement, not a
@@ -1874,7 +1694,8 @@ double mainGuideSupport(
     }
 
     std::optional<bool> Planner::tryStageMeasuredTerminalStopHold(
-            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline) {
+            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline,
+            const navigation_planning::PlanningRequest* const request) {
         if (!terminal_stop_required_ || !route_snapshot_.has_value() ||
             route_snapshot_->active_waypoint_index >= route_snapshot_->waypoints.size() ||
             !map_ptr_ || !solve_state_.rcv || !solve_state_.p.allFinite() ||
@@ -1995,7 +1816,7 @@ double mainGuideSupport(
 
         auto candidate = CmdTraj::buildCandidate(
             hold_exp, nullptr, BackupDisposition::FINISH, true);
-        if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+        if (!candidate || !authorizeAndStage(std::move(*candidate), std::nullopt, request)) {
             latest_replan.setRetCode(PLANNER_CANDIDATE_REJECTED);
             planner_context_->warn(
                 " -- [planner] measured terminal STOP hold rejected by final "
@@ -2023,6 +1844,12 @@ double mainGuideSupport(
     Planner::planInitialFromStoppedState(const Vec3f &goal_p,
                                          const double &goal_yaw,
                                          const bool &new_goal) {
+        return planInitialFromStoppedStateImpl(goal_p, goal_yaw, new_goal, nullptr);
+    }
+
+    RET_CODE Planner::planInitialFromStoppedStateImpl(
+            const Vec3f& goal_p, const double& goal_yaw, const bool& new_goal,
+            const navigation_planning::PlanningRequest* const request) {
         std::lock_guard<std::mutex> guard(replan_lock_);
         baseline_candidate_ready_for_refinement_ = false;
         {
@@ -2111,7 +1938,7 @@ double mainGuideSupport(
         latest_replan.setLocalStartP(local_star_pt);
 
         const auto measured_terminal_hold =
-            tryStageMeasuredTerminalStopHold(goal_p, solve_deadline);
+            tryStageMeasuredTerminalStopHold(goal_p, solve_deadline, request);
         if (measured_terminal_hold.has_value()) {
             return *measured_terminal_hold ? SUCCESS : FAILED;
         }
@@ -2175,7 +2002,7 @@ double mainGuideSupport(
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS,
                 candidate_terminal_stop_active_);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate || !authorizeAndStage(std::move(*candidate), std::nullopt, request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2206,7 +2033,7 @@ double mainGuideSupport(
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, disposition,
                 candidate_terminal_stop_active_);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate || !authorizeAndStage(std::move(*candidate), std::nullopt, request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2424,7 +2251,7 @@ double mainGuideSupport(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
             }
-            if (!authorizeAndStage(std::move(*candidate))) {
+            if (!authorizeAndStage(std::move(*candidate), std::nullopt, request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2453,7 +2280,7 @@ double mainGuideSupport(
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, BackupDisposition::NO_NEED,
                 candidate_terminal_stop_active_);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate || !authorizeAndStage(std::move(*candidate), std::nullopt, request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2483,7 +2310,7 @@ double mainGuideSupport(
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, BackupDisposition::FINISH,
                 candidate_terminal_stop_active_);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate || !authorizeAndStage(std::move(*candidate), std::nullopt, request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2536,6 +2363,7 @@ double mainGuideSupport(
             current_body_support_admission_pending_ = false;
             current_body_support_matches_start_ = false;
             setCurrentBodySupport({});
+            request_deadline_ns_ = 0;
             outcome.trace.elapsed_steady_ns =
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now() - started).count();
@@ -2551,9 +2379,52 @@ double mainGuideSupport(
             current_body_support_admission_pending_ = false;
             current_body_support_matches_start_ = false;
             setCurrentBodySupport({});
+            request_deadline_ns_ = 0;
+            if (exp_traj_opt_) {
+                exp_traj_opt_->setMaximumVelocity(nominal_exp_max_velocity_mps_);
+            }
         };
         const ScopeExit cleanup_guard(cleanup);
+        solve_cancelled_.store(false, std::memory_order_release);
+        const std::stop_callback cancellation_callback(
+            request.cancellation_token, [this] {
+                solve_cancelled_.store(true, std::memory_order_release);
+            });
+        if (request.cancellation_token.stop_requested()) {
+            solve_cancelled_.store(true, std::memory_order_release);
+            return finish();
+        }
         if (!request.valid()) return finish();
+        const auto same_limit = [](const double lhs, const double rhs) {
+            return std::isfinite(lhs) && std::isfinite(rhs) &&
+                std::abs(lhs - rhs) <= 1.0e-9 * std::max({1.0, std::abs(lhs), std::abs(rhs)});
+        };
+        const auto request_unknown_policy =
+            request.dynamics.unknown_space_policy ==
+                    navigation_planning::UnknownSpacePolicy::kRequireKnownFree
+                ? navigation_world_model::UnknownPolicy::kRequireKnownFree
+                : navigation_world_model::UnknownPolicy::kAllowUnknown;
+        if (!same_limit(request.dynamics.vehicle.maximum_velocity_mps,
+                        cfg_.back_traj_cfg.max_vel) ||
+            !same_limit(request.dynamics.vehicle.maximum_acceleration_mps2,
+                        cfg_.back_traj_cfg.max_acc) ||
+            !same_limit(request.dynamics.vehicle.maximum_jerk_mps3,
+                        cfg_.back_traj_cfg.max_jerk) ||
+            request_unknown_policy != cfg_.unknown_space_policy) {
+            return finish();
+        }
+        // Cruise intent belongs to this solve, not to the planner instance's
+        // construction-time mission snapshot. Preserve the configured MAIN
+        // cap while allowing a request to ask for a lower speed. BACKUP and
+        // EMERGENCY continue to use their independent physical envelope.
+        const double request_nominal_velocity_mps = std::min(
+            request.dynamics.intent.requested_cruise_speed_mps,
+            cfg_.control_envelope.maximum_velocity_mps);
+        if (!std::isfinite(request_nominal_velocity_mps) ||
+            request_nominal_velocity_mps <= 0.0 || !exp_traj_opt_) {
+            return finish();
+        }
+        exp_traj_opt_->setMaximumVelocity(request_nominal_velocity_mps);
         request_deadline_ns_ = request.budget.steady_deadline_ns;
         {
             std::lock_guard<std::mutex> guard(planner_timeline_mutex_);
@@ -2562,6 +2433,7 @@ double mainGuideSupport(
 
         last_nominal_solve_status_ = traj_opt::NominalSolveStatus::kFailed;
         last_nominal_deadline_observed_ = false;
+        resetExpOptimizationDiagnostics();
 
         // The request owns the immutable solve inputs, including route
         // geometry. Bind that value inside the serialized solve boundary so
@@ -2570,9 +2442,12 @@ double mainGuideSupport(
             !setRouteSnapshot(request.route_snapshot)) {
             return finish();
         }
+        const auto& request_waypoint = request.route_snapshot.waypoints[
+            request.route_snapshot.active_waypoint_index];
+        setGoalAcceptanceRadius(request_waypoint.acceptance_radius_m);
+        setMissionStartPosition(request.mission_start_position_world);
         const Eigen::Vector3d& target_world =
-            request.route_snapshot.waypoints[request.route_snapshot.active_waypoint_index]
-                .position_enu;
+            request_waypoint.position_enu;
         setWorldModelView(request.world);
         const auto request_body_support =
             request.key.start_mode == navigation_planning::PlanningStartMode::kStoppedMeasuredState &&
@@ -2615,10 +2490,12 @@ double mainGuideSupport(
         setCommandIdentity(CommandIdentity{
             request.key.localization_epoch, request.key.goal_epoch,
             request.key.request_id});
+        diagnostic_solve_generation_ = request.diagnostic_solve_generation;
+        diagnostic_planner_cycle_ = request.diagnostic_planner_cycle;
         const auto result = request.key.start_mode ==
                 navigation_planning::PlanningStartMode::kStoppedMeasuredState
-            ? planInitialFromStoppedState(
-                target_world, 0.0, true)
+            ? planInitialFromStoppedStateImpl(
+                target_world, 0.0, true, &request)
             : request.key.start_mode ==
                 navigation_planning::PlanningStartMode::kMeasuredEmergencyBrake
             ? ([&]() {
@@ -2629,7 +2506,10 @@ double mainGuideSupport(
                 measured.col(3) = request.start_state.jerk_world;
                 return commitEmergencyBrake(
                     measured, request.start_state.yaw_rad, 0.0,
-                    planner_context_->getSimTime(), std::nullopt)
+                    planner_context_->getSimTime(), std::nullopt,
+                    CommandIdentity{request.key.localization_epoch,
+                                    request.key.goal_epoch,
+                                    request.key.request_id})
                     ? RET_CODE::SUCCESS : RET_CODE::EMER;
               })()
             : planSuccessorFromExecutionAnchorImpl(
@@ -2674,6 +2554,10 @@ double mainGuideSupport(
             return finish();
         }
         outcome.candidate = *export_result.candidate;
+        // The request owns this relationship. A later retained validation
+        // cycle must not relabel the bundle that produced the active command.
+        outcome.candidate->producer_planning_cycle_id =
+            request.diagnostic_planner_cycle;
         outcome.outcome = last_nominal_deadline_observed_
             ? navigation_planning::CompletePlanningOutcome::kDeadlineWithCompleteBundle
             : last_nominal_solve_status_ == traj_opt::NominalSolveStatus::kCertifiedSeed
@@ -2844,7 +2728,9 @@ double mainGuideSupport(
                                             const double initial_command_yaw_dot,
                                             const double start_WT,
                                             const std::optional<double>
-                                                terminal_altitude_override_m) {
+                                                terminal_altitude_override_m,
+                                            const std::optional<CommandIdentity>
+                                                explicit_identity) {
         if (!initial_command_state.allFinite() ||
             !std::isfinite(initial_command_yaw) ||
             !std::isfinite(initial_command_yaw_dot) || !std::isfinite(start_WT)) {
@@ -2873,13 +2759,19 @@ double mainGuideSupport(
                     std::isfinite(*terminal_altitude_override_m)
                 ? *terminal_altitude_override_m
                 : bounded_state.col(0).z();
-        const auto seed = makeBackupBrakingSeedWithTerminalAltitude(
+        const auto emergency_deadline = solveDeadlineForCurrentRequest();
+        const auto seed = makeBackupBrakingSeedWithTerminalAltitudeAndAbort(
                 0.0, bounded_state,
                 cfg_.back_traj_cfg.max_vel,
                 cfg_.back_traj_cfg.max_acc,
                 cfg_.back_traj_cfg.max_jerk,
                 cfg_.sample_traj_dt_s,
-                0.0, terminal_altitude_m);
+                0.0, terminal_altitude_m,
+                [this, &emergency_deadline] {
+                    return solve_cancelled_.load(std::memory_order_relaxed) ||
+                        emergency_deadline.expired(planner_context_->getSimTime()) ||
+                        emergency_deadline.steadyExpired();
+                });
         if (!seed.feasible || !seed.terminal_altitude_preserved ||
             !std::isfinite(seed.duration_s) || seed.duration_s <= 0.0) {
             planner_context_->error(
@@ -2954,7 +2846,7 @@ double mainGuideSupport(
 
         auto candidate = CmdTraj::buildEmergencyCandidate(
             position_trajectory, yaw_trajectory);
-        if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+        if (!candidate || !authorizeAndStage(std::move(*candidate), explicit_identity)) {
             planner_context_->error(" -- [planner] emergency brake atomic commit rejected");
             return false;
         }
@@ -4203,12 +4095,15 @@ double mainGuideSupport(
         viability_state.col(2) = solve_state_.a;
         viability_state.col(3) = solve_state_.j;
         navigation_planning::DynamicLimits viability_dynamics;
+        // Stopping is certified against the physical BACKUP recovery envelope;
+        // the returned cruise proposal remains bounded by the nominal MAIN
+        // intent below. A nominal overspeed is not physical infeasibility.
         viability_dynamics.vehicle.maximum_velocity_mps =
-            cfg_.exp_traj_cfg.max_vel;
+            cfg_.back_traj_cfg.max_vel;
         viability_dynamics.vehicle.maximum_acceleration_mps2 =
-            cfg_.exp_traj_cfg.max_acc;
+            cfg_.back_traj_cfg.max_acc;
         viability_dynamics.vehicle.maximum_jerk_mps3 =
-            cfg_.exp_traj_cfg.max_jerk;
+            cfg_.back_traj_cfg.max_jerk;
         viability_dynamics.intent.requested_cruise_speed_mps =
             cfg_.effective_cruise_speed_mps;
         viability_dynamics.unknown_space_policy = cfg_.unknown_space_policy;
@@ -4216,7 +4111,12 @@ double mainGuideSupport(
             viability_state, viability_dynamics,
             {navigation_planning::PlanningTimingContract::kLocalWindowM,
              directional_support.value_or(0.0), route_support_m,
-             main_policy_support_m});
+             main_policy_support_m}, cfg_.sample_traj_dt_s,
+            [&] {
+                return solve_cancelled_.load(std::memory_order_relaxed) ||
+                    solve_deadline.expired(planner_context_->getSimTime()) ||
+                    solve_deadline.steadyExpired();
+            });
         if (!governed_speed.sufficient || governed_speed.speed_mps <= 0.0) {
             planner_context_->warn(
                 " -- [planner] MAIN rejected: insufficient braking evidence "
@@ -4227,7 +4127,22 @@ double mainGuideSupport(
                 cfg_.unknown_space_policy == navigation_world_model::UnknownPolicy::kAllowUnknown
                     ? "allow_unknown" : "require_known_free");
             if (failure_detail != nullptr) {
-                *failure_detail = PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT;
+                switch (governed_speed.failure) {
+                  case EvidenceSpeedFailure::kBudgetExhausted:
+                    *failure_detail = classifySolveFailure(solve_deadline);
+                    break;
+                  case EvidenceSpeedFailure::kOutsideRecoveryEnvelope:
+                    *failure_detail = PLANNER_STOP_OUTSIDE_RECOVERY_ENVELOPE;
+                    break;
+                  case EvidenceSpeedFailure::kStopSynthesisFailed:
+                    *failure_detail = PLANNER_STOP_SYNTHESIS_FAILED;
+                    break;
+                  case EvidenceSpeedFailure::kNone:
+                  case EvidenceSpeedFailure::kInvalidInput:
+                  case EvidenceSpeedFailure::kInsufficientSupport:
+                    *failure_detail = PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT;
+                    break;
+                }
             }
             return FAILED;
         }
@@ -4630,7 +4545,7 @@ double mainGuideSupport(
 
         // Successor candidates are suffix-only.  Their first polynomial is
         // solved from the immutable future anchor and begins at the exact
-        // activation timestamp selected by ExecutionTimelineStore; the old
+        // activation timestamp selected by ExecutionAuthority; the old
         // command remains active until that timestamp.
         const double new_traj_WT = std::isfinite(requested_activation_wall_time_s)
             ? requested_activation_wall_time_s : replan_process_start_WT;
@@ -5000,61 +4915,21 @@ double mainGuideSupport(
                     trajectoryTerminalIsRestWithinRoundoff(ref_exp_traj.posTraj()) ? 1 : 0);
             all_traj_visible = false;
         }
-        Vec3f invisible_p = eval_ps.back().second;
-        while (out_t > visibility_start_t) {
-            if (should_abort()) return FAILED;
-            out_t -= cfg_.sample_traj_dt_s;
-            Vec3f out_p = ref_exp_traj.getPos(out_t);
-            if ((out_p - invisible_p).norm() > cfg_.robot_r) {
-                break;
-            }
-        }
-
-        double seed_point_t = std::max(visibility_start_t, out_t);
-
-        // Seed the backup corridor at the latest point that remains within
-        // the visible command prefix and outside the robot-radius retreat
-        // band. Completion is decided above from the full visibility and
-        // terminal-rest checks; no historical backup timestamp may override
-        // this current-world result.
-        Vec3f seed_point = ref_exp_traj.getPos(seed_point_t);
-
-        // Do not re-snap this point through the Evidence grid.  The command
-        // boundary has already been selected by PlanFromRest/corridor
-        // generation and the Evidence-grid centre can move it back toward an
-        // obstacle or collapse the first CIRI line to zero length.  The
-        // command-boundary KNOWN_FREE check above plus the full candidate
-        // validator are the authority here.
-        const Vec3f backup_origin = back_traj_info.getRobotPos();
-        // The seed has already been truncated at the first sample that is not
-        // within the configured KNOWN_FREE visibility horizon. Do not apply
-        // corridor_segment_max_length_m here: that parameter subdivides sparse
-        // guide edges, but using it as a second backup-distance cap limits an
-        // open-space vehicle to a 3 m recovery prefix and forces a brake every
-        // few metres. The strict KNOWN_FREE ray above is the visibility
-        // certificate; the optimizer corridor is rebuilt later from each
-        // braking-hull candidate so a single long CIRI line cannot strand the
-        // visible command prefix.
-        if (!std::isfinite(seed_point_t) || !seed_point.allFinite() ||
-            (seed_point - backup_origin).norm() <= cfg_.resolution) {
-            planner_context_->warn(
-                    " -- [planner] backup visibility seed is too short "
-                    "after BACKUP-policy visibility selection length={}",
-                    (seed_point - backup_origin).norm());
-            return FAILED;
-        }
-        // The candidate samples were already certified by the same inflated
-        // grid BACKUP-policy ray oracle above. Do not construct a second long
-        // CIRI visibility polytope here: CIRI can fail numerically near an
-        // obstacle even when the ray certificate is valid. The optimizer SFC
-        // is tied to the executable braking hull below.
+        // Visibility bounds the switch search; it does not construct the
+        // braking corridor. The old visibility-SFC retreat was checked for
+        // length, then overwritten by eval_ps.back() before use. Keeping that
+        // unrelated construction precondition rejects a certified short stop.
+        // Actual candidates still need their own bounded corridor, full hull,
+        // role-policy swept-world, flatness and atomic authorization checks.
         if (eval_ps.size() <= 1U) {
             planner_context_->warn(
                     " -- [planner] backup visibility produced no certified seed before first invisible sample");
             return FAILED;
         }
-        seed_point = eval_ps.back().second;
-        seed_point_t = eval_ps.back().first;
+        const double seed_point_t = eval_ps.back().first;
+        if (!std::isfinite(seed_point_t) || !eval_ps.back().second.allFinite()) {
+            return FAILED;
+        }
 
         //        bool use_new{true};
         //        if (use_new) {
@@ -5264,10 +5139,12 @@ double mainGuideSupport(
                 return false;
             }
             Line braking_line{state.col(0), seed.endpoint};
-            if (!braking_line.first.allFinite() || !braking_line.second.allFinite() ||
-                (braking_line.second - braking_line.first).norm() <= cfg_.resolution) {
+            if (!braking_line.first.allFinite() || !braking_line.second.allFinite()) {
                 return false;
             }
+            // CorridorGenerator owns finite short/point seeds too. Endpoint
+            // displacement is not a minimum stopping distance or a proof of
+            // hull containment; certify the actual curve below in every case.
             if (!cg_ptr_->GeneratePolytopeFromLine(
                     braking_line, candidate_poly, &solve_deadline)) {
                 return false;
@@ -5310,11 +5187,11 @@ double mainGuideSupport(
                         std::isfinite(backup_altitude_target_m)
                     ? backup_altitude_target_m
                     : std::numeric_limits<double>::quiet_NaN();
-            braking_seed = makeBackupBrakingSeedWithTerminalAltitude(
-                candidate_ts, switch_state,
+            braking_seed = makeBackupBrakingSeedWithTerminalAltitudeAndAbort(
+                    candidate_ts, switch_state,
                     cfg_.back_traj_cfg.max_vel, cfg_.back_traj_cfg.max_acc,
                     cfg_.back_traj_cfg.max_jerk, cfg_.sample_traj_dt_s,
-                    0.0, backup_altitude_target);
+                    0.0, backup_altitude_target, should_abort);
             if (should_abort()) return FAILED;
             geometry_utils::Piece candidate_braking_piece;
             if (braking_seed.feasible &&

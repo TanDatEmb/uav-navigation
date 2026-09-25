@@ -2523,10 +2523,10 @@ def render(session: Path, output: Path) -> Path:
     ]
     if has_versioned_evaluation:
         for name, label in (
-            ("safety", "Safety dimension"),
-            ("tracking", "Tracking dimension"),
-            ("motion_quality", "Motion quality dimension"),
-            ("evidence", "Evidence dimension"),
+            ("safety", "C0-IFP safety dimension"),
+            ("tracking", "C0-IFP tracking dimension"),
+            ("motion_quality", "C0-IFP motion quality dimension"),
+            ("evidence", "C0-IFP evidence dimension"),
         ):
             dimension = versioned_dimensions.get(name, {})
             if isinstance(dimension, dict):
@@ -2538,6 +2538,31 @@ def render(session: Path, output: Path) -> Path:
                     reason_text or "versioned offline evaluator dimension",
                     str(dimension.get("status", "NOT_EVALUABLE")).upper(),
                 ))
+        software = versioned_evaluation.get("software_qualification", {})
+        if isinstance(software, dict) and software.get("qualification_scope") == "C0_SW":
+            software_status = str(software.get("assessment_status", "NOT_EVALUABLE"))
+            software_eligible = software.get("software_qualification_eligible") is True
+            status_rows.append((
+                "C0-SW software qualification",
+                software_status,
+                "C0_SW_V1; eligible=" + str(software_eligible).lower() +
+                "; integrated flight performance assessed separately",
+                software_status,
+                ))
+        if versioned_evaluation.get("qualification_scope") == "C0_IFP":
+            ifp_status = str(versioned_evaluation.get("assessment_status", "NOT_EVALUABLE"))
+            ifp_eligible = versioned_evaluation.get(
+                "integrated_flight_qualification_eligible") is True
+            reasons = versioned_evaluation.get("blocking_reasons", [])
+            reason_text = "; ".join(str(reason) for reason in reasons[:3]) \
+                if isinstance(reasons, list) else ""
+            status_rows.append((
+                "C0-IFP integrated-flight qualification",
+                ifp_status,
+                "C0_IFP; eligible=" + str(ifp_eligible).lower() +
+                ("; " + reason_text if reason_text else ""),
+                ifp_status,
+            ))
     table_rows = "".join(
         f'<tr><td>{esc(label)}</td><td class="observed">{esc(observed)}</td><td>{esc(criterion)}</td><td>{status_chip(status)}</td></tr>'
         for label, observed, criterion, status in status_rows

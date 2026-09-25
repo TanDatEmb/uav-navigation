@@ -14,6 +14,7 @@ import json
 import math
 from pathlib import Path
 from typing import Any
+from command_diagnostics import join_execution_diagnostics
 
 
 def finite(value: Any) -> float | None:
@@ -396,6 +397,7 @@ def analyze(input_dir: Path, output: Path) -> dict[str, Any]:
     metadata = read_json(input_dir / "metadata.json", {})
     legacy_report = read_json(input_dir / "report.json", {})
     scenario = read_jsonl(input_dir / "scenario.jsonl")
+    join_execution_diagnostics(scenario)
     samples = read_jsonl(input_dir / "samples.jsonl")
     cmds = commands(scenario)
     traces = diagnostic_records(samples)

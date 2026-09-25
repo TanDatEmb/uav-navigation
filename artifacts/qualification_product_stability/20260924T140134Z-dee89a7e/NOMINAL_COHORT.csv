@@ -1,0 +1,11 @@
+cohort,run,source_sha,result,accepted_indices,max_accepted_state_gap_ms,session,assessment_status
+predecessor,1,96ed8d089e576c505abdc15500746e9b5be10e50,PAUSED_SAFETY_STOP,0 1 2 3,27.742182,/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T094122-193534,NOT_EVALUABLE
+predecessor,2,96ed8d089e576c505abdc15500746e9b5be10e50,PAUSED_SAFETY_STOP,0 1 2 3,35.591519,/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T094341-193534,NOT_EVALUABLE
+predecessor,3,96ed8d089e576c505abdc15500746e9b5be10e50,COMPLETE,0 1 2 3 4,27.856031,/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T094550-193534,NOT_EVALUABLE
+predecessor,4,96ed8d089e576c505abdc15500746e9b5be10e50,COMPLETE,0 1 2 3 4,35.58154,/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T094856-193534,NOT_EVALUABLE
+predecessor,5,96ed8d089e576c505abdc15500746e9b5be10e50,COMPLETE,0 1 2 3 4,34.871902,/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T095113-193534,NOT_EVALUABLE
+predecessor,6,96ed8d089e576c505abdc15500746e9b5be10e50,COMPLETE,0 1 2 3 4,35.263469,/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T095318-193534,NOT_EVALUABLE
+predecessor,7,96ed8d089e576c505abdc15500746e9b5be10e50,COMPLETE,0 1 2 3 4,28.059614,/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T095531-193534,NOT_EVALUABLE
+predecessor,8,96ed8d089e576c505abdc15500746e9b5be10e50,COMPLETE,0 1 2 3 4,30.34878,/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T095746-193534,NOT_EVALUABLE
+predecessor,9,96ed8d089e576c505abdc15500746e9b5be10e50,COMPLETE,0 1 2 3 4,27.273902,/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T095950-193534,NOT_EVALUABLE
+predecessor,10,96ed8d089e576c505abdc15500746e9b5be10e50,COMPLETE,0 1 2 3 4,26.686727,/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T100159-193534,NOT_EVALUABLE

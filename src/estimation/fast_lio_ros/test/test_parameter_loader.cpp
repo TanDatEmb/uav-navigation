@@ -434,4 +434,13 @@ TEST_F(ParameterLoaderTest, RejectsUnknownParameterOverride) {
   EXPECT_THROW(ParameterLoader::declareAndLoad(node), std::invalid_argument);
 }
 
+TEST_F(ParameterLoaderTest, AcceptsOnlyExplicitStateTransportTraceOverride) {
+  rclcpp::NodeOptions options;
+  options.arguments({"--ros-args", "-p",
+                     "diagnostics.state_transport_trace_enabled:=true"});
+  rclcpp::Node node{"parameter_loader_trace_override_test", options};
+  EXPECT_NO_THROW(ParameterLoader::declareAndLoad(node));
+  EXPECT_TRUE(node.get_parameter("diagnostics.state_transport_trace_enabled").as_bool());
+}
+
 }  // namespace uav::nav::lio

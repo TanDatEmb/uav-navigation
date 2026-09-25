@@ -11,6 +11,7 @@ zero.
 from __future__ import annotations
 
 import bisect
+from enum import Enum
 import json
 import math
 from pathlib import Path
@@ -18,21 +19,49 @@ import statistics
 from typing import Any, Iterable
 
 from evidence_contract import build_evidence_contract
+from command_diagnostics import join_execution_diagnostics
 from planner_trace import collect_planner_trace_records, planner_trace_summary
 
 
-EVALUATION_SCHEMA_VERSION = 1
+EVALUATION_SCHEMA_VERSION = 2
 DEFAULT_MAX_MATCH_GAP_S = 0.15
 DEFAULT_STOP_ENTER_MPS = 0.10
 DEFAULT_STOP_EXIT_MPS = 0.20
 DEFAULT_STOP_MIN_DURATION_S = 0.20
 DEFAULT_C0_SPEED_MIN_MPS = 1.0
 DEFAULT_C0_SPEED_MAX_MPS = 5.0
+C0_SW_POLICY_VERSION = "C0_SW_V1"
+C0_SW_POLICY_PROVENANCE = (
+    "user-approved task 2026-09-25: C0-SW software-first decision"
+)
 _SUCCESS_DISPOSITIONS = {
     "PUBLISHED", "AUTHORIZED", "EXPORTED", "ACTIVATED", "OBSERVED", "SUCCESS", "ACTIVE",
 }
 _TERMINAL_REJECT_DISPOSITIONS = {"REJECTED", "FAILED", "CANCELED", "CANCELLED", "SUPERSEDED"}
-_LIFECYCLE_PHASES = {"request", "authorize", "export", "activate", "publish"}
+_LIFECYCLE_PHASES = {
+    "request", "result", "retained", "heading_admitted", "authorize",
+    "export", "activate", "publish", "supersede", "recovery_retry",
+    "planner_emergency_outcome",
+}
+
+
+class SourceTimestampPolicy(Enum):
+    """Source-time contract for an evidence stream, not a flight-time gate."""
+
+    STRICTLY_INCREASING = "STRICTLY_INCREASING"
+    NON_DECREASING = "NON_DECREASING"
+    DUPLICATES_ALLOWED = "DUPLICATES_ALLOWED"
+    DUPLICATES_ALLOWED_FOR_HEARTBEAT = "DUPLICATES_ALLOWED_FOR_HEARTBEAT"
+    EVENT_SEQUENCE_AUTHORITATIVE = "EVENT_SEQUENCE_AUTHORITATIVE"
+    NO_SOURCE_TIME = "NO_SOURCE_TIME"
+
+
+STREAM_SOURCE_TIMESTAMP_POLICY = {
+    "navigation_command": SourceTimestampPolicy.DUPLICATES_ALLOWED_FOR_HEARTBEAT,
+    "ground_truth_odometry": SourceTimestampPolicy.STRICTLY_INCREASING,
+    "corrected_odometry": SourceTimestampPolicy.STRICTLY_INCREASING,
+    "propagated_odometry": SourceTimestampPolicy.STRICTLY_INCREASING,
+}
 
 
 def _load(path: Path, default: Any) -> Any:
@@ -100,8 +129,16 @@ def _source_stamp_ns(event: dict[str, Any], payload: dict[str, Any]) -> tuple[in
     return None, "missing"
 
 
-def _source_time_status(rows: list[dict[str, Any]]) -> tuple[bool, list[str]]:
+def _source_time_status(
+    rows: list[dict[str, Any]],
+    *,
+    policy: SourceTimestampPolicy = SourceTimestampPolicy.STRICTLY_INCREASING,
+) -> tuple[bool, list[str]]:
     """Validate provenance, not merely presence of a numeric timestamp."""
+    if policy in {SourceTimestampPolicy.DUPLICATES_ALLOWED_FOR_HEARTBEAT,
+                  SourceTimestampPolicy.EVENT_SEQUENCE_AUTHORITATIVE,
+                  SourceTimestampPolicy.NO_SOURCE_TIME}:
+        raise ValueError("this policy requires stream-specific identity validation")
     reasons: list[str] = []
     if not rows:
         return False, ["SOURCE_TIME_UNAVAILABLE"]
@@ -121,7 +158,7 @@ def _source_time_status(rows: list[dict[str, Any]]) -> tuple[bool, list[str]]:
             reasons.append("SOURCE_TIME_EPOCH_CHANGE")
             previous_stamp = None
         if stamp is not None and stamp > 0 and previous_stamp is not None:
-            if stamp == previous_stamp:
+            if stamp == previous_stamp and policy == SourceTimestampPolicy.STRICTLY_INCREASING:
                 reasons.append("SOURCE_TIMESTAMP_DUPLICATE")
             elif stamp < previous_stamp:
                 reasons.append("SOURCE_TIMESTAMP_REGRESSION")
@@ -129,6 +166,64 @@ def _source_time_status(rows: list[dict[str, Any]]) -> tuple[bool, list[str]]:
             previous_stamp = stamp
         previous_epoch = epoch
     return not reasons, sorted(set(reasons))
+
+
+_REFERENCE_HEARTBEAT_IGNORED_FIELDS = frozenset({
+    # A repeated immutable command may receive a new transport sample ID.
+    "sample_id", "trajectory_id",
+    # Each heartbeat is freshly authorized; its diagnostic steady timestamp
+    # is an event timestamp rather than a change to the reference/certificate.
+    "execution_authorization_steady_ns",
+    # These identify the observer row, never the executable reference.
+    "arrival_wall_ns", "arrival_steady_ns", "record_sequence",
+    "record_sim_time_ns", "observer_record_steady_ns",
+})
+
+
+def _same_reference_heartbeat(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return {
+        key: value for key, value in left.items()
+        if key not in _REFERENCE_HEARTBEAT_IGNORED_FIELDS
+    } == {
+        key: value for key, value in right.items()
+        if key not in _REFERENCE_HEARTBEAT_IGNORED_FIELDS
+    }
+
+
+def _canonical_reference_heartbeats(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int, list[str]]:
+    """Collapse only exact same-state command heartbeats at one ROS source tick.
+
+    A fresh sample ID may keep the steady-time adapter lease alive while ROS
+    time has not advanced. Raw rows remain in the session and lifecycle
+    evidence; this copy is only the time-indexed tracking reference.
+    """
+    canonical: list[dict[str, Any]] = []
+    collapsed = 0
+    reasons: list[str] = []
+    for row in rows:
+        if not canonical:
+            canonical.append(row)
+            continue
+        previous = canonical[-1]
+        if (row.get("source_stamp_ns") != previous.get("source_stamp_ns") or
+                row.get("localization_epoch") != previous.get("localization_epoch")):
+            canonical.append(row)
+            continue
+        previous_id = _integer(previous.get("sample_id"))
+        current_id = _integer(row.get("sample_id"))
+        if (previous_id is None or current_id is None or
+                current_id <= previous_id or
+                not _same_reference_heartbeat(row, previous)):
+            reasons.append("SOURCE_TIMESTAMP_DUPLICATE_CONFLICT")
+            canonical.append(row)
+            continue
+        collapsed += 1
+        # Keep the latest sample ID so another identical heartbeat can be
+        # checked for strict sample ordering.
+        canonical[-1] = row
+    return canonical, collapsed, sorted(set(reasons))
 
 
 def _source_clock_relation_status(
@@ -170,7 +265,32 @@ def _present_identity(value: Any) -> bool:
 def _lifecycle_transaction_key(event: dict[str, Any]) -> tuple[Any, ...]:
     """Return the producer-declared transaction owner, never a guessed phase key."""
     request_id = event.get("bundle_owner_request_id", event.get("request_id"))
-    cycle_id = event.get("bundle_owner_cycle_id")
+    source = _integer(event.get("bundle_source"))
+    generation = _integer(event.get("bundle_generation"))
+    # Retained-position heading rebind and emergency brake create new
+    # executable generations outside a planner solve. Their own immutable
+    # source + generation is the producer identity; inventing a nearby
+    # planning cycle would misattribute the command.
+    declared_cycle = event.get("bundle_owner_cycle_id")
+    no_execution_rejection = (
+        event.get("phase") == "authorize" and
+        str(event.get("disposition", "")).upper() == "REJECTED" and
+        generation == 0 and (
+            event.get("goal_epoch") == 0 or (
+                _integer(event.get("causal_planning_cycle_id")) == 0 and
+                _integer(declared_cycle) == 0
+            )
+        )
+    )
+    cycle_id = (("no_execution", event.get("sample_id"))
+                if no_execution_rejection else
+                ("terminal_monitor", event.get("captured_bundle_generation"),
+                 event.get("producer_event_sequence"))
+                if event.get("phase") == "retained" and
+                event.get("purpose") == 2 else
+                ("candidate_source", source, generation)
+                if source in {2, 3} and generation and
+                not _present_identity(declared_cycle) else declared_cycle)
     return (
         event.get("runtime_instance_id"),
         event.get("session_id"),
@@ -218,7 +338,40 @@ def reduce_lifecycle(
         for item in (px4_input_trace or [])
         if isinstance(item, dict)
         and item.get("attribution") == "px4_input_trace"
+        # Local velocity hold has no Core command sample or bundle. It is a
+        # separate adapter safety boundary, never an incomplete Core command.
+        and _present_identity(item.get("sample_id"))
+        and _present_identity(item.get("bundle_generation"))
     )
+    normalized.extend(
+        dict(item, phase="planner_emergency_outcome",
+             bundle_source=None, bundle_generation=None)
+        for item in tuple(normalized)
+        if item.get("phase") == "retained" and
+        item.get("disposition_code") == 5 and
+        item.get("purpose") == 0 and
+        _present_identity(item.get("planning_cycle_id")) and
+        _present_identity(item.get("after_bundle_generation"))
+    )
+    normalized.extend(
+        dict(item, purpose=0,
+             producer_projection="emergency_created_by_terminal_monitor")
+        for item in tuple(normalized)
+        if item.get("phase") == "retained" and
+        item.get("disposition_code") == 5 and
+        item.get("purpose") == 2 and
+        _present_identity(item.get("after_bundle_generation"))
+    )
+    for event in normalized:
+        if (event.get("phase") == "retained" and
+                event.get("disposition_code") == 5 and
+                _present_identity(event.get("after_bundle_generation"))):
+            event["bundle_source"] = 3  # CandidateSource::kEmergency
+            event["bundle_generation"] = event["after_bundle_generation"]
+            # This retained validation is an independent emergency producer,
+            # even if its diagnostic trace also names a scheduling tick.
+            event["bundle_owner_cycle_id"] = None
+            event["bundle_owner_attribution"] = "producer_declared"
     # A command can be authorized by a later retained-command validation than
     # the planning cycle which produced its immutable bundle. Build ownership
     # only from export witnesses; treating causal_planning_cycle_id as the
@@ -239,6 +392,26 @@ def reduce_lifecycle(
             owner_cycle
         ):
             export_owners.setdefault(bundle_key, set()).add(owner_cycle)
+
+    authorization_owners: dict[tuple[Any, ...], set[tuple[Any, ...]]] = {}
+    def sample_key(event: dict[str, Any]) -> tuple[Any, ...]:
+        return tuple(event.get(field) for field in (
+            "runtime_instance_id", "session_id", "localization_epoch",
+            "goal_epoch", "request_id", "bundle_generation", "sample_id",
+            "world_generation", "world_revision", "world_observation_stamp_ns",
+        ))
+
+    for event in normalized:
+        if str(event.get("phase", "")) != "authorize":
+            continue
+        owner_key = _lifecycle_transaction_key(event)[5]
+        if (event.get("bundle_owner_attribution") == "producer_declared"
+                and _present_identity(owner_key)) and all(
+            _present_identity(value) for value in sample_key(event)
+        ):
+            authorization_owners.setdefault(sample_key(event), set()).add((
+                event.get("bundle_source"), event.get("bundle_owner_cycle_id"),
+                event.get("bundle_generation")))
 
     for event in normalized:
         phase = str(event.get("phase", ""))
@@ -266,6 +439,31 @@ def reduce_lifecycle(
             continue
         if phase not in {"authorize", "activate", "publish"}:
             continue
+        if (phase in {"authorize", "activate"} and
+                _integer(event.get("bundle_source")) in {2, 3} and
+                _present_identity(event.get("bundle_generation"))):
+            event["bundle_owner_attribution"] = "producer_declared"
+            continue
+        direct_owner = event.get("bundle_owner_cycle_id")
+        if (_present_identity(direct_owner) and
+                event.get("bundle_owner_attribution") == "producer_declared"):
+            event["bundle_owner_attribution"] = "producer_declared"
+            continue
+        if phase == "publish":
+            exact_authorization_owners = authorization_owners.get(sample_key(event), set())
+            if len(exact_authorization_owners) == 1:
+                source, cycle, generation = next(iter(exact_authorization_owners))
+                event["bundle_source"] = source
+                event["bundle_owner_cycle_id"] = cycle
+                if event.get("bundle_generation") != generation:
+                    event["bundle_owner_attribution"] = "identity_conflict"
+                    continue
+                event["bundle_owner_attribution"] = "exact_authorization"
+                continue
+            if len(exact_authorization_owners) > 1:
+                event["bundle_owner_cycle_id"] = None
+                event["bundle_owner_attribution"] = "ambiguous_authorization"
+                continue
         bundle_key = tuple(event.get(field) for field in (
             "runtime_instance_id", "session_id", "localization_epoch",
             "goal_epoch", "request_id", "bundle_generation",
@@ -282,6 +480,7 @@ def reduce_lifecycle(
     transactions: dict[tuple[Any, ...], dict[str, Any]] = {}
     conflicts: list[dict[str, Any]] = []
     unresolved: list[dict[str, Any]] = []
+    unbound_events: list[dict[str, Any]] = []
     seen: dict[tuple[Any, ...], tuple[Any, ...]] = {}
 
     for event in normalized:
@@ -291,15 +490,27 @@ def reduce_lifecycle(
         if phase == "request" and not _present_identity(
             event.get("causal_planning_cycle_id")
         ):
-            # Request and command-timer activation evidence may not carry the
-            # planner cycle. Keep the request unresolved rather than attaching
-            # it to a later planning transaction.
+            # Legacy goal-topic observations are not planner-cycle requests.
+            # Preserve them separately instead of silently dropping the row
+            # or attaching it to the nearest subsequent planner cycle.
+            unbound_events.append({
+                "phase": phase,
+                "reason": "REQUEST_CYCLE_UNAVAILABLE",
+                "request_boundary": event.get("request_boundary"),
+                "request_id": event.get("request_id"),
+            })
             continue
         if phase == "activate" and not _present_identity(
-            event.get("bundle_owner_cycle_id")
+            _lifecycle_transaction_key(event)[5]
         ):
             # Without a unique export witness, command-timer activation has no
             # producer cycle and must not be guessed from observer order.
+            unbound_events.append({
+                "phase": phase,
+                "reason": "ACTIVATION_OWNER_UNRESOLVED",
+                "request_id": event.get("request_id"),
+                "bundle_generation": event.get("bundle_generation"),
+            })
             continue
         disposition = str(event.get("disposition", "")).upper()
         tx_key = _lifecycle_transaction_key(event)
@@ -310,16 +521,29 @@ def reduce_lifecycle(
                 "localization_epoch": tx_key[2],
                 "goal_epoch": tx_key[3],
                 "request_id": tx_key[4],
-                "causal_planning_cycle_id": tx_key[5],
+                "causal_planning_cycle_id": (
+                    tx_key[5] if not isinstance(tx_key[5], tuple) else None),
+                "producer_kind": (
+                    "PLANNING_CYCLE" if not isinstance(tx_key[5], tuple)
+                    else "NO_EXECUTION_SIGNAL" if tx_key[5][0] == "no_execution"
+                    else "TERMINAL_MONITOR" if tx_key[5][0] == "terminal_monitor"
+                    else "HEADING_REBIND" if tx_key[5][1] == 2
+                    else "EMERGENCY_BRAKE"),
+                "producer_id": (
+                    tx_key[5] if not isinstance(tx_key[5], tuple)
+                    else tx_key[5][1] if tx_key[5][0] == "no_execution"
+                    else tx_key[5][1:] if tx_key[5][0] == "terminal_monitor"
+                    else tx_key[5][2]),
             },
             "events": {},
             "events_all": {},
             "status": "INCOMPLETE",
+            "evidence_outcome": "MISSING_EVIDENCE",
             "reasons": [],
             "terminal_outcome": None,
         })
         owner_attribution = event.get("bundle_owner_attribution")
-        if owner_attribution in {"missing_export", "ambiguous_export"}:
+        if owner_attribution in {"missing_export", "ambiguous_export", "ambiguous_authorization"}:
             transaction["reasons"].append(
                 "BUNDLE_OWNER_" + str(owner_attribution).upper()
             )
@@ -347,6 +571,8 @@ def reduce_lifecycle(
         transaction["events_all"].setdefault(phase, []).append(dict(event))
 
     valid_reference_ids: set[tuple[Any, ...]] = set()
+    producer_owned_reference_ids: set[tuple[Any, ...]] = set()
+    producer_authorized_reference_ids: set[tuple[Any, ...]] = set()
     valid_transactions: list[dict[str, Any]] = []
     activation_events = [
         item for item in normalized if str(item.get("phase", "")) == "activate"
@@ -367,49 +593,264 @@ def reduce_lifecycle(
                 ):
                     phase_events["activate"] = dict(candidate)
                     break
-        if any(not _present_identity(identity.get(field)) for field in (
+        identity_fields = (
             "runtime_instance_id", "session_id", "localization_epoch",
-            "goal_epoch", "request_id", "causal_planning_cycle_id",
-        )):
+            "request_id", "producer_id",
+        ) if identity["producer_kind"] == "NO_EXECUTION_SIGNAL" else (
+            "runtime_instance_id", "session_id", "localization_epoch",
+            "goal_epoch", "request_id", "producer_id",
+        )
+        if any(not _present_identity(identity.get(field)) for field in identity_fields):
             transaction["reasons"].append("LIFECYCLE_IDENTITY_MISSING")
         request = phase_events.get("request")
+        result = phase_events.get("result")
+        retained = phase_events.get("retained")
+        supersede = phase_events.get("supersede")
+        recovery_retry = phase_events.get("recovery_retry")
+        planner_emergency = phase_events.get("planner_emergency_outcome")
         authorize = phase_events.get("authorize")
         export = phase_events.get("export")
         activate = phase_events.get("activate")
         publish = phase_events.get("publish")
+        heading_admitted = phase_events.get("heading_admitted")
+        producer_kind = identity["producer_kind"]
+        if producer_kind == "NO_EXECUTION_SIGNAL":
+            if (authorize and authorize.get("disposition") == "REJECTED" and
+                    authorize.get("authorization_boundary") ==
+                        "execution_timeline_publish_if_current" and
+                    _present_identity(authorize.get("authorization_steady_ns")) and
+                    authorize.get("goal_epoch") == identity.get("goal_epoch") and
+                    authorize.get("request_id") == identity.get("request_id") and
+                    authorize.get("localization_epoch") == identity.get("localization_epoch") and
+                    authorize.get("bundle_generation") == 0 and
+                    authorize.get("sample_id") == identity["producer_id"] and
+                    not transaction["reasons"]):
+                transaction["status"] = "VALID_REJECT"
+                transaction["terminal_outcome"] = "NO_EXECUTION_AUTHORITY"
+                transaction["evidence_outcome"] = "INTENTIONALLY_ABSENT"
+            else:
+                transaction["reasons"].append("NO_EXECUTION_REJECTION_WITNESS_INVALID")
+            continue
+        if producer_kind == "TERMINAL_MONITOR":
+            monitor_generation = retained.get("captured_bundle_generation") if retained else None
+            monitor_sequence = retained.get("producer_event_sequence") if retained else None
+            disposition = retained.get("disposition_code") if retained else None
+            identity_complete = (
+                _present_identity(monitor_generation) and
+                _present_identity(monitor_sequence) and
+                _present_identity(retained.get("state_ingress_sequence")) and
+                _present_identity(retained.get("final_state_source_ros_ns")) and
+                _present_identity(retained.get("final_state_receive_steady_ns"))) if retained else False
+            if not identity_complete:
+                transaction["reasons"].append("TERMINAL_MONITOR_CAUSAL_WITNESS_MISSING")
+            elif (disposition == 8 and
+                  retained.get("owner_snapshot_current") == 1 and
+                  retained.get("callback_request_current") == 1 and
+                  retained.get("monitor_window_current") == 1 and
+                  retained.get("after_command_available") == 1 and
+                  retained.get("after_failure_latched") == 0 and
+                  retained.get("after_bundle_generation") == monitor_generation and
+                  retained.get("final_freshness_reason") == 0 and
+                  retained.get("final_witness_age_bounded") == 1 and
+                  retained.get("final_body_known_free") == 1 and
+                  retained.get("final_anchor_valid") == 1 and
+                  not transaction["reasons"]):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "CERTIFIED_COMMAND_PRESERVED"
+                transaction["evidence_outcome"] = "RESOLVED"
+                continue
+            elif (disposition in {2, 3} and
+                  (retained.get("owner_snapshot_current") == 0 or
+                   retained.get("callback_request_current") == 0 or
+                   retained.get("monitor_window_current") == 0) and
+                  not transaction["reasons"]):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "STALE_MONITOR_DISCARDED"
+                transaction["evidence_outcome"] = "SUPERSEDED"
+                continue
+            elif (disposition == 4 and
+                  retained.get("after_command_available") == 0 and
+                  retained.get("after_failure_latched") == 1 and
+                  not transaction["reasons"]):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "MONITOR_FAIL_CLOSED"
+                transaction["evidence_outcome"] = "RESOLVED"
+                continue
+            elif (disposition == 5 and
+                  _present_identity(retained.get("after_bundle_generation")) and
+                  retained.get("after_bundle_generation") != monitor_generation and
+                  retained.get("callback_request_current") == 1 and
+                  retained.get("after_command_available") == 1 and
+                  retained.get("after_failure_latched") == 0 and
+                  retained.get("final_freshness_reason") == 0 and
+                  retained.get("final_witness_age_bounded") == 1 and
+                  not transaction["reasons"]):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "EMERGENCY_COMMITTED"
+                transaction["evidence_outcome"] = "RESOLVED"
+                continue
+            transaction["reasons"].append("TERMINAL_MONITOR_OUTCOME_UNVERIFIED")
+            continue
+        if supersede is not None:
+            old_generation = supersede.get("bundle_generation")
+            replacement_generation = supersede.get("replacement_bundle_generation")
+            source_present = heading_admitted is not None or (
+                request is not None and result is not None and export is not None)
+            revision_cleared = (
+                replacement_generation == 0 and
+                _integer(supersede.get("admission_goal_epoch")) is not None and
+                supersede["admission_goal_epoch"] > identity["goal_epoch"])
+            replaced = (_present_identity(replacement_generation) and
+                        old_generation != replacement_generation)
+            if (source_present and _present_identity(old_generation) and
+                    (replaced or revision_cleared) and
+                    _integer(supersede.get("current_snapshot_version")) is not None and
+                    _integer(supersede.get("previous_snapshot_version")) is not None and
+                    supersede["current_snapshot_version"] >
+                        supersede["previous_snapshot_version"] and
+                    not transaction["reasons"]):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "SUPERSEDED_PENDING"
+                transaction["evidence_outcome"] = "SUPERSEDED"
+                continue
+        if (request and result and planner_emergency and export is None and
+                result.get("planner_status") == 4 and
+                result.get("planner_disposition") == 4 and
+                result.get("runtime_admission_attempted") is False and
+                planner_emergency.get("disposition_code") == 5 and
+                planner_emergency.get("callback_request_current") == 1 and
+                planner_emergency.get("after_command_available") == 1 and
+                planner_emergency.get("after_failure_latched") == 0 and
+                _present_identity(planner_emergency.get("after_bundle_generation")) and
+                not transaction["reasons"]):
+            transaction["status"] = "VALID_TERMINAL"
+            transaction["terminal_outcome"] = "EMERGENCY_COMMITTED"
+            transaction["evidence_outcome"] = "RESOLVED"
+            continue
+        if request and result and recovery_retry and not transaction["reasons"]:
+            disposition = recovery_retry.get("disposition")
+            if (disposition == "SUPERSEDED" and
+                    recovery_retry.get("identity_current") is False):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "STALE_RETRY_DISCARDED"
+                transaction["evidence_outcome"] = "SUPERSEDED"
+                continue
+            if (disposition == "RETRY_SCHEDULED" and
+                    recovery_retry.get("identity_current") is True and
+                    recovery_retry.get("timeout") is False and
+                    recovery_retry.get("after_failed") is False):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "RECOVERY_RETRY_SCHEDULED"
+                transaction["evidence_outcome"] = "INTENTIONALLY_ABSENT"
+                continue
+            if (disposition == "FAIL_CLOSED" and
+                    recovery_retry.get("identity_current") is True and
+                    recovery_retry.get("timeout") is True and
+                    recovery_retry.get("after_failed") is True):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "RECOVERY_TIMEOUT_FAIL_CLOSED"
+                transaction["evidence_outcome"] = "RESOLVED"
+                continue
         request_disposition = str(request.get("disposition", "")).upper() if request else ""
         if request_disposition in _TERMINAL_REJECT_DISPOSITIONS:
             transaction["terminal_outcome"] = request_disposition
             transaction["status"] = "VALID_REJECT" if not transaction["reasons"] else "CONFLICTING"
+            transaction["evidence_outcome"] = (
+                "CONFLICTING_EVIDENCE" if transaction["reasons"] else
+                "SUPERSEDED" if request_disposition == "SUPERSEDED" else
+                "INTENTIONALLY_ABSENT"
+            )
             continue
         if authorize and str(authorize.get("disposition", "")).upper() in _TERMINAL_REJECT_DISPOSITIONS:
             transaction["terminal_outcome"] = str(authorize.get("disposition")).upper()
             transaction["status"] = "VALID_REJECT" if not transaction["reasons"] else "CONFLICTING"
+            transaction["evidence_outcome"] = (
+                "CONFLICTING_EVIDENCE" if transaction["reasons"] else
+                "SUPERSEDED" if transaction["terminal_outcome"] == "SUPERSEDED" else
+                "INTENTIONALLY_ABSENT"
+            )
             continue
-        required = {
+        if request and result and retained and export is None:
+            # A replacement solve can deliberately produce no new bundle.
+            # Resolve only from the actual retained-decision producer event,
+            # with the exact desired solve cycle and the exact incumbent
+            # disposition. Planner classification alone is not a validator.
+            disposition = retained.get("disposition_code")
+            if (result.get("planner_disposition") in {3, 4}
+                    and result.get("runtime_admission_attempted") is False
+                    and disposition in {6, 7, 8}
+                    and retained.get("after_command_available") == 1
+                    and retained.get("after_failure_latched") == 0
+                    and retained.get("owner_snapshot_current") == 1
+                    and retained.get("callback_request_current") == 1
+                    and not transaction["reasons"]):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "RETAINED_INCUMBENT"
+                transaction["evidence_outcome"] = "INTENTIONALLY_ABSENT"
+                continue
+            if disposition in {2, 3} and not transaction["reasons"]:
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = (
+                    "STALE_DISCARDED" if disposition == 2 else "SUPERSEDED"
+                )
+                transaction["evidence_outcome"] = transaction["terminal_outcome"]
+                continue
+            if (disposition == 4 and retained.get("owner_snapshot_current") == 1
+                    and retained.get("callback_request_current") == 1
+                    and retained.get("after_command_available") == 0
+                    and retained.get("after_failure_latched") == 1
+                    and not transaction["reasons"]):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "FAIL_CLOSED"
+                transaction["evidence_outcome"] = "RESOLVED"
+                continue
+        required = ({
+            "heading_admitted": heading_admitted,
+            "activate": activate,
+            "authorize": authorize,
+            "publish": publish,
+        } if producer_kind == "HEADING_REBIND" else {
+            "retained": retained,
+            "authorize": authorize,
+            "publish": publish,
+        } if producer_kind == "EMERGENCY_BRAKE" else {
             "request": request,
             "authorize": authorize,
             "export": export,
             "activate": activate,
             "publish": publish,
-        }
+        })
         missing = [phase for phase, value in required.items() if value is None]
         if missing:
             transaction["reasons"].extend(
                 f"LIFECYCLE_PHASE_INCOMPLETE:{phase}" for phase in missing
             )
         for phase, value in required.items():
-            if value is not None and str(value.get("disposition", "")).upper() not in _SUCCESS_DISPOSITIONS:
+            if value is not None and str(value.get("disposition", "")).upper() not in (
+                _SUCCESS_DISPOSITIONS | {"ADMITTED"}
+            ):
                 transaction["reasons"].append(f"LIFECYCLE_{phase.upper()}_NOT_SUCCESSFUL")
+        if producer_kind == "EMERGENCY_BRAKE" and retained is not None:
+            if (retained.get("disposition_code") != 5 or
+                    retained.get("after_bundle_generation") != identity["producer_id"] or
+                    retained.get("after_command_available") != 1 or
+                    retained.get("after_failure_latched") != 0):
+                transaction["reasons"].append("EMERGENCY_COMMIT_WITNESS_INVALID")
+        if producer_kind == "HEADING_REBIND" and heading_admitted is not None:
+            if (heading_admitted.get("bundle_generation") != identity["producer_id"] or
+                    not _present_identity(heading_admitted.get("parent_bundle_generation"))):
+                transaction["reasons"].append("HEADING_REBIND_ORIGIN_INVALID")
         if export is not None and not _present_identity(export.get("bundle_generation")):
             transaction["reasons"].append("BUNDLE_IDENTITY_MISSING")
         bundle_generations = {
             item.get("bundle_generation")
-            for phase in ("authorize", "export", "activate", "publish")
+            for phase in ("authorize", "export", "activate", "publish", "heading_admitted", "retained")
             for item in transaction["events_all"].get(phase, [])
             if _present_identity(item.get("bundle_generation"))
         }
-        if len(bundle_generations) != 1:
+        if not bundle_generations:
+            transaction["reasons"].append("BUNDLE_IDENTITY_MISSING")
+        elif len(bundle_generations) > 1:
             transaction["reasons"].append("BUNDLE_IDENTITY_CONFLICT")
         if publish is not None:
             if not _present_identity(publish.get("sample_id")):
@@ -455,20 +896,77 @@ def reduce_lifecycle(
             valid_publishes.append(publish_event)
         if not transaction["reasons"]:
             transaction["status"] = "VALID"
+            transaction["evidence_outcome"] = "RESOLVED"
             valid_transactions.append(transaction)
+            for authorization in authorize_events:
+                if (str(authorization.get("disposition", "")).upper() ==
+                        "AUTHORIZED" and
+                        authorization.get("bundle_owner_attribution") ==
+                            "producer_declared" and
+                        all(_present_identity(authorization.get(field)) for field in (
+                            "sample_id", "bundle_generation", "world_generation",
+                            "world_revision", "world_observation_stamp_ns",
+                        ))):
+                    producer_authorized_reference_ids.add((
+                        identity.get("runtime_instance_id"),
+                        identity.get("session_id"),
+                        identity.get("localization_epoch"),
+                        identity.get("goal_epoch"),
+                        identity.get("request_id"),
+                        authorization.get("bundle_generation"),
+                        authorization.get("sample_id"),
+                        authorization.get("world_generation"),
+                        authorization.get("world_revision"),
+                        authorization.get("world_observation_stamp_ns"),
+                    ))
             for publish_event in valid_publishes:
+                effective_generation = (
+                    export.get("bundle_generation") if export else
+                    identity["producer_id"])
                 valid_reference_ids.add((
                     identity.get("request_id"),
-                    export.get("bundle_generation") if export else None,
+                    effective_generation,
                     publish_event.get("sample_id"),
                 ))
+                origin_confirmed = (
+                    activate and activate.get("bundle_owner_attribution") ==
+                        "producer_declared" and
+                    (export is not None or heading_admitted is not None)
+                ) or (producer_kind == "EMERGENCY_BRAKE" and retained is not None)
+                if (authorize and origin_confirmed and
+                        authorize.get("bundle_owner_attribution") == "producer_declared"
+                        and publish_event.get("bundle_owner_attribution") ==
+                            "exact_authorization"):
+                    producer_owned_reference_ids.add((
+                        identity.get("runtime_instance_id"),
+                        identity.get("session_id"),
+                        identity.get("localization_epoch"),
+                        identity.get("goal_epoch"),
+                        identity.get("request_id"),
+                        effective_generation,
+                        publish_event.get("sample_id"),
+                        publish_event.get("world_generation"),
+                        publish_event.get("world_revision"),
+                        publish_event.get("world_observation_stamp_ns"),
+                    ))
         else:
+            transaction["evidence_outcome"] = (
+                "CONFLICTING_EVIDENCE" if "CONFLICTING_EVIDENCE" in transaction["reasons"]
+                else "MISSING_EVIDENCE"
+            )
             unresolved.append(transaction)
 
+    # Early terminal branches must not bypass unresolved accounting. Derive
+    # this from final transaction status instead of loop fallthrough.
+    unresolved = [
+        transaction for transaction in transactions.values()
+        if transaction["status"] not in {"VALID", "VALID_TERMINAL", "VALID_REJECT"}
+    ]
+    critical_unbound = [item for item in unbound_events if item["phase"] == "activate"]
     return {
         "status": (
             "CONFLICTING" if conflicts else
-            "INCOMPLETE" if unresolved else
+            "INCOMPLETE" if unresolved or critical_unbound else
             "VALID" if valid_transactions else
             "INCOMPLETE"
         ),
@@ -480,11 +978,19 @@ def reduce_lifecycle(
         ),
         "valid_transaction_count": len(valid_transactions),
         "valid_reference_ids": [list(item) for item in sorted(valid_reference_ids, key=str)],
+        "producer_owned_reference_ids": [
+            list(item) for item in sorted(producer_owned_reference_ids, key=str)
+        ],
+        "producer_authorized_reference_ids": [
+            list(item) for item in sorted(producer_authorized_reference_ids, key=str)
+        ],
         "conflicts": conflicts,
         "unresolved": unresolved,
+        "unbound_events": unbound_events,
         "reasons": sorted(set(
             reason for item in transactions.values() for reason in item["reasons"]
-        ) | ({"CONFLICTING_EVIDENCE"} if conflicts else set())),
+        ) | ({"CONFLICTING_EVIDENCE"} if conflicts else set())
+          | {item["reason"] for item in critical_unbound}),
         "order_independent": True,
     }
 
@@ -725,6 +1231,274 @@ def _artifact_count_reasons(
     return reasons
 
 
+def reduce_world_transactions(
+    events: Iterable[dict[str, Any]],
+    producer_counts: Iterable[dict[str, Any]],
+    writer: dict[str, Any],
+    *,
+    required: bool = False,
+    expected_event_kinds: Iterable[str] = (),
+    expected_transaction_count: int | None = None,
+) -> dict[str, Any]:
+    """Reduce producer-declared World evidence by exact identity.
+
+    This is an evidence consistency reducer only. It does not assess or feed
+    WorldModel/ExecutionAuthority decisions. No event is associated by nearest
+    timestamp; the producer sequence and declared transaction key own joins.
+    """
+    normalized = [dict(item) for item in events if isinstance(item, dict)]
+    counts = [dict(item) for item in producer_counts if isinstance(item, dict)]
+    expected_kinds = tuple(str(item) for item in expected_event_kinds)
+    by_sequence: dict[tuple[str, int], tuple[Any, ...]] = {}
+    conflicts: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    transactions: dict[str, dict[str, Any]] = {}
+    for event in normalized:
+        sequence = _integer(event.get("producer_event_sequence"))
+        runtime_instance = str(event.get("producer_runtime_instance_id") or "")
+        kind = str(event.get("event_kind", ""))
+        tx_key = str(event.get("transaction_key", ""))
+        signature = tuple(event.get(key) for key in (
+            "event_kind", "disposition", "transaction_key",
+            "prior_world_generation", "prior_world_revision",
+            "prior_world_source_stamp_ns", "next_world_generation",
+            "next_world_revision", "next_world_source_stamp_ns",
+            "before_timeline_version", "after_timeline_version",
+            "before_active_generation", "after_active_generation",
+            "before_pending_generation", "after_pending_generation",
+        ))
+        if sequence is None or sequence <= 0 or not runtime_instance or not kind or not tx_key:
+            unresolved.append({"producer_event_sequence": sequence,
+                              "reason": "WORLD_EVENT_IDENTITY_MISSING"})
+            continue
+        identity_fields = (
+            "before_timeline_version", "after_timeline_version",
+            "next_world_localization_epoch", "next_world_generation",
+            "next_world_revision", "next_world_source_stamp_ns",
+        )
+        identity = {field: _integer(event.get(field)) for field in identity_fields}
+        if (any(value is None or value <= 0 for field, value in identity.items()
+                if field != "next_world_source_stamp_ns") or
+                identity["next_world_source_stamp_ns"] is None or
+                identity["next_world_source_stamp_ns"] < 0):
+            unresolved.append({"producer_event_sequence": sequence,
+                               "reason": "WORLD_EVENT_REFERENCE_MISSING"})
+        expected_key = ":".join(str(identity[field]) for field in (
+            "before_timeline_version", "next_world_localization_epoch",
+            "next_world_generation", "next_world_revision",
+            "next_world_source_stamp_ns"))
+        if tx_key != expected_key:
+            conflicts.append({"producer_event_sequence": sequence,
+                              "reason": "WORLD_TRANSACTION_KEY_MISMATCH",
+                              "transaction_key": tx_key,
+                              "expected_transaction_key": expected_key})
+        for prefix in ("before", "after"):
+            active_generation = _integer(event.get(f"{prefix}_active_generation"))
+            pending_generation = _integer(event.get(f"{prefix}_pending_generation"))
+            if active_generation is None or active_generation < 0 or \
+                    pending_generation is None or pending_generation < 0:
+                unresolved.append({"producer_event_sequence": sequence,
+                                   "reason": f"WORLD_{prefix.upper()}_EXECUTION_IDENTITY_MISSING"})
+                continue
+            if active_generation > 0 and any(
+                (_integer(event.get(f"{prefix}_active_{field}")) or 0) <= 0
+                for field in ("goal_epoch", "request_id")
+            ):
+                unresolved.append({"producer_event_sequence": sequence,
+                                   "reason": f"WORLD_{prefix.upper()}_ACTIVE_IDENTITY_INCOMPLETE"})
+            if pending_generation > 0 and any(
+                (_integer(event.get(f"{prefix}_pending_{field}")) or 0) <= 0
+                for field in ("goal_epoch", "request_id")
+            ):
+                unresolved.append({"producer_event_sequence": sequence,
+                                   "reason": f"WORLD_{prefix.upper()}_PENDING_IDENTITY_INCOMPLETE"})
+        sequence_key = (runtime_instance, sequence)
+        previous = by_sequence.get(sequence_key)
+        if previous is not None:
+            if previous != signature:
+                conflicts.append({"producer_event_sequence": sequence,
+                                  "reason": "WORLD_EVENT_SEQUENCE_CONFLICT"})
+            continue
+        by_sequence[sequence_key] = signature
+        item = transactions.setdefault(tx_key, {
+            "transaction_key": tx_key,
+            "events": [],
+            "status": "RESOLVED",
+        })
+        item["events"].append(kind)
+        if kind == "WORLD_PUBLICATION_SUPERSEDED":
+            item["status"] = "SUPERSEDED"
+        elif kind == "WORLD_COMMAND_SUSPENDED":
+            item["status"] = "SUSPENDED"
+        elif kind == "WORLD_COMMAND_RECERTIFIED":
+            item["status"] = "RECERTIFIED"
+        elif kind == "WORLD_COMMAND_RESUMED":
+            item["status"] = "RESUMED"
+        elif kind == "WORLD_PUBLICATION_FAILED" or kind == "WORLD_RECERTIFICATION_REJECTED":
+            item["status"] = "INVALIDATED"
+        elif kind == "WORLD_PUBLICATION_COMMITTED":
+            item["status"] = (
+                "INVALIDATED" if "INVALIDATED" in str(event.get("disposition", ""))
+                else "RESOLVED"
+            )
+
+    sequences_by_runtime: dict[str, list[int]] = {}
+    for runtime_instance, sequence in by_sequence:
+        sequences_by_runtime.setdefault(runtime_instance, []).append(sequence)
+    sequence_gaps: list[dict[str, Any]] = []
+    for runtime_instance, sequences in sequences_by_runtime.items():
+        ordered = sorted(sequences)
+        sequence_gaps.extend({
+            "runtime_instance_id": runtime_instance,
+            "missing_sequences": [left + 1, right - 1],
+        } for left, right in zip(ordered, ordered[1:]) if right > left + 1)
+    counter_values_by_runtime: dict[str, list[int]] = {}
+    for item in counts:
+        runtime_instance = str(item.get("producer_runtime_instance_id") or "")
+        value = _integer(item.get("events_produced"))
+        if not runtime_instance or value is None or value < 0:
+            unresolved.append({"reason": "WORLD_PRODUCER_COUNTER_IDENTITY_MISSING"})
+            continue
+        counter_values_by_runtime.setdefault(runtime_instance, []).append(value)
+    for runtime_instance, values in counter_values_by_runtime.items():
+        if any(right < left for left, right in zip(values, values[1:])):
+            unresolved.append({"reason": "WORLD_PRODUCER_COUNTER_REGRESSION",
+                               "runtime_instance_id": runtime_instance})
+    producer_runtime_ids = set(sequences_by_runtime) | set(counter_values_by_runtime)
+    produced_by_runtime = {
+        runtime: max(values) for runtime, values in counter_values_by_runtime.items()
+    }
+    produced_total = max(produced_by_runtime.values(), default=None)
+    all_observed_sequences = [sequence for values in sequences_by_runtime.values()
+                              for sequence in values]
+    first_observed_sequence = min(all_observed_sequences, default=None)
+    last_observed_sequence = max(all_observed_sequences, default=None)
+    category = writer.get("records_by_category", {}).get("world_transaction", {})
+    count_category = writer.get("records_by_category", {}).get(
+        "world_transaction_producer_count", {})
+    written = _integer(category.get("written_records"))
+    submitted = _integer(category.get("submitted_records"))
+    dropped = _integer(category.get("dropped_records"))
+    writer_errors = (_integer(writer.get("serialization_error_count")) or 0) + (
+        _integer(writer.get("write_error_count")) or 0)
+    expected_missing = sorted(set(expected_kinds) - {
+        str(event.get("event_kind", "")) for event in normalized
+    })
+    reference_missing = sum(
+        not all((_integer(event.get(field)) or 0) > 0 for field in (
+            "next_world_localization_epoch", "next_world_generation",
+            "next_world_revision", "next_world_source_stamp_ns",
+        ))
+        for event in normalized
+    )
+    reference_conflicts = sum(
+        item.get("reason") in {
+            "WORLD_TRANSACTION_KEY_MISMATCH", "WORLD_EVENT_SEQUENCE_CONFLICT",
+            "WORLD_EVENT_AHEAD_OF_PRODUCER_COUNT",
+        }
+        for item in conflicts
+    )
+    if sequence_gaps:
+        unresolved.extend({"reason": "WORLD_PRODUCER_SEQUENCE_GAP", **gap}
+                          for gap in sequence_gaps)
+    if written is not None and written != len(normalized):
+        unresolved.append({"reason": "WORLD_WRITER_ARTIFACT_COUNT_MISMATCH"})
+    if dropped:
+        unresolved.append({"reason": "WORLD_EVIDENCE_DROPPED", "count": dropped})
+    if writer_errors:
+        unresolved.append({"reason": "WORLD_EVIDENCE_WRITER_ERROR", "count": writer_errors})
+    count_written = _integer(count_category.get("written_records"))
+    count_dropped = _integer(count_category.get("dropped_records"))
+    if count_written is not None and count_written != len(counts):
+        unresolved.append({"reason": "WORLD_PRODUCER_COUNT_ARTIFACT_MISMATCH"})
+    if count_dropped:
+        unresolved.append({"reason": "WORLD_PRODUCER_COUNT_DROPPED",
+                           "count": count_dropped})
+    if required:
+        if not expected_kinds:
+            unresolved.append({"reason": "WORLD_EXPECTED_EVENT_KINDS_MISSING"})
+        unresolved.extend({"reason": "REQUIRED_WORLD_EVENT_MISSING", "event_kind": kind}
+                          for kind in expected_missing)
+        if produced_total is None or not counts:
+            unresolved.append({"reason": "WORLD_PRODUCER_COUNT_WITNESS_MISSING"})
+        if len(producer_runtime_ids) != 1:
+            unresolved.append({"reason": "WORLD_RUNTIME_INSTANCE_CHANGED_OR_MISSING",
+                               "runtime_instance_ids": sorted(producer_runtime_ids)})
+        for runtime_instance, produced in produced_by_runtime.items():
+            observed = sorted(sequences_by_runtime.get(runtime_instance, []))
+            if observed and observed[-1] < produced:
+                unresolved.append({"reason": "WORLD_EVENT_TAIL_MISSING",
+                                   "runtime_instance_id": runtime_instance,
+                                   "last_event_sequence": observed[-1],
+                                   "producer_count": produced})
+            elif observed and produced < observed[-1]:
+                conflicts.append({"reason": "WORLD_EVENT_AHEAD_OF_PRODUCER_COUNT",
+                                  "runtime_instance_id": runtime_instance,
+                                  "last_event_sequence": observed[-1],
+                                  "producer_count": produced})
+        if expected_transaction_count is None or expected_transaction_count < 0:
+            unresolved.append({"reason": "WORLD_EXPECTED_TRANSACTION_COUNT_MISSING"})
+        elif len(transactions) < expected_transaction_count:
+            unresolved.append({"reason": "WORLD_REQUIRED_TRANSACTION_MISSING",
+                               "expected": expected_transaction_count,
+                               "observed": len(transactions)})
+    event_written = _integer(category.get("written_records"))
+    event_submitted = _integer(category.get("submitted_records"))
+    event_accepted = _integer(category.get("accepted_records"))
+    event_dropped = _integer(category.get("dropped_records"))
+    count_written = _integer(count_category.get("written_records"))
+    count_submitted = _integer(count_category.get("submitted_records"))
+    count_accepted = _integer(count_category.get("accepted_records"))
+    count_dropped = _integer(count_category.get("dropped_records"))
+    if required:
+        if any(value is None for value in (
+            event_written, event_submitted, event_accepted, event_dropped,
+            count_written, count_submitted, count_accepted, count_dropped,
+        )):
+            unresolved.append({"reason": "WORLD_WRITER_CATEGORY_ACCOUNTING_MISSING"})
+        if event_written is not None and event_written != len(normalized):
+            unresolved.append({"reason": "WORLD_WRITER_ARTIFACT_COUNT_MISMATCH"})
+        if count_written is not None and count_written != len(counts):
+            unresolved.append({"reason": "WORLD_PRODUCER_COUNT_ARTIFACT_MISMATCH"})
+        for label, submitted_value, accepted_value, written_value, dropped_value in (
+            ("EVENT", event_submitted, event_accepted, event_written, event_dropped),
+            ("COUNT", count_submitted, count_accepted, count_written, count_dropped),
+        ):
+            if None not in (submitted_value, accepted_value, written_value, dropped_value) and (
+                submitted_value != accepted_value + dropped_value or
+                accepted_value != written_value
+            ):
+                unresolved.append({"reason": f"WORLD_{label}_WRITER_ACCOUNTING_MISMATCH"})
+    return {
+        "required": bool(required),
+        "status": "CONFLICTING" if conflicts else
+                  "INCOMPLETE" if required and unresolved else "RESOLVED",
+        "required_world_transactions": (
+            expected_transaction_count if required and
+            expected_transaction_count is not None else 0),
+        "resolved_world_transactions": len(transactions),
+        "required_world_unresolved": len(unresolved) if required else 0,
+        "required_world_conflicts": len(conflicts) if required else 0,
+        "required_world_reference_missing": reference_missing if required else 0,
+        "required_world_reference_conflicts": reference_conflicts if required else 0,
+        "required_world_events_produced": produced_total,
+        "required_world_events_observed": len(normalized),
+        "first_observed_producer_sequence": first_observed_sequence,
+        "last_observed_producer_sequence": last_observed_sequence,
+        "required_world_events_submitted": submitted,
+        "required_world_events_written": written,
+        "required_world_events_dropped": dropped,
+        "required_world_events_serialization_failures":
+            _integer(writer.get("serialization_error_count")) or 0,
+        "required_world_events_writer_failures":
+            _integer(writer.get("write_error_count")) or 0,
+        "sequence_gaps": sequence_gaps,
+        "transactions": list(transactions.values()),
+        "unresolved": unresolved,
+        "conflicts": conflicts,
+    }
+
+
 def load_evaluation_inputs(
     session: Path,
     config: dict[str, Any] | None = None,
@@ -744,6 +1518,7 @@ def load_evaluation_inputs(
     scenario_events = _read_jsonl(
         session / "scenario.jsonl", issues=read_issues, label="scenario"
     )
+    read_issues.extend(join_execution_diagnostics(scenario_events))
     sample_rows = _read_jsonl(
         session / "samples.jsonl", issues=read_issues, label="monitor"
     )
@@ -799,14 +1574,36 @@ def load_evaluation_inputs(
         if event.get("kind") == "px4_input_trace"
         and isinstance(event.get("payload"), dict)
     ]
-    actual_config = config if isinstance(config, dict) else {}
-    if not actual_config:
-        try:
-            import yaml
-            raw = yaml.safe_load((session / "scenario_config.yaml").read_text(encoding="utf-8"))
-            actual_config = raw if isinstance(raw, dict) else {}
-        except (ImportError, OSError, ValueError):
-            actual_config = {}
+    world_transactions = [
+        event.get("payload", {}) for event in scenario_events
+        if event.get("kind") == "world_transaction"
+        and isinstance(event.get("payload"), dict)
+    ]
+    world_producer_counts = [
+        event.get("payload", {}) for event in scenario_events
+        if event.get("kind") == "world_transaction_producer_count"
+        and isinstance(event.get("payload"), dict)
+    ]
+    actual_config = dict(config) if isinstance(config, dict) else {}
+    # The report builder supplies its runtime/evaluation config, which can be
+    # non-empty while omitting the per-run scenario overlay.  Always merge the
+    # immutable session manifest so run-specific evidence requirements (for
+    # example required World transactions) are not silently lost.
+    try:
+        import yaml
+        raw = yaml.safe_load((session / "scenario_config.yaml").read_text(encoding="utf-8"))
+        session_config = raw if isinstance(raw, dict) else {}
+    except (ImportError, OSError, ValueError):
+        session_config = {}
+    if session_config:
+        merged_config = dict(actual_config)
+        configured_scenario = actual_config.get("scenario", {})
+        session_scenario = session_config.get("scenario", {})
+        merged_scenario = dict(configured_scenario) if isinstance(configured_scenario, dict) else {}
+        if isinstance(session_scenario, dict):
+            merged_scenario.update(session_scenario)
+        merged_config["scenario"] = merged_scenario
+        actual_config = merged_config
     configured_scenario = actual_config.get("scenario", {}) if isinstance(actual_config, dict) else {}
     if not isinstance(configured_scenario, dict):
         configured_scenario = {}
@@ -837,6 +1634,23 @@ def load_evaluation_inputs(
     if not isinstance(monitor_writer, dict):
         monitor_writer = {}
     lifecycle_reduction = reduce_lifecycle(lifecycle, px4_input_trace)
+    world_required = bool(
+        scenario.get("world_evidence_required", False) or
+        configured_scenario.get("world_evidence_required", False)
+    )
+    expected_world_kinds = scenario.get(
+        "required_world_event_kinds",
+        configured_scenario.get("required_world_event_kinds", ()),
+    )
+    if not isinstance(expected_world_kinds, (list, tuple)):
+        expected_world_kinds = ()
+    world_transaction_reduction = reduce_world_transactions(
+        world_transactions, world_producer_counts, writer,
+        required=world_required, expected_event_kinds=expected_world_kinds,
+        expected_transaction_count=_integer(scenario.get(
+            "required_world_transactions",
+            configured_scenario.get("required_world_transactions"))),
+    )
     completeness_reasons: list[str] = list(read_issues)
     if not (session / "scenario.jsonl").is_file():
         completeness_reasons.append("scenario event stream is missing")
@@ -875,7 +1689,7 @@ def load_evaluation_inputs(
         completeness_reasons.append(f"EVIDENCE_GAP:{reason}")
     if lifecycle_reduction["status"] == "CONFLICTING":
         completeness_reasons.append("CONFLICTING_EVIDENCE")
-    if lifecycle_reduction.get("unresolved"):
+    if lifecycle_reduction["status"] == "INCOMPLETE":
         completeness_reasons.append("LIFECYCLE_ATTRIBUTION_INCOMPLETE")
     if any(
         int(_number(item.get("trace_drop_count")) or 0) > 0
@@ -951,6 +1765,9 @@ def load_evaluation_inputs(
         "scenario_events": scenario_events,
         "lifecycle": lifecycle,
         "lifecycle_reduction": lifecycle_reduction,
+        "world_transactions": world_transactions,
+        "world_transaction_reduction": world_transaction_reduction,
+        "world_evidence_required": world_required,
         "px4_input_trace": px4_input_trace,
         "streams": streams,
         "monitor_sample_counts": monitor_sample_counts,
@@ -1293,6 +2110,20 @@ def _tracking_coverage(
             "uncovered_intervals": [], "status": "NOT_EVALUABLE",
             "reason": "TRACKING_COVERAGE_POLICY_UNAVAILABLE",
         }, ["TRACKING_COVERAGE_POLICY_UNAVAILABLE"]
+    if not isinstance(policy.get("provenance"), str) or not policy["provenance"].strip():
+        return {
+            "required_duration_s": None, "valid_duration_s": None,
+            "coverage_ratio": None, "longest_uncovered_interval_s": None,
+            "uncovered_intervals": [], "status": "NOT_EVALUABLE",
+            "reason": "TRACKING_COVERAGE_POLICY_PROVENANCE_MISSING",
+        }, ["TRACKING_COVERAGE_POLICY_PROVENANCE_MISSING"]
+    if not isinstance(policy.get("version"), str) or not policy["version"].strip():
+        return {
+            "required_duration_s": None, "valid_duration_s": None,
+            "coverage_ratio": None, "longest_uncovered_interval_s": None,
+            "uncovered_intervals": [], "status": "NOT_EVALUABLE",
+            "reason": "TRACKING_COVERAGE_POLICY_VERSION_MISSING",
+        }, ["TRACKING_COVERAGE_POLICY_VERSION_MISSING"]
     minimum_ratio = float(policy["min_coverage_ratio"])
     maximum_uncovered = float(policy["max_uncovered_interval_s"])
     maximum_pairing_gap = float(policy["max_pairing_gap_s"])
@@ -1394,25 +2225,37 @@ def _reference_lineage_status(
 
 
 def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MATCH_GAP_S) -> dict[str, Any]:
-    reference = [item for item in inputs.get("pva", []) if item.get("executable", True) is not False]
+    raw_reference = [item for item in inputs.get("pva", []) if item.get("executable", True) is not False]
+    reference, collapsed_heartbeats, heartbeat_reasons = _canonical_reference_heartbeats(raw_reference)
     truth = inputs.get("streams", {}).get("ground_truth_odometry", [])
     corrected = inputs.get("streams", {}).get("corrected_odometry", [])
     propagated = inputs.get("streams", {}).get("propagated_odometry", [])
     metrics: dict[str, Any] = {}
     reasons: list[str] = []
-    reference_time_valid, reference_time_reasons = _source_time_status(reference)
-    lineage_valid, lineage_reasons = _reference_lineage_status(inputs, reference)
+    # Duplicate PVA source ticks are admitted only after the exact immutable
+    # heartbeat and strictly advancing sample-ID check above. The canonical
+    # reference then has to advance in source time like any other reference.
+    reference_time_valid, reference_time_reasons = _source_time_status(
+        reference, policy=SourceTimestampPolicy.STRICTLY_INCREASING)
+    reference_time_reasons = sorted(set(reference_time_reasons + heartbeat_reasons))
+    reference_time_valid = reference_time_valid and not heartbeat_reasons
+    lineage_valid, lineage_reasons = _reference_lineage_status(inputs, raw_reference)
     policy = inputs.get("tracking_coverage_policy")
     pairing_gap = (
         _number(policy.get("max_pairing_gap_s"))
         if isinstance(policy, dict) else None
     )
     diagnostic_gap = pairing_gap if pairing_gap is not None else max_gap_s
-    for name, measured in (("tracking.navigation_reference_vs_truth", truth), ("tracking.navigation_reference_vs_lio", corrected or propagated)):
+    for name, measured, measured_stream in (
+        ("tracking.navigation_reference_vs_truth", truth, "ground_truth_odometry"),
+        ("tracking.navigation_reference_vs_lio", corrected or propagated,
+         "corrected_odometry" if corrected else "propagated_odometry"),
+    ):
         frame, frame_reason, frame_transform = _frame_witness(
             reference, measured, inputs.get("scenario", {})
         )
-        measured_time_valid, measured_time_reasons = _source_time_status(measured)
+        measured_time_valid, measured_time_reasons = _source_time_status(
+            measured, policy=STREAM_SOURCE_TIMESTAMP_POLICY[measured_stream])
         clock_relation_valid, clock_relation_reasons = _source_clock_relation_status(
             reference, measured
         )
@@ -1520,7 +2363,17 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
         "coverage_ratio": 0.0 if reference else None,
         "maximum_gap_s": None,
     }
-    return {"metrics": metrics, "reasons": sorted(set(reasons)), "max_gap_s": diagnostic_gap}
+    return {
+        "metrics": metrics, "reasons": sorted(set(reasons)),
+        "max_gap_s": diagnostic_gap,
+        "source_timestamp_policies": {
+            stream: policy.value
+            for stream, policy in STREAM_SOURCE_TIMESTAMP_POLICY.items()
+        },
+        "reference_heartbeat_collapsed_count": collapsed_heartbeats,
+        "raw_reference_count": len(raw_reference),
+        "canonical_reference_count": len(reference),
+    }
 
 
 def _raw_velocity(item: dict[str, Any]) -> tuple[float, float, float] | None:
@@ -1936,6 +2789,382 @@ def _dimension(status: str, reasons: list[str], **extra: Any) -> dict[str, Any]:
     return {"status": status, "reasons": sorted(set(str(item) for item in reasons)), **extra}
 
 
+def _has_current_fail_closed_safety_stop_witness(inputs: dict[str, Any]) -> bool:
+    """Require exact current execution and planner evidence for a software stop."""
+    scenario = inputs.get("scenario", {})
+    if (scenario.get("outcome") != "PAUSED_SAFETY_STOP" or
+            scenario.get("safety_stop_observed") is not True or
+            scenario.get("mode_status_reason_name") != "SAFETY_STOP" or
+            scenario.get("px4_hold_observed") is not True):
+        return False
+
+    lifecycle = [item for item in inputs.get("lifecycle", [])
+                 if isinstance(item, dict)]
+    for retained in lifecycle:
+        if not (
+            retained.get("phase") == "retained" and
+            retained.get("purpose") == 0 and
+            retained.get("disposition_code") == 4 and
+            retained.get("owner_snapshot_current") == 1 and
+            retained.get("callback_request_current") == 1 and
+            retained.get("monitor_window_current") == 1 and
+            retained.get("after_command_available") == 0 and
+            retained.get("after_failure_latched") == 1 and
+            _present_identity(retained.get("captured_bundle_generation")) and
+            retained.get("after_bundle_generation") ==
+                retained.get("captured_bundle_generation") and
+            retained.get("final_freshness_reason") == 0 and
+            retained.get("final_witness_age_bounded") == 1 and
+            retained.get("final_body_known_free") == 1 and
+            retained.get("final_anchor_valid") == 1 and
+            retained.get("final_bridge_usable") == 0 and
+            _present_identity(retained.get("localization_epoch")) and
+            _present_identity(retained.get("execution_goal_epoch")) and
+            retained.get("execution_goal_epoch") ==
+                retained.get("desired_goal_epoch") and
+            _present_identity(retained.get("execution_request_id")) and
+            retained.get("execution_request_id") ==
+                retained.get("desired_request_id") and
+            _present_identity(retained.get("state_ingress_sequence")) and
+            _present_identity(retained.get("final_state_source_ros_ns")) and
+            _present_identity(retained.get("final_state_receive_steady_ns"))
+        ):
+            continue
+        for result in lifecycle:
+            if (
+                result.get("phase") == "result" and
+                result.get("runtime_instance_id") ==
+                    retained.get("runtime_instance_id") and
+                result.get("session_id") == retained.get("session_id") and
+                result.get("localization_epoch") ==
+                    retained.get("localization_epoch") and
+                result.get("goal_epoch") == retained.get("desired_goal_epoch") and
+                result.get("request_id") == retained.get("desired_request_id") and
+                result.get("causal_planning_cycle_id") ==
+                    retained.get("planning_cycle_id") and
+                result.get("planner_disposition") == 4 and
+                result.get("runtime_admission_attempted") is False
+            ):
+                return True
+    return False
+
+
+def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate the separately approved C0-SW evidence scope.
+
+    Eligibility means the software outcome can be assessed. A demonstrated
+    software failure remains eligible and is reported as FAIL; integrated
+    tracking and measured-motion quality retain their independent verdicts.
+    """
+    metadata = inputs.get("metadata", {})
+    scenario = inputs.get("scenario", {})
+    reduction = inputs.get("lifecycle_reduction", {})
+    world_reduction = inputs.get("world_transaction_reduction", {})
+    references = [item for item in inputs.get("pva", [])
+                  if item.get("executable", True) is not False]
+    reasons: list[str] = []
+    if metadata.get("qualification_scope") != "C0_SW":
+        reasons.append("C0_SW_SCOPE_NOT_DECLARED")
+    if metadata.get("qualification_policy_version") != C0_SW_POLICY_VERSION:
+        reasons.append("C0_SW_POLICY_VERSION_MISSING")
+    if metadata.get("qualification_policy_provenance") != C0_SW_POLICY_PROVENANCE:
+        reasons.append("C0_SW_POLICY_PROVENANCE_MISSING")
+    configuration = metadata.get("runtime_configuration", {})
+    tracking_requested = metadata.get("tracking_experiment", {}).get("mode")
+    if tracking_requested != "off":
+        reasons.append("TRACKING_REQUESTED_NOT_OFF")
+    for boundary in ("mapping", "external_mode"):
+        effective = configuration.get(boundary, {}).get("effective", {})
+        if (effective.get("mode") != "off" or effective.get("enabled") is not False
+                or effective.get("suppress_braking") is not False
+                or effective.get("suppress_estimator_health_response") is not False):
+            reasons.append(f"CONFIGURATION_NOT_TRUTHFUL:{boundary}")
+    injection = configuration.get("planner_fault_injection", {}).get("effective", {})
+    if not injection or any(value not in (False, 0, None) for value in injection.values()):
+        reasons.append("PLANNER_FAULT_INJECTION_ACTIVE_OR_UNKNOWN")
+    requested_speed = _number(metadata.get("requested_cruise_speed_mps"))
+    if requested_speed is None or not (
+        DEFAULT_C0_SPEED_MIN_MPS <= requested_speed <= DEFAULT_C0_SPEED_MAX_MPS
+    ):
+        reasons.append("OUTSIDE_C0_SPEED_SCOPE")
+
+    writer_reasons = [
+        f"{label}:{reason}"
+        for label, writer in inputs.get("writer", {}).items()
+        for reason in _writer_integrity(label, writer, require_terminal=False)
+    ]
+    if not inputs.get("writer"):
+        writer_reasons.append("REQUIRED_WRITER_ACCOUNTING_MISSING")
+    if not inputs.get("scenario_events"):
+        writer_reasons.append("SCENARIO_EVENT_STREAM_MISSING")
+    reasons.extend(writer_reasons)
+    unresolved = len(reduction.get("unresolved", []))
+    conflicts = len(reduction.get("conflicts", []))
+    unbound_activations = sum(
+        item.get("phase") == "activate" for item in reduction.get("unbound_events", [])
+    )
+    missing_results = sum(
+        "request" in transaction.get("events", {}) and
+        "result" not in transaction.get("events", {})
+        for transaction in reduction.get("transactions", [])
+    )
+    if unresolved:
+        reasons.append("C0_SW_REQUIRED_LIFECYCLE_UNRESOLVED")
+    if conflicts:
+        reasons.append("C0_SW_REQUIRED_LIFECYCLE_CONFLICT")
+    if unbound_activations:
+        reasons.append("C0_SW_ACTIVATION_OWNER_MISSING")
+    if missing_results:
+        reasons.append("C0_SW_PLANNER_RESULT_WITNESS_MISSING")
+    if inputs.get("world_evidence_required"):
+        if world_reduction.get("required_world_unresolved", 0):
+            reasons.append("C0_SW_REQUIRED_WORLD_TRANSACTION_UNRESOLVED")
+        if world_reduction.get("required_world_conflicts", 0):
+            reasons.append("C0_SW_REQUIRED_WORLD_TRANSACTION_CONFLICT")
+        if world_reduction.get("required_world_reference_missing", 0):
+            reasons.append("C0_SW_REQUIRED_WORLD_REFERENCE_MISSING")
+        if world_reduction.get("required_world_reference_conflicts", 0):
+            reasons.append("C0_SW_REQUIRED_WORLD_REFERENCE_CONFLICT")
+        if world_reduction.get("required_world_events_dropped", 0):
+            reasons.append("C0_SW_REQUIRED_WORLD_EVIDENCE_DROPPED")
+    valid_references = {
+        tuple(item) for item in reduction.get("producer_owned_reference_ids", [])
+        if isinstance(item, list) and len(item) == 10
+    }
+    authorized_references = {
+        tuple(item) for item in reduction.get("producer_authorized_reference_ids", [])
+        if isinstance(item, list) and len(item) == 10
+    }
+    rejections = [
+        event.get("payload", {}) for event in inputs.get("scenario_events", [])
+        if event.get("kind") == "command_rejection" and
+        isinstance(event.get("payload"), dict)
+    ]
+    rejection_keys = {
+        tuple(item.get(field) for field in (
+            "mode_activation_id", "localization_epoch", "goal_epoch",
+            "request_id", "bundle_generation", "sample_id",
+        ))
+        for item in rejections if item.get("command_present") is True
+    }
+    rejected_command_keys = {key[1:] for key in rejection_keys}
+    no_execution_signals = [
+        transaction.get("events", {}).get("authorize", {})
+        for transaction in reduction.get("transactions", [])
+        if transaction.get("identity", {}).get("producer_kind") ==
+            "NO_EXECUTION_SIGNAL"
+    ]
+    unpaired_no_execution_signals = sum(
+        tuple(item.get(field) for field in (
+            "localization_epoch", "goal_epoch", "request_id",
+            "bundle_generation", "sample_id",
+        )) not in rejected_command_keys
+        for item in no_execution_signals
+    )
+    if unpaired_no_execution_signals:
+        reasons.append("C0_SW_NO_EXECUTION_ADAPTER_REJECTION_MISSING")
+    admissions = [
+        event.get("payload", {}) for event in inputs.get("scenario_events", [])
+        if event.get("kind") == "command_admission"
+        and isinstance(event.get("payload"), dict)
+    ]
+    adapter_identity_fields = (
+        "mode_activation_id", "localization_epoch", "goal_epoch",
+        "request_id", "bundle_generation", "sample_id",
+    )
+    admission_exact_keys = {
+        tuple(item.get(field) for field in adapter_identity_fields)
+        for item in admissions
+    }
+    if any(any(item.get(field) is None for field in (
+            "stage", "reason_code", "disposition")) for item in rejections):
+        reasons.append("C0_SW_ADAPTER_REJECTION_UNTYPED")
+    missing_references = sum(
+        (reference_id := (
+            item.get("runtime_instance_id"), item.get("session_id"),
+            item.get("localization_epoch"), item.get("goal_epoch"),
+            item.get("request_id"), item.get("bundle_generation"),
+            item.get("sample_id"), item.get("world_generation"),
+            item.get("world_revision"), item.get("world_observation_stamp_ns"),
+        )) not in valid_references and not (
+            reference_id in authorized_references and
+            tuple(item.get(field) for field in adapter_identity_fields) in
+                (rejection_keys | admission_exact_keys)
+        )
+        for item in references
+    )
+    admitted_without_setpoint_trace = sum(
+        tuple(item.get(field) for field in (
+            "runtime_instance_id", "session_id", "localization_epoch",
+            "goal_epoch", "request_id", "bundle_generation", "sample_id",
+            "world_generation", "world_revision", "world_observation_stamp_ns",
+        )) not in valid_references and
+        tuple(item.get(field) for field in adapter_identity_fields) in
+            admission_exact_keys
+        for item in references
+    )
+    if not references or missing_references:
+        reasons.append("C0_SW_REQUIRED_REFERENCE_LINEAGE_MISSING")
+    reference_payloads: dict[tuple[Any, ...], set[tuple[Any, ...]]] = {}
+    for item in references:
+        sample_owner = tuple(item.get(field) for field in (
+            "runtime_instance_id", "session_id", "localization_epoch",
+            "goal_epoch", "request_id", "bundle_generation", "sample_id",
+        ))
+        world = tuple(item.get(field) for field in (
+            "world_generation", "world_revision", "world_observation_stamp_ns",
+        ))
+        reference_payloads.setdefault(sample_owner, set()).add(world)
+    conflicting_references = sum(
+        len(worlds) > 1 for worlds in reference_payloads.values())
+    if conflicting_references:
+        reasons.append("C0_SW_REQUIRED_REFERENCE_LINEAGE_CONFLICT")
+    command_key_fields = (
+        "localization_epoch", "goal_epoch", "request_id",
+        "bundle_generation", "sample_id",
+    )
+    command_keys = {
+        tuple(item.get(field) for field in command_key_fields)
+        for item in references
+    }
+    admission_keys = {
+        tuple(item.get(field) for field in command_key_fields)
+        for item in admissions
+    }
+    adapter_command_keys = {
+        tuple(item.get(field) for field in command_key_fields)
+        for item in inputs.get("px4_input_trace", [])
+        if _present_identity(item.get("sample_id")) and
+        _present_identity(item.get("bundle_generation"))
+    }
+    missing_adapter_receipts = len(adapter_command_keys - admission_keys)
+    unbound_adapter_receipts = len(admission_keys - command_keys)
+    if missing_adapter_receipts:
+        reasons.append("C0_SW_ADAPTER_ADMISSION_RECEIPT_MISSING")
+    if unbound_adapter_receipts:
+        reasons.append("C0_SW_ADAPTER_ADMISSION_WITHOUT_CORE_REFERENCE")
+    retained_sequences = sorted({
+        _integer(item.get("producer_event_sequence"))
+        for item in inputs.get("lifecycle", [])
+        if item.get("phase") == "retained"
+    } - {None})
+    if retained_sequences and (
+        retained_sequences[0] != 1 or
+        any(right != left + 1 for left, right in zip(
+            retained_sequences, retained_sequences[1:]))
+    ):
+        reasons.append("RETAINED_DECISION_PRODUCER_SEQUENCE_GAP")
+    if any(
+        (_integer(item.get("failed_before_event")) or 0) > 0 or
+        (_integer(item.get("suppressed_before_event")) or 0) > 0
+        for item in inputs.get("lifecycle", []) if item.get("phase") == "retained"
+    ):
+        reasons.append("RETAINED_DECISION_PRODUCER_LOSS")
+
+    outcome = scenario.get("outcome")
+    expected_indices = list(range(len(inputs.get("waypoints", []))))
+    accepted_indices = [
+        _integer(item.get("accepted_waypoint_index"))
+        for item in scenario.get("waypoint_acceptance_events", [])
+        if isinstance(item, dict) and item.get("waypoint_accepted") is True
+    ]
+    if (scenario.get("mission_complete_observed") is True and
+            outcome == "COMPLETE" and expected_indices and
+            accepted_indices == expected_indices):
+        product_logic = "PASS"
+    elif outcome == "PAUSED_SAFETY_STOP":
+        safety_stop_gate_decision_assessed = (
+            _has_current_fail_closed_safety_stop_witness(inputs))
+        if safety_stop_gate_decision_assessed:
+            product_logic = "PASS"
+        else:
+            product_logic = "NOT_EVALUABLE"
+            reasons.append("SAFETY_STOP_GATE_DECISION_WITNESS_NOT_ASSESSED")
+    elif outcome == "COMPLETE" and scenario.get("mission_complete_observed") is True:
+        product_logic = "NOT_EVALUABLE"
+        reasons.append("MISSION_ACCEPTANCE_LINEAGE_INCOMPLETE")
+    elif outcome in {"COMPLETE", "FAILED"}:
+        product_logic = "FAIL"
+    else:
+        product_logic = "NOT_EVALUABLE"
+    if product_logic == "NOT_EVALUABLE":
+        reasons.append("PRODUCT_OUTCOME_UNATTRIBUTED")
+    authority = "PASS" if not (
+        unresolved or conflicts or unbound_activations or missing_results or
+        missing_references or conflicting_references or
+        missing_adapter_receipts or unbound_adapter_receipts or
+        unpaired_no_execution_signals
+    ) else "NOT_EVALUABLE"
+    evidence = "PASS" if not writer_reasons and not (
+        unresolved or conflicts or missing_results or missing_references or
+        conflicting_references or missing_adapter_receipts or
+        unbound_adapter_receipts or unpaired_no_execution_signals
+    ) else "NOT_EVALUABLE"
+    temporal = "PASS" if (
+        product_logic == "PASS" and authority == "PASS" and evidence == "PASS" and
+        not missing_adapter_receipts
+    ) else "NOT_EVALUABLE"
+    eligible = not reasons
+    return {
+        "qualification_scope": "C0_SW",
+        "qualification_policy_version": C0_SW_POLICY_VERSION,
+        "qualification_policy_provenance": metadata.get("qualification_policy_provenance"),
+        "software_qualification_eligible": eligible,
+        "assessment_status": (
+            "NOT_EVALUABLE" if not eligible else
+            "FAIL" if product_logic == "FAIL" else
+            "PASS" if all(status == "PASS" for status in (
+                product_logic, authority, temporal, evidence)) else
+            "NOT_EVALUABLE"),
+        "blocking_reasons": sorted(set(reasons)),
+        "required_lifecycle_unresolved": unresolved,
+        "required_lifecycle_conflicting": conflicts,
+        "required_world_transactions": world_reduction.get(
+            "required_world_transactions", 0),
+        "resolved_world_transactions": world_reduction.get(
+            "resolved_world_transactions", 0),
+        "required_world_unresolved": world_reduction.get(
+            "required_world_unresolved", 0),
+        "required_world_conflicts": world_reduction.get(
+            "required_world_conflicts", 0),
+        "required_world_reference_missing": world_reduction.get(
+            "required_world_reference_missing", 0),
+        "required_world_reference_conflicts": world_reduction.get(
+            "required_world_reference_conflicts", 0),
+        "required_world_events_produced": world_reduction.get(
+            "required_world_events_produced"),
+        "required_world_events_written": world_reduction.get(
+            "required_world_events_written"),
+        "required_world_events_dropped": world_reduction.get(
+            "required_world_events_dropped"),
+        "required_world_events_serialization_failures": world_reduction.get(
+            "required_world_events_serialization_failures", 0),
+        "required_world_events_writer_failures": world_reduction.get(
+            "required_world_events_writer_failures", 0),
+        "required_reference_count": len(references),
+        "required_reference_missing": missing_references,
+        "references_admitted_without_setpoint_trace": admitted_without_setpoint_trace,
+        "required_reference_conflicting": conflicting_references,
+        "safety_stop_gate_decision_assessed": (
+            outcome == "PAUSED_SAFETY_STOP" and
+            _has_current_fail_closed_safety_stop_witness(inputs)),
+        "adapter_admission_receipts": len(admission_keys),
+        "no_execution_signals": len(no_execution_signals),
+        "no_execution_adapter_rejections_missing": unpaired_no_execution_signals,
+        "adapter_receipts_missing": missing_adapter_receipts,
+        "adapter_receipts_unbound": unbound_adapter_receipts,
+        "axes": {
+            "PRODUCT_LOGIC": product_logic,
+            "AUTHORITY_IDENTITY": authority,
+            "TEMPORAL_SAFETY": temporal,
+            "EVIDENCE_COMPLETENESS": evidence,
+            "FAULT_HANDLING": "SUITE_EVIDENCE_REQUIRED",
+            "FLIGHT_PERFORMANCE": "DEFERRED_C0_IFP",
+            "ENVIRONMENT_VALIDITY": "DEFERRED_SIMULATION_VALIDITY",
+        },
+    }
+
+
 def _tracking_acceptance_status(
     position_metric: dict[str, Any],
     velocity_metric: dict[str, Any],
@@ -1951,6 +3180,8 @@ def _tracking_acceptance_status(
         return "NOT_EVALUABLE", ["TRACKING_ACCEPTANCE_POLICY_UNAVAILABLE"]
     if not isinstance(policy.get("provenance"), str) or not policy["provenance"].strip():
         return "NOT_EVALUABLE", ["TRACKING_ACCEPTANCE_POLICY_PROVENANCE_MISSING"]
+    if not isinstance(policy.get("version"), str) or not policy["version"].strip():
+        return "NOT_EVALUABLE", ["TRACKING_ACCEPTANCE_POLICY_VERSION_MISSING"]
     limits: dict[str, float] = {}
     for key in required:
         value = _number(policy.get(key))
@@ -2104,12 +3335,14 @@ def evaluate_session(inputs: dict[str, Any]) -> dict[str, Any]:
         else "NOT_EVALUABLE"
     )
     explicit_evidence_status = "COMPLETE" if not completeness_reasons else "INCOMPLETE"
-    return {
+    result = {
         "schema_version": EVALUATION_SCHEMA_VERSION,
         "profile": "navigation_quality",
+        "qualification_scope": "C0_IFP",
         "assessment_status": assessment_status,
         "evidence_status": explicit_evidence_status,
         "qualification_eligible": not qualification_reasons,
+        "integrated_flight_qualification_eligible": not qualification_reasons,
         "blocking_reasons": sorted(set(qualification_reasons)),
         "qualification_reasons": sorted(set(qualification_reasons)),
         "scope": {
@@ -2126,7 +3359,13 @@ def evaluate_session(inputs: dict[str, Any]) -> dict[str, Any]:
         },
         "tracking_coverage_policy": inputs.get("tracking_coverage_policy"),
         "tracking_acceptance_policy": inputs.get("tracking_acceptance_policy"),
+        "source_timestamp_policies": tracking["source_timestamp_policies"],
         "evaluation_window": inputs.get("evaluation_window"),
+        "tracking_reference_accounting": {
+            "raw_command_count": tracking["raw_reference_count"],
+            "canonical_source_tick_count": tracking["canonical_reference_count"],
+            "exact_heartbeat_collapse_count": tracking["reference_heartbeat_collapsed_count"],
+        },
         "dimensions": {
             "mission": _dimension(mission_status, mission_reasons),
             "safety": _dimension(safety_status, safety_reasons),
@@ -2140,6 +3379,12 @@ def evaluate_session(inputs: dict[str, Any]) -> dict[str, Any]:
             if isinstance(item, dict)
         ],
         "lifecycle_reduction": inputs.get("lifecycle_reduction", {}),
+        "world_transactions": [
+            dict(item) for item in inputs.get("world_transactions", [])
+            if isinstance(item, dict)
+        ],
+        "world_transaction_reduction": inputs.get(
+            "world_transaction_reduction", {}),
         "metrics": {
             **tracking["metrics"],
             "mission_guidance_deviation_xy_m": _guidance_deviation(truth, inputs.get("waypoints", [])),
@@ -2157,3 +3402,7 @@ def evaluate_session(inputs: dict[str, Any]) -> dict[str, Any]:
             "display_decimation_is_not_used_for_metrics": True,
         },
     }
+    result["software_qualification"] = evaluate_software_qualification(inputs)
+    result["software_qualification_eligible"] = result[
+        "software_qualification"]["software_qualification_eligible"]
+    return result

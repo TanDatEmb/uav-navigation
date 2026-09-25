@@ -67,6 +67,12 @@ enum class PlanningFailureReason : std::uint8_t {
   // A BACKUP world sweep failed under AllowUnknown: UNKNOWN is permitted,
   // but currently occupied/undefined/out-of-map cells remain forbidden.
   kBackupWorldBlocked,
+  // A necessary physical recovery bound proves the measured boundary cannot
+  // satisfy the supplied recovery envelope. Appended to preserve wire codes.
+  kStopOutsideRecoveryEnvelope,
+  // The bounded concrete stop-polynomial search failed without proving
+  // physical infeasibility. Appended to preserve wire codes.
+  kStopSynthesisFailed,
 };
 
 inline const char* planningFailureStageName(
@@ -119,6 +125,10 @@ inline const char* planningFailureReasonName(
       return "candidate_export_invalid";
     case PlanningFailureReason::kBackupWorldBlocked:
       return "backup_world_blocked";
+    case PlanningFailureReason::kStopOutsideRecoveryEnvelope:
+      return "stop_outside_recovery_envelope";
+    case PlanningFailureReason::kStopSynthesisFailed:
+      return "stop_synthesis_failed";
   }
   return "unknown";
 }

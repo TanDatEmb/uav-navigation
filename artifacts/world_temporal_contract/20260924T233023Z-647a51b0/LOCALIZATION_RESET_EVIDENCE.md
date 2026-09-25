@@ -1,0 +1,5 @@
+# Localization reset evidence
+
+On higher `RegisteredScan.localisation_epoch`, runtime takes localization transition/ingress locks, resets and drains old mapping work, invalidates prior execution and readiness, then MappingActor builds a replacement backend before swapping it, increments world generation, resets revision/source timestamp/history, and integrates the first new-epoch observation. Old-epoch scans reject before inbox; mapping finalizer also compares snapshot epoch to current active epoch under the same localization transition lock and reports superseded instead of reopening readiness.
+
+This source path separates localization epoch transition from same-epoch generation change. Component coverage exists for localization reset drain behavior and mapping actor epoch/generation reset. The required races (old mapping callback, old world recertification, suspended active, pending candidate) completing after reset have not all been exercised with a single deterministic barrier integration test or SITL. Evidence status: PARTIAL.

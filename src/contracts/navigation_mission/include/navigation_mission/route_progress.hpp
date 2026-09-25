@@ -87,7 +87,7 @@ struct ImmutableRouteSnapshot {
           navigation_world_model::kGoalConnectionToleranceM + 1.0e-6;
 }
 
-// The same terminal boundary viewed after MissionController has advanced to
+// The same terminal boundary viewed after Core MissionProgress has advanced to
 // the STOP successor.  This is used only to retain the predecessor's finite
 // terminal endpoint while the successor identity is being published; it does
 // not authorize a new trajectory or extend the predecessor lease.
@@ -106,9 +106,9 @@ struct ImmutableRouteSnapshot {
           navigation_world_model::kGoalConnectionToleranceM + 1.0e-6;
 }
 
-// Pure route geometry/progress owner shared by mission and planner-facing
-// adapters. It never accepts a waypoint; acceptance remains a measured-state
-// policy owned by MissionController.
+// Pure route geometry/progress helper shared by mission and planner-facing
+// consumers. It never accepts a waypoint; acceptance remains a measured-state
+// policy owned by Core MissionProgress.
 class RouteProgress final {
  public:
   explicit RouteProgress(const Mission& mission,

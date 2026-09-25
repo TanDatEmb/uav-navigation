@@ -250,7 +250,14 @@ namespace navigation_planning_backend {
         double certified_lookahead_m_{std::numeric_limits<double>::quiet_NaN()};
         bool lookahead_complete_{false};
 
-        bool authorizeAndStage(CandidateCommandBundle&& candidate);
+        bool authorizeAndStage(
+            CandidateCommandBundle&& candidate,
+            const std::optional<CommandIdentity>& explicit_identity = std::nullopt,
+            const navigation_planning::PlanningRequest* request_context = nullptr);
+
+        RET_CODE planInitialFromStoppedStateImpl(
+            const Vec3f& goal_p, const double& goal_yaw, const bool& new_goal,
+            const navigation_planning::PlanningRequest* request);
 
         [[nodiscard]] std::optional<std::uint64_t>
         reserveCandidateGenerationLocked();
@@ -293,7 +300,8 @@ namespace navigation_planning_backend {
         // it may use the request-local body witness, but it must still pass
         // the normal dynamic and immutable-world certificates.
         [[nodiscard]] std::optional<bool> tryStageMeasuredTerminalStopHold(
-            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline);
+            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline,
+            const navigation_planning::PlanningRequest* request);
 
     public:
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -444,10 +452,6 @@ namespace navigation_planning_backend {
                 ? navigation_world_model::UnknownPolicy::kAllowUnknown
                 : navigation_world_model::UnknownPolicy::kRequireKnownFree;
         }
-        void resetSolveCancellation() noexcept {
-            solve_cancelled_.store(false);
-        }
-
         void discardCommandCandidate() noexcept;
 
         // A nominal solve may overlap an exported retained position/heading
@@ -491,13 +495,6 @@ namespace navigation_planning_backend {
             command_identity_ = identity;
         }
 
-        void setNominalProblemDiagnosticIdentity(
-                const std::uint64_t solve_generation,
-                const std::uint64_t planner_cycle) noexcept {
-            diagnostic_solve_generation_ = solve_generation;
-            diagnostic_planner_cycle_ = planner_cycle;
-        }
-
         // Planning-thread-only. Runtime pins one immutable revision before a
         // solve; A* and corridor generation receive that same pointer.
         void setWorldModelView(navigation_world_model::WorldModelViewPtr view) {
@@ -516,20 +513,6 @@ namespace navigation_planning_backend {
                     ? std::max(radius_m,
                                navigation_world_model::kGoalCompletionToleranceM)
                     : navigation_world_model::kGoalCompletionToleranceM;
-        }
-
-        // Planning-thread-only mission look-ahead. A pass-through goal uses
-        // this only to shape its terminal velocity; the current waypoint
-        // remains the geometric endpoint and all safety certificates remain
-        // authoritative.
-        void setPassThroughNextTarget(
-                const std::optional<Eigen::Vector3d>& next_target) noexcept {
-            if (next_target.has_value() && next_target->allFinite()) {
-                pass_through_next_target_ = *next_target;
-                pass_through_coincident_terminal_stop_ = false;
-            } else {
-                pass_through_next_target_.reset();
-            }
         }
 
         // Planning-thread-only immutable mission route. Mission, planner
@@ -666,6 +649,8 @@ namespace navigation_planning_backend {
                                   // altitude; all dynamic/world certificates
                                   // remain authoritative.
                                   std::optional<double> terminal_altitude_m =
+                                      std::nullopt,
+                                  std::optional<CommandIdentity> identity =
                                       std::nullopt);
 
         void getModuleTimeConsuming(vector<double> &time);

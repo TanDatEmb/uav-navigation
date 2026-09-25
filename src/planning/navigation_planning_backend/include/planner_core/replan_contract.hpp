@@ -102,6 +102,10 @@ classifyPlannerFailure(const int planner_result,
       return {Stage::kCommitRecertification, Reason::kWorldChanged};
     case PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT:
       return {Stage::kNominalSeed, Reason::kMainKnownFreeInsufficient};
+    case PLANNER_STOP_OUTSIDE_RECOVERY_ENVELOPE:
+      return {Stage::kBackupSeed, Reason::kStopOutsideRecoveryEnvelope};
+    case PLANNER_STOP_SYNTHESIS_FAILED:
+      return {Stage::kBackupSeed, Reason::kStopSynthesisFailed};
     case PLANNER_EXP_FAILED:
       return {nominal_solve_failed ? Stage::kNominalSeed
                                    : Stage::kNominalRefinement,

@@ -26,6 +26,7 @@ import monitor
 from monitor import StreamStats
 import build_provenance
 import dataset_shadow_planning
+import external_mode_scenario
 import gazebo_native_observer
 import report
 import runner
@@ -71,6 +72,28 @@ def _mapping_outcomes(updated: int, **overrides: int) -> dict[str, int]:
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_mission_scenario_reads_core_progress_receipt(self) -> None:
+        scenario = external_mode_scenario.ExternalModeScenario.__new__(
+            external_mode_scenario.ExternalModeScenario)
+        scenario.execution = "mission"
+        scenario.goal_indices = []
+        scenario.waypoint_acceptance_events = []
+        scenario.NavigationMissionProgress = SimpleNamespace(GOAL=0)
+        recorded = []
+        scenario._record = lambda kind, payload: recorded.append((kind, payload))
+        receipt = SimpleNamespace(
+            mission_id="mission", route_revision=1, localization_epoch=7,
+            mode_activation_id=2, waypoint_index=1, request_id=3,
+            event=0, waypoint_accepted=True, accepted_waypoint_index=0,
+            acceptance_position_error_m=0.2, acceptance_speed_mps=0.7)
+        scenario._mission_progress(receipt)
+        self.assertEqual(scenario.goal_indices, [1])
+        self.assertEqual(
+            [event["accepted_waypoint_index"] for event in scenario.waypoint_acceptance_events],
+            [0])
+        self.assertEqual([kind for kind, _ in recorded],
+                         ["goal", "waypoint_accepted", "mission_progress"])
+
     def test_visibility_range_overlay_is_session_local_and_exact(self) -> None:
         source = ROOT / "src/uav_simulation/models/lidar_mid360/model.sdf"
         with tempfile.TemporaryDirectory() as temporary:
@@ -285,6 +308,8 @@ class RuntimeContractTest(unittest.TestCase):
             mapping = yaml.safe_load(mapping_path.read_text(encoding="utf-8"))
             external = yaml.safe_load(external_path.read_text(encoding="utf-8"))
             expected = {
+                "mode": "relaxed",
+                "tracking_gate_relaxed": False,
                 "base_m": 0.25,
                 "lateral_alpha_s": 0.06,
                 "longitudinal_beta_s": 0.17,
@@ -297,6 +322,137 @@ class RuntimeContractTest(unittest.TestCase):
                 external["px4_navigation_external_mode"]["ros__parameters"]["tracking_experiment"],
                 expected,
             )
+
+    def test_tracking_off_is_explicit_in_both_generated_configs(self) -> None:
+        experiment = runner._tracking_experiment_payload("off")
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = SimpleNamespace(directory=Path(temporary))
+            for builder, source, node in (
+                (runner._mapping_params, "mapping.yaml", "navigation_runtime_node"),
+                (runner._external_mode_params, "external_mode.yaml", "px4_navigation_external_mode"),
+            ):
+                target = builder(
+                    session, ROOT / "config/runtime" / source,
+                    tracking_experiment=experiment,
+                )
+                params = yaml.safe_load(target.read_text(encoding="utf-8"))[
+                    node]["ros__parameters"]["tracking_experiment"]
+                self.assertEqual(params["mode"], "off")
+                self.assertFalse(params["tracking_gate_relaxed"])
+
+            (session.directory / "metadata.json").write_text(
+                json.dumps({"tracking_experiment": experiment}), encoding="utf-8"
+            )
+            snapshot = session.directory / "config_snapshot"
+            snapshot.mkdir()
+            (snapshot / "navigation_runtime_params.yaml").write_text(
+                (session.directory / "navigation_runtime_params.yaml").read_text(),
+                encoding="utf-8",
+            )
+            (snapshot / "external_mode_params.yaml").write_text(
+                (session.directory / "external_mode_params.yaml").read_text(),
+                encoding="utf-8",
+            )
+            marker = report._tracking_experiment(session.directory)
+            self.assertEqual(marker["status"], "OK")
+            self.assertEqual(marker["mode"], "off")
+            self.assertFalse(marker["enabled"])
+            self.assertFalse(marker["suppress_braking"])
+            self.assertFalse(marker["suppress_estimator_health_response"])
+
+    def test_runtime_tracking_witness_must_match_before_mission(self) -> None:
+        requested = runner._tracking_experiment_payload("off")
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = SimpleNamespace(directory=Path(temporary))
+            (session.directory / "metadata.json").write_text(
+                json.dumps({"tracking_experiment": requested}), encoding="utf-8"
+            )
+            logs = session.directory / "logs"
+            logs.mkdir()
+            log = logs / "mapping.log"
+            log.write_text(
+                "RUNTIME_CONFIG_EFFECTIVE tracking_mode=off enabled=0 "
+                "suppress_braking=0 suppress_health=0 velocity_only=0\n"
+                "RUNTIME_CONFIG_EFFECTIVE tracking_bounds base=0 alpha=0 beta=0 "
+                "velocity_gain=0 velocity_cap=0 velocity_accel=0 velocity_jerk=0 "
+                "velocity_timing=0 velocity_reference_age=0 velocity_transport=0 "
+                "velocity_px4_consume=0\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(runner, "_wait_for_log_fragment"):
+                effective = runner._check_effective_tracking_configuration(
+                    session, "mapping", requested
+                )
+                self.assertFalse(effective["suppress_braking"])
+                metadata = json.loads((session.directory / "metadata.json").read_text())
+                self.assertEqual(
+                    metadata["runtime_configuration"]["mapping"]["source"],
+                    "logs/mapping.log:RUNTIME_CONFIG_EFFECTIVE",
+                )
+                marker = report._tracking_experiment(session.directory)
+                self.assertEqual(marker["effective_by_node"]["mapping"]["effective"], effective)
+                metadata["runtime_configuration"]["mapping"]["effective"]["enabled"] = True
+                (session.directory / "metadata.json").write_text(
+                    json.dumps(metadata), encoding="utf-8"
+                )
+                self.assertTrue(report._tracking_experiment(session.directory)["config_mismatch"])
+                log.write_text(
+                    "RUNTIME_CONFIG_EFFECTIVE tracking_mode=relaxed enabled=1 "
+                    "suppress_braking=1 suppress_health=1 velocity_only=0\n"
+                    "RUNTIME_CONFIG_EFFECTIVE tracking_bounds base=0 alpha=0 beta=0 "
+                    "velocity_gain=0 velocity_cap=0 velocity_accel=0 velocity_jerk=0 "
+                    "velocity_timing=0 velocity_reference_age=0 velocity_transport=0 "
+                    "velocity_px4_consume=0\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(RuntimeError, "CONFIGURATION_MISMATCH"):
+                    runner._check_effective_tracking_configuration(
+                        session, "mapping", requested
+                    )
+                log.write_text("node started without policy witness\n", encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "CONFIGURATION_MISMATCH"):
+                    runner._check_effective_tracking_configuration(
+                        session, "mapping", requested
+                    )
+
+    def test_runtime_planner_witness_must_match_before_mission(self) -> None:
+        faults = {
+            "cycle": 0, "once": False, "when_safe": False,
+            "after_handoff": False, "repeated": False,
+            "rest_repeated": False, "exact_optimization": False,
+            "renewal_ordinal": 0,
+        }
+        dynamics = {"velocity": 5.0, "acceleration": 5.0, "jerk": 8.0}
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = SimpleNamespace(directory=Path(temporary))
+            (session.directory / "metadata.json").write_text("{}", encoding="utf-8")
+            logs = session.directory / "logs"
+            logs.mkdir()
+            log = logs / "mapping.log"
+            log.write_text(
+                "RUNTIME_CONFIG_EFFECTIVE planner_fault cycle=0 once=0 when_safe=0 "
+                "after_handoff=0 repeated=0 rest_repeated=0 exact_optimization=0 "
+                "renewal_ordinal=0\n"
+                "RUNTIME_CONFIG_EFFECTIVE dynamics velocity=5 acceleration=5 jerk=8\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(runner, "_wait_for_log_fragment"):
+                runner._check_effective_planner_configuration(
+                    session, faults, dynamics
+                )
+                metadata = json.loads((session.directory / "metadata.json").read_text())
+                self.assertEqual(
+                    metadata["runtime_configuration"]["dynamics"]["effective"],
+                    dynamics,
+                )
+                with self.assertRaisesRegex(RuntimeError, "CONFIGURATION_MISMATCH"):
+                    runner._check_effective_planner_configuration(
+                        session, {**faults, "exact_optimization": True}, dynamics
+                    )
+                with self.assertRaisesRegex(RuntimeError, "CONFIGURATION_MISMATCH"):
+                    runner._check_effective_planner_configuration(
+                        session, faults, {**dynamics, "jerk": 4.0}
+                    )
 
     def test_tracking_experiment_report_marker_is_read_posthoc(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
@@ -1142,7 +1298,7 @@ class RuntimeContractTest(unittest.TestCase):
         mapping_actor = (
             ROOT / "src/mapping/navigation_mapping/src/mapping_actor.cpp"
         ).read_text(encoding="utf-8")
-        run_cycle = "void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key)"
+        run_cycle = "void NavigationRuntimeNode::runCycle("
         cycle = source[
             source.index(run_cycle):
             source.index("void NavigationRuntimeNode::publishCommand()")]
@@ -1177,6 +1333,8 @@ class RuntimeContractTest(unittest.TestCase):
             )
             policy = document[node_name]["ros__parameters"]["tracking_experiment"]
             self.assertEqual(policy, {
+                "mode": "off",
+                "tracking_gate_relaxed": False,
                 "base_m": 0.0,
                 "lateral_alpha_s": 0.0,
                 "longitudinal_beta_s": 0.0,
@@ -2663,13 +2821,15 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("reasons.extend(_mapping_integrity_reasons(navigation_mapping))",
                       sim_body)
 
-    def test_external_mode_gui_launch_passes_static_mission_file(self) -> None:
+    def test_external_mode_launch_has_no_mission_policy_input(self) -> None:
         command = runner._external_mode_launch_command(
             Path("/tmp/external_mode_params.yaml"),
-            Path("/tmp/mission.yaml"),
         )
         self.assertIn("use_sim_time:=true", command)
-        self.assertIn("mission_file:=/tmp/mission.yaml", command)
+        self.assertFalse(any(part.startswith("mission_file:=") for part in command))
+        runtime_command = runner._navigation_runtime_launch_command(
+            Path("/tmp/runtime_params.yaml"), Path("/tmp/mission.yaml"))
+        self.assertIn("mission_file:=/tmp/mission.yaml", runtime_command)
 
     def test_static_sensor_tf_is_derived_from_each_estimator_extrinsic(self) -> None:
         expected = {
@@ -2816,6 +2976,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(summary["gazebo_native"]["world_stats"]["first_sim_time_ns"], 1_000_000_500)
         self.assertEqual(summary["gazebo_native"]["world_clock"]["last_sim_time_ns"], 2_000_000_000)
         self.assertIn("native_lidar", summary["gazebo_native"])
+        self.assertIn("native_imu", summary["gazebo_native"])
         self.assertEqual(summary["process_roles"]["px4_gazebo"], 1)
         self.assertEqual(summary["psi_samples"], 1)
 
@@ -2823,6 +2984,29 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertTrue(gazebo_native_observer._native_streams_observed(1, 1))
         self.assertFalse(gazebo_native_observer._native_streams_observed(1, 0))
         self.assertFalse(gazebo_native_observer._native_streams_observed(0, 1))
+
+    def test_gazebo_observer_loop_records_sub_200_ms_scheduler_gap(self) -> None:
+        witness = gazebo_native_observer._StreamState("observer_loop")
+        witness.record(arrival_ns=1_000_000_000, source_ns=0,
+                       gap_budget_ns=150_000_000)
+        witness.record(arrival_ns=1_180_000_000, source_ns=0,
+                       gap_budget_ns=150_000_000)
+        events = witness.snapshot()["arrival_gap_events"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["gap_ns"], 180_000_000)
+
+    def test_gazebo_observer_gap_uses_steady_clock(self) -> None:
+        witness = gazebo_native_observer._StreamState("world_clock")
+        witness.record(arrival_ns=1_000_000_000, steady_ns=1_000_000_000,
+                       source_ns=1, gap_budget_ns=150_000_000)
+        witness.record(arrival_ns=1_500_000_000, steady_ns=1_040_000_000,
+                       source_ns=2, gap_budget_ns=150_000_000)
+        self.assertEqual(witness.snapshot()["arrival_gap_events"], [])
+        witness.record(arrival_ns=1_510_000_000, steady_ns=1_240_000_000,
+                       source_ns=3, gap_budget_ns=150_000_000)
+        event = witness.snapshot()["arrival_gap_events"][0]
+        self.assertEqual(event["gap_ns"], 200_000_000)
+        self.assertEqual(event["before_steady_ns"], 1_040_000_000)
 
     def test_gazebo_native_summary_reports_process_and_psi_counts(self) -> None:
         samples = [
@@ -2844,10 +3028,12 @@ class RuntimeContractTest(unittest.TestCase):
             command = start.call_args.args[1]
             self.assertIn("gazebo_native_observer.py", command[1])
             self.assertIn("--world", command)
+            self.assertEqual(command[command.index("--gap-budget-s") + 1], "0.15")
             runtime = json.loads((session.directory / "runtime.json").read_text(encoding="utf-8"))
             observer = runtime["gazebo_native_observer"]
             self.assertEqual(observer["world_stats_topic"], "/world/test_world/stats")
             self.assertEqual(observer["world_clock_topic"], "/world/test_world/clock")
+            self.assertEqual(observer["gap_budget_s"], 0.15)
             self.assertEqual(observer["verdict_owner"], "diagnostic_only")
 
     def test_report_includes_gazebo_native_diagnostics_without_reasons(self) -> None:
@@ -2926,7 +3112,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertTrue(result["observation_complete"])
             self.assertEqual(result["observation_status"], "OBSERVATION_COMPLETE")
 
-    def test_versioned_not_evaluable_evaluation_cannot_leave_top_level_pass(self) -> None:
+    def test_c0_ifp_not_evaluable_does_not_rewrite_runtime_pass(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             session = Path(temporary) / "session"
             session.mkdir()
@@ -2953,11 +3139,14 @@ class RuntimeContractTest(unittest.TestCase):
                     ROOT,
                 )
 
-        self.assertEqual(result["verdict"], "FAIL")
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["runtime_verdict"], "PASS")
         self.assertFalse(result["qualification_eligible"])
-        self.assertIn("versioned evaluation assessment is not PASS", result["reasons"])
+        self.assertEqual(result["integrated_flight_qualification"]["qualification_scope"], "C0_IFP")
+        self.assertEqual(result["integrated_flight_qualification"]["assessment_status"], "NOT_EVALUABLE")
+        self.assertEqual(result["evaluation_contract_errors"], [])
 
-    def test_versioned_non_boolean_eligibility_cannot_leave_top_level_pass(self) -> None:
+    def test_malformed_eligibility_does_not_rewrite_runtime_verdict(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             session = Path(temporary) / "session"
             session.mkdir()
@@ -2984,9 +3173,10 @@ class RuntimeContractTest(unittest.TestCase):
                     ROOT,
                 )
 
-        self.assertEqual(result["verdict"], "FAIL")
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["runtime_verdict"], "PASS")
         self.assertFalse(result["qualification_eligible"])
-        self.assertIn("versioned evaluation qualification_eligible is not a boolean", result["reasons"])
+        self.assertIn("versioned evaluation qualification_eligible is not a boolean", result["evaluation_contract_errors"])
 
     def test_versioned_eligibility_with_blocking_reasons_cannot_leave_pass(self) -> None:
         evaluation = {
@@ -3004,7 +3194,7 @@ class RuntimeContractTest(unittest.TestCase):
             report._versioned_evaluation_guard(evaluation),
         )
 
-    def test_versioned_inconsistent_evaluation_clears_top_level_eligibility(self) -> None:
+    def test_versioned_inconsistent_evaluation_clears_qualification_not_runtime(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             session = Path(temporary) / "session"
             session.mkdir()
@@ -3034,8 +3224,105 @@ class RuntimeContractTest(unittest.TestCase):
                     ROOT,
                 )
 
-        self.assertEqual(result["verdict"], "FAIL")
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["runtime_verdict"], "PASS")
         self.assertFalse(result["qualification_eligible"])
+        self.assertTrue(result["evaluation_contract_errors"])
+
+    def test_report_exposes_software_and_integrated_flight_scopes_independently(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary) / "session"
+            session.mkdir()
+            (session / "runtime.json").write_text("{}\n", encoding="utf-8")
+            fake_report = {"workflow": "external-mode", "verdict": "PASS", "reasons": []}
+            dimensions = {
+                name: {"status": "NOT_EVALUABLE" if name in {"tracking", "motion_quality"} else "PASS"}
+                for name in ("mission", "safety", "tracking", "motion_quality", "evidence")
+            }
+            fake_evaluation = {
+                "qualification_scope": "C0_IFP",
+                "assessment_status": "NOT_EVALUABLE",
+                "evidence_status": "COMPLETE",
+                "qualification_eligible": False,
+                "integrated_flight_qualification_eligible": False,
+                "blocking_reasons": [
+                    "MOTION_ACCEPTANCE_POLICY_UNAVAILABLE",
+                    "TRACKING_COVERAGE_POLICY_UNAVAILABLE",
+                    "REFERENCE_LINEAGE_MISMATCH",
+                ],
+                "dimensions": dimensions,
+                "completeness": {"reasons": []},
+                "software_qualification": {
+                    "qualification_scope": "C0_SW",
+                    "assessment_status": "PASS",
+                    "software_qualification_eligible": True,
+                    "blocking_reasons": [],
+                },
+            }
+            import flight_review_report
+            with mock.patch.object(report, "_sim_report", return_value=fake_report), \
+                    mock.patch.object(report, "load_evaluation_inputs", return_value={"metadata": {"qualification_scope": "C0_SW"}}), \
+                    mock.patch.object(report, "evaluate_session", return_value=fake_evaluation), \
+                    mock.patch.object(flight_review_report, "render", return_value=session / "REPORT.html"):
+                result = report._build_complete_report(
+                    session, "external-mode", ROOT / "config/runtime/sim.yaml", ROOT)
+
+        self.assertEqual(result["runtime_verdict"], "PASS")
+        self.assertEqual(result["software_qualification"]["assessment_status"], "PASS")
+        self.assertTrue(result["software_qualification"]["software_qualification_eligible"])
+        self.assertEqual(result["integrated_flight_qualification"]["assessment_status"], "NOT_EVALUABLE")
+        self.assertIn(
+            "REFERENCE_LINEAGE_MISMATCH",
+            result["integrated_flight_qualification"]["blocking_reasons"],
+        )
+        self.assertEqual(result["software_qualification"]["blocking_reasons"], [])
+        self.assertFalse(result["integrated_flight_qualification"]["integrated_flight_qualification_eligible"])
+        self.assertEqual(result["single_session_evidence_completeness"]["assessment_status"], "COMPLETE")
+        self.assertEqual(result["multi_run_qualification"]["assessment_status"], "NOT_EVALUABLE")
+
+    def test_software_safety_stop_outcome_remains_separate_from_ifp_assessment(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary) / "session"
+            session.mkdir()
+            (session / "runtime.json").write_text("{}\n", encoding="utf-8")
+            fake_report = {
+                "workflow": "external-mode", "verdict": "BLOCKED",
+                "reasons": ["expected safety stop"],
+            }
+            fake_evaluation = {
+                "qualification_scope": "C0_IFP",
+                "assessment_status": "NOT_EVALUABLE",
+                "evidence_status": "COMPLETE",
+                "qualification_eligible": False,
+                "integrated_flight_qualification_eligible": False,
+                "blocking_reasons": ["MOTION_ACCEPTANCE_POLICY_UNAVAILABLE"],
+                "dimensions": {
+                    "mission": {"status": "PASS"},
+                    "safety": {"status": "PASS"},
+                    "tracking": {"status": "NOT_EVALUABLE"},
+                    "motion_quality": {"status": "NOT_EVALUABLE"},
+                    "evidence": {"status": "PASS"},
+                },
+                "completeness": {"reasons": []},
+                "software_qualification": {
+                    "qualification_scope": "C0_SW",
+                    "assessment_status": "PASS",
+                    "software_qualification_eligible": True,
+                    "blocking_reasons": [],
+                },
+            }
+            import flight_review_report
+            with mock.patch.object(report, "_sim_report", return_value=fake_report), \
+                    mock.patch.object(report, "load_evaluation_inputs", return_value={"metadata": {"qualification_scope": "C0_SW"}}), \
+                    mock.patch.object(report, "evaluate_session", return_value=fake_evaluation), \
+                    mock.patch.object(flight_review_report, "render", return_value=session / "REPORT.html"):
+                result = report._build_complete_report(
+                    session, "external-mode", ROOT / "config/runtime/sim.yaml", ROOT)
+
+        self.assertEqual(result["runtime_verdict"], "BLOCKED")
+        self.assertEqual(result["software_qualification"]["assessment_status"], "PASS")
+        self.assertTrue(result["software_qualification"]["software_qualification_eligible"])
+        self.assertEqual(result["integrated_flight_qualification"]["assessment_status"], "NOT_EVALUABLE")
 
     def test_simulation_config_is_lio_only_at_startup(self) -> None:
         config = runner.load_config("sim.yaml")["fast_lio"]["ros__parameters"]
@@ -4007,7 +4294,8 @@ class RuntimeContractTest(unittest.TestCase):
         source = (
             ROOT / "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
         ).read_text(encoding="utf-8")
-        self.assertIn("new_goal_", source)
+        self.assertIn("desired_intent_.transition()", source)
+        self.assertIn("PlanningIntentTransition::kNewIntent", source)
         self.assertIn("planSuccessorFromExecutionAnchor", source)
 
     def test_candidate_exposure_retains_pre_activation_lease(self) -> None:
@@ -4069,6 +4357,21 @@ class RuntimeContractTest(unittest.TestCase):
         event = snapshot["arrival_gap_events"][0]
         self.assertEqual(event["previous_source_stamp_ns"], 1_020_000_000)
         self.assertEqual(event["source_stamp_ns"], 1_040_000_000)
+
+    def test_clock_diagnostic_gap_below_stale_boundary_does_not_change_freshness(self) -> None:
+        stats = StreamStats(
+            "simulation_clock", "/clock", stale_after_s=0.5,
+            diagnostic_gap_threshold_s=0.1,
+        )
+        stats.update(1_000_000_000, 10_000_000_000)
+        stats.update(1_004_000_000, 10_480_000_000)
+        snapshot = stats.as_dict()
+        self.assertEqual(snapshot["arrival_gap_event_count"], 0)
+        self.assertEqual(snapshot["stale_event_count"], 0)
+        self.assertEqual(snapshot["diagnostic_gap_event_count"], 1)
+        self.assertAlmostEqual(snapshot["maximum_observed_arrival_gap_ms"], 480.0)
+        self.assertEqual(snapshot["diagnostic_gap_events"][0]["source_stamp_ns"],
+                         1_004_000_000)
 
     def test_clock_gap_snapshot_is_authoritative_without_raw_samples(self) -> None:
         row = {

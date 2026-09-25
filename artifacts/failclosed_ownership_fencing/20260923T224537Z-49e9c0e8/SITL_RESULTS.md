@@ -1,0 +1,19 @@
+# Focused SITL results
+
+All sessions below used the clean Release manifest for source `0ac3edc49eff0d936ea2c9e9d21c24710e980f7d`, source fingerprint `423e04bee86f55ef2259e77a273937b3e74bf22a1c9a6efa5c373be1087e5712`, manifest SHA256 `ebdc08e4e148caaacaf391baae86e3b0bcaa8ebfbcee10b7fcc919d48846d55c`, pinned PX4 checkout/binary in `BASE_PROVENANCE.md`, `external_mode`, `long_featured`, seed 0, tracking off and dynamics override off. Session paths are `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260923T<suffix>`.
+
+| Run | Suffix | Intervention | Mission outcome / accepted | Focused observation |
+|---|---|---|---|---|
+| Nominal 1 | `233224-587903` | None | COMPLETE `[0,1,2,3,4]` | No stale PVA, unexpected Hold request, identity/continuity reject or lease failure. Terminal STOP accepted at measured 0.129 m/s. |
+| Nominal 2 | `233507-591132` | None | COMPLETE `[0,1,2,3,4]` | Same boundary result; terminal speed 0.102 m/s. |
+| Nominal 3 | `233732-594439` | None | COMPLETE `[0,1,2,3,4]` | Same boundary result; terminal speed 0.125 m/s. |
+| Hot-handoff hook attempt | `234010-597697` | `inject_failed_replan_once=True`, `inject_failed_replan_after_handoff=True` | COMPLETE `[0,1,2,3,4]` | Hook did **not** arm (`injected_replan_failure=0`); excluded from fault evidence. |
+| Repeated replacement failure | `234222-600949` | `inject_failed_replan_repeated=True` | COMPLETE `[0,1,2,3,4]` | 33 diagnostic `kFailed` injections, 414 BACKUP command samples; BACKUP→MAIN restart at nearest propagated measured speeds 0.065/0.051/0.069 m/s for requests 2/3/4 (sample age 4 ms). Terminal STOP accepted at 0.026 m/s. |
+| Core heartbeat pause | `234519-604253` | SIGSTOP Core PID 606668 after 1,800 PVA commands; SIGCONT after 350.116 ms | `PAUSED_SAFETY_STOP`, `[0,1,2]` | Adapter logged PVA stale and requested PX4 Hold; report recorded Hold request at sim time 49.356 s and `px4_hold_observed=true`. Expected fault, excluded from nominal denominator. |
+| Safe-replan hook attempt | `234724-607506` | `inject_failed_replan_once=True`, `inject_failed_replan_when_safe=True` | COMPLETE `[0,1,2,3,4]` | Hook did **not** arm (`injected_replan_failure=0`); excluded from fault evidence. |
+
+The first three runs are consecutive matched nominal mission completions. Their twelve adapter predecessor→successor admission gaps are in `HANDOFF_MEASUREMENTS.csv`: min/median/max **19.938/20.025/20.090 ms**, against the unchanged 100 ms receive lease and pinned desired-intent reference **19.958/20.052/20.169 ms**. Adapter final metrics report `trajectory_rejected=0`, `stale_state_failures=0` in all three nominal runs; logs contain no nominal execution-state lease failure, planner watchdog timeout, unexpected Hold request, identity or continuity rejection. No `valid=0` pre-admission rejection appeared in these three runs; that separate historical debt is not declared fixed by this sample.
+
+The runner's overall `FAIL` for each COMPLETE run is its separate versioned qualification gate (`qualification_eligible=false`); the focused mission outcome is read from `report.json` and trace, and no flight qualification is claimed. `px4_hold_observed` after normal terminal completion is not an unexpected Hold request: nominal reports have null `px4_hold_handover_requested_sim_ns` and trigger. The Core-pause report has a non-null request and `PAUSED_SAFETY_STOP`.
+
+The exact hot-retarget `OptimizationFailed` case has deterministic classifier/owner tests, but no runtime emission of that status. Both one-shot hooks above failed their built-in arming conditions, so neither run proves the targeted airborne replacement-failure seam. The repeated diagnostic hook emits `kFailed`, not `kOptimizationFailed`; it supports retained-command/BACKUP recovery only. This remains a **runtime evidence gap**, not a reason to relabel a non-injected run as a fault result.

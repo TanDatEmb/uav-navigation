@@ -139,6 +139,10 @@ RUNTIME_EVIDENCE_TOPICS = (
     "/lio/diagnostics",
     "/navigation/diagnostics",
     "/navigation/navigation_command",
+    "/navigation/execution_diagnostics",
+    "/navigation/command_rejection",
+    "/navigation/command_admission",
+    "/navigation/mission_progress",
     "/navigation/mode_status",
     "/navigation/goal",
     "/navigation/mission_complete",
@@ -791,6 +795,13 @@ def _apply_tracking_experiment_parameters(
 ) -> None:
     """Write the shared parameter namespace consumed by both runtime nodes."""
     ros_parameters["tracking_experiment"] = {
+        "mode": str(experiment["mode"]),
+        "tracking_gate_relaxed": bool(
+            experiment.get("mode") not in {"off", "relaxed"} and
+            experiment.get("suppress_braking", False) and
+            any(float(experiment[key]) > 0.0 for key in (
+                "base_m", "lateral_alpha_s", "longitudinal_beta_s"))
+        ),
         "base_m": float(experiment["base_m"]),
         "lateral_alpha_s": float(experiment["lateral_alpha_s"]),
         "longitudinal_beta_s": float(experiment["longitudinal_beta_s"]),
@@ -1257,7 +1268,8 @@ def _resolve_isolation_value(value: int | None, env_name: str, default: int, *, 
     return resolved
 
 
-def _ros_params(session: Session, source: Path, *, visibility_range_max_m: float = 40.0) -> Path:
+def _ros_params(session: Session, source: Path, *, visibility_range_max_m: float = 40.0,
+                state_transport_trace: bool = False) -> Path:
     """Write only explicit ROS node parameter blocks, excluding runner metadata."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "fast_lio" not in value:
@@ -1271,6 +1283,9 @@ def _ros_params(session: Session, source: Path, *, visibility_range_max_m: float
     if not isinstance(preprocessing, dict):
         raise ValueError(f"runtime ROS config is missing fast_lio preprocessing: {source}")
     preprocessing["maximum_range_m"] = float(visibility_range_max_m)
+    if state_transport_trace:
+        fast_lio_parameters.setdefault("diagnostics", {})[
+            "state_transport_trace_enabled"] = True
     node_parameters = {
         name: value[name]
         for name in ROS_PARAMETER_NODES
@@ -1910,6 +1925,7 @@ def _external_mode_params(
     source: Path,
     *,
     tracking_experiment: dict[str, Any] | None = None,
+    state_transport_trace: bool = False,
 ) -> Path:
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "px4_navigation_external_mode" not in value:
@@ -1921,19 +1937,19 @@ def _external_mode_params(
         value["px4_navigation_external_mode"].setdefault("ros__parameters", {}),
         experiment,
     )
+    if state_transport_trace:
+        value["px4_navigation_external_mode"].setdefault("ros__parameters", {}).setdefault(
+            "diagnostics", {})["state_transport_trace_enabled"] = True
     target = session.directory / "external_mode_params.yaml"
     target.write_text(yaml.safe_dump({"px4_navigation_external_mode": value["px4_navigation_external_mode"]}, sort_keys=False), encoding="utf-8")
     return target
 
 
-def _external_mode_launch_command(config_file: Path, mission_file: Path | None) -> list[str]:
-    command = [
+def _external_mode_launch_command(config_file: Path) -> list[str]:
+    return [
         "ros2", "launch", "navigation_bringup", "px4_external_mode.launch.py",
         f"config_file:={config_file}", "use_sim_time:=true",
     ]
-    if mission_file is not None:
-        command.append(f"mission_file:={mission_file}")
-    return command
 
 
 def _navigation_runtime_launch_command(
@@ -1968,12 +1984,18 @@ def _mapping_params(
     inject_failed_replan_once: bool = False,
     inject_failed_replan_when_safe: bool = False,
     inject_failed_replan_after_handoff: bool = False,
+    inject_exact_optimization_failed_once: bool = False,
+    inject_exact_optimization_predecessor_request: int = 0,
+    inject_exact_optimization_successor_request: int = 0,
+    inject_exact_optimization_alternate_predecessor_request: int = 0,
+    inject_exact_optimization_alternate_successor_request: int = 0,
     inject_failed_replan_repeated: bool = False,
     inject_failed_plan_from_rest_repeated: bool = False,
     inject_failed_same_identity_renewal_ordinal: int | None = None,
     tracking_experiment: dict[str, Any] | None = None,
     raycasting_enabled: bool = True,
     backup_allow_unknown: bool = False,
+    world_observation_fault_duration_ms: int = 0,
 ) -> Path:
     """Create the only ROS parameter file used by native planner backend navigation."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -1983,6 +2005,10 @@ def _mapping_params(
     experiment = tracking_experiment or _tracking_experiment_payload()
     _apply_tracking_experiment_parameters(node_parameters, experiment)
     planner_parameters = node_parameters.setdefault("navigation_runtime", {})
+    if world_observation_fault_duration_ms:
+        if world_observation_fault_duration_ms not in {420, 430, 520, 700}:
+            raise ValueError("World observation fault duration must be 420, 430, 520 or 700 ms")
+        planner_parameters["registered_scan_topic"] = "/test/world_gate/mapping_observation"
     planner = yaml.safe_load(
         (ROOT / "src/runtime/navigation_runtime/config/planner.yaml").read_text(
             encoding="utf-8"
@@ -2019,6 +2045,29 @@ def _mapping_params(
     planner_parameters["inject_failed_replan_after_handoff"] = bool(
         inject_failed_replan_after_handoff
     )
+    if inject_exact_optimization_failed_once:
+        if (inject_exact_optimization_predecessor_request <= 0 or
+                inject_exact_optimization_successor_request <= 0 or
+                inject_exact_optimization_predecessor_request ==
+                inject_exact_optimization_successor_request):
+            raise ValueError("exact OptimizationFailed injection requires distinct positive request IDs")
+        planner_parameters["inject_exact_optimization_failed_once"] = True
+        planner_parameters["inject_exact_optimization_predecessor_request"] = int(
+            inject_exact_optimization_predecessor_request)
+        planner_parameters["inject_exact_optimization_successor_request"] = int(
+            inject_exact_optimization_successor_request)
+        if inject_exact_optimization_alternate_predecessor_request:
+            if (inject_exact_optimization_alternate_predecessor_request <= 0 or
+                    inject_exact_optimization_alternate_successor_request <= 0 or
+                    inject_exact_optimization_alternate_successor_request ==
+                    inject_exact_optimization_alternate_predecessor_request):
+                raise ValueError("exact alternate pair requires distinct positive request IDs")
+            planner_parameters["inject_exact_optimization_alternate_predecessor_request"] = int(
+                inject_exact_optimization_alternate_predecessor_request)
+            planner_parameters["inject_exact_optimization_alternate_successor_request"] = int(
+                inject_exact_optimization_alternate_successor_request)
+        elif inject_exact_optimization_alternate_successor_request:
+            raise ValueError("exact alternate predecessor request is required")
     planner_parameters["inject_failed_replan_repeated"] = bool(inject_failed_replan_repeated)
     planner_parameters["inject_failed_plan_from_rest_repeated"] = bool(
         inject_failed_plan_from_rest_repeated
@@ -2252,12 +2301,273 @@ def _wait_for_log_fragment(
     raise TimeoutError(f"timed out waiting for {description}")
 
 
+_TRACKING_EFFECTIVE_PATTERN = re.compile(
+    r"RUNTIME_CONFIG_EFFECTIVE tracking_mode=(off|adaptive|relaxed|velocity-only) "
+    r"enabled=([01]) suppress_braking=([01]) suppress_health=([01]) "
+    r"velocity_only=([01])"
+)
+_TRACKING_BOUNDS_PATTERN = re.compile(
+    r"RUNTIME_CONFIG_EFFECTIVE tracking_bounds base=([0-9.eE+-]+) "
+    r"alpha=([0-9.eE+-]+) beta=([0-9.eE+-]+) "
+    r"velocity_gain=([0-9.eE+-]+) velocity_cap=([0-9.eE+-]+) "
+    r"velocity_accel=([0-9.eE+-]+) velocity_jerk=([0-9.eE+-]+) "
+    r"velocity_timing=([0-9.eE+-]+) velocity_reference_age=([0-9.eE+-]+) "
+    r"velocity_transport=([0-9.eE+-]+) velocity_px4_consume=([0-9.eE+-]+)"
+)
+
+
+def _check_effective_tracking_configuration(
+    session: Session, role: str, requested: dict[str, Any], timeout_s: float = 15.0
+) -> dict[str, Any]:
+    """Require a live node's policy witness before the mission can start."""
+    try:
+        _wait_for_log_fragment(
+            session, role, "RUNTIME_CONFIG_EFFECTIVE tracking_mode=", timeout_s,
+            f"{role} effective tracking configuration",
+        )
+        _wait_for_log_fragment(
+            session, role, "RUNTIME_CONFIG_EFFECTIVE tracking_bounds ", timeout_s,
+            f"{role} effective tracking bounds",
+        )
+        log = (session.directory / "logs" / f"{role}.log").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except (OSError, RuntimeError, TimeoutError) as error:
+        raise RuntimeError(
+            f"CONFIGURATION_MISMATCH {role}: effective tracking witness unavailable: {error}"
+        ) from error
+    matches = list(_TRACKING_EFFECTIVE_PATTERN.finditer(log))
+    bounds = list(_TRACKING_BOUNDS_PATTERN.finditer(log))
+    if len(matches) != 1 or len(bounds) != 1:
+        raise RuntimeError(
+            f"CONFIGURATION_MISMATCH {role}: expected one policy and bounds witness, "
+            f"observed policy={len(matches)} bounds={len(bounds)}"
+        )
+    values = matches[0].groups()
+    effective = {
+        "mode": values[0],
+        "enabled": bool(int(values[1])),
+        "suppress_braking": bool(int(values[2])),
+        "suppress_estimator_health_response": bool(int(values[3])),
+        "velocity_only_enabled": bool(int(values[4])),
+    }
+    bound_names = (
+        "base_m", "lateral_alpha_s", "longitudinal_beta_s",
+        "velocity_only_gain_s_inv", "velocity_only_cap_mps",
+        "velocity_only_max_acceleration_mps2", "velocity_only_max_jerk_mps3",
+        "velocity_only_max_timing_bound_s", "velocity_only_max_reference_age_s",
+        "velocity_only_output_transport_bound_s", "velocity_only_px4_consume_bound_s",
+    )
+    effective.update({
+        name: float(value)
+        for name, value in zip(bound_names, bounds[0].groups())
+    })
+    expected = {
+        key: requested.get(key, False if key == "velocity_only_enabled" else 0.0)
+        for key in effective
+    }
+    if effective != expected:
+        raise RuntimeError(
+            f"CONFIGURATION_MISMATCH {role}: requested={expected} effective={effective}"
+        )
+    metadata_path = session.directory / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    configuration = metadata.setdefault("runtime_configuration", {})
+    configuration[role] = {
+        "requested": expected,
+        "effective": effective,
+        "source": f"logs/{role}.log:RUNTIME_CONFIG_EFFECTIVE",
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return effective
+
+
+_PLANNER_FAULT_PATTERN = re.compile(
+    r"RUNTIME_CONFIG_EFFECTIVE planner_fault cycle=(\d+) once=([01]) "
+    r"when_safe=([01]) after_handoff=([01]) repeated=([01]) "
+    r"rest_repeated=([01]) exact_optimization=([01]) renewal_ordinal=(\d+)"
+)
+_DYNAMICS_PATTERN = re.compile(
+    r"RUNTIME_CONFIG_EFFECTIVE dynamics velocity=([0-9.eE+-]+) "
+    r"acceleration=([0-9.eE+-]+) jerk=([0-9.eE+-]+)"
+)
+
+
+def _check_effective_planner_configuration(
+    session: Session,
+    requested_faults: dict[str, int | bool],
+    requested_dynamics: dict[str, float],
+    timeout_s: float = 15.0,
+) -> None:
+    """Check actual RuntimeNode fault and planner-envelope startup witnesses."""
+    try:
+        for marker in ("planner_fault", "dynamics"):
+            _wait_for_log_fragment(
+                session, "mapping", f"RUNTIME_CONFIG_EFFECTIVE {marker} ",
+                timeout_s, f"RuntimeNode effective {marker} configuration",
+            )
+        log = (session.directory / "logs/mapping.log").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except (OSError, RuntimeError, TimeoutError) as error:
+        raise RuntimeError(
+            f"CONFIGURATION_MISMATCH mapping: planner configuration witness unavailable: {error}"
+        ) from error
+    faults = list(_PLANNER_FAULT_PATTERN.finditer(log))
+    dynamics = list(_DYNAMICS_PATTERN.finditer(log))
+    if len(faults) != 1 or len(dynamics) != 1:
+        raise RuntimeError(
+            "CONFIGURATION_MISMATCH mapping: expected exactly one planner fault "
+            "and one dynamics witness"
+        )
+    fault_values = faults[0].groups()
+    fault_keys = (
+        "cycle", "once", "when_safe", "after_handoff", "repeated",
+        "rest_repeated", "exact_optimization", "renewal_ordinal",
+    )
+    effective_faults = {
+        key: int(value) if key in {"cycle", "renewal_ordinal"} else bool(int(value))
+        for key, value in zip(fault_keys, fault_values)
+    }
+    effective_dynamics = {
+        key: float(value)
+        for key, value in zip(("velocity", "acceleration", "jerk"), dynamics[0].groups())
+    }
+    if effective_faults != requested_faults or effective_dynamics != requested_dynamics:
+        raise RuntimeError(
+            "CONFIGURATION_MISMATCH mapping: requested planner configuration "
+            f"faults={requested_faults} dynamics={requested_dynamics}; "
+            f"effective faults={effective_faults} dynamics={effective_dynamics}"
+        )
+    metadata_path = session.directory / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    configuration = metadata.setdefault("runtime_configuration", {})
+    for name, requested, effective in (
+        ("planner_fault_injection", requested_faults, effective_faults),
+        ("dynamics", requested_dynamics, effective_dynamics),
+    ):
+        configuration[name] = {
+            "requested": requested,
+            "effective": effective,
+            "source": f"logs/mapping.log:RUNTIME_CONFIG_EFFECTIVE:{name}",
+        }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def _validate_world_observation_gate(session: Session) -> dict[str, Any] | None:
+    """Check the explicit test-only gate actually isolated mapping traffic."""
+    try:
+        config = yaml.safe_load((session.directory / "scenario_config.yaml").read_text(
+            encoding="utf-8"))
+        scenario = config.get("scenario", {}) if isinstance(config, dict) else {}
+        fault = scenario.get("world_source_fault", {}) if isinstance(scenario, dict) else {}
+        duration_ms = int(fault.get("duration_ms_sim", 0)) if isinstance(fault, dict) else 0
+    except (OSError, TypeError, ValueError):
+        return None
+    if not duration_ms:
+        return None
+    path = session.directory / "world_observation_gate.jsonl"
+    records: list[dict[str, Any]] = []
+    try:
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                record = json.loads(line)
+                if isinstance(record, dict):
+                    records.append(record)
+    except (OSError, ValueError) as error:
+        return {"status": "INCOMPLETE", "issues": [f"WORLD_GATE_EVIDENCE_UNAVAILABLE:{error}"]}
+    by_event: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        by_event.setdefault(str(record.get("event", "")), []).append(record)
+    issues: list[str] = []
+    if len(by_event.get("GATE_READY", [])) != 1:
+        issues.append("WORLD_GATE_NOT_READY_EXACTLY_ONCE")
+    scheduled_rows = by_event.get("FAULT_SCHEDULED", [])
+    if len(scheduled_rows) != 1:
+        issues.append("WORLD_GATE_FAULT_NOT_SCHEDULED_EXACTLY_ONCE")
+    if len(by_event.get("GATE_FINAL", [])) != 1:
+        issues.append("WORLD_GATE_FINAL_WITNESS_MISSING")
+    scheduled = scheduled_rows[0] if scheduled_rows else {}
+    def integer(row: dict[str, Any], key: str) -> int | None:
+        value = row.get(key)
+        try:
+            return None if isinstance(value, bool) else int(value)
+        except (TypeError, ValueError):
+            return None
+    start_ns = integer(scheduled, "fault_start_ros_ns")
+    end_ns = integer(scheduled, "fault_end_ros_ns")
+    if start_ns is None or end_ns is None or end_ns - start_ns != duration_ms * 1_000_000:
+        issues.append("WORLD_GATE_SIMULATION_DURATION_MISMATCH")
+    dropped = by_event.get("MAPPING_SCAN_DROPPED", [])
+    if not dropped:
+        issues.append("WORLD_GATE_DID_NOT_DROP_MAPPING")
+    restored = by_event.get("FAULT_ENDED_FORWARDING_RESTORED", [])
+    if duration_ms <= 520 and len(restored) != 1:
+        issues.append("WORLD_GATE_FORWARDING_NOT_RESTORED")
+    if len(dropped) >= 2:
+        first, last = dropped[0], dropped[-1]
+        for field, label in (
+            ("clock_count", "CLOCK"), ("odometry_count", "ODOMETRY"),
+            ("health_count", "HEALTH"), ("health_valid_count", "VALID_HEALTH"),
+            ("core_diagnostic_count", "CORE"),
+            ("command_admission_count", "ADAPTER_ADMISSION"),
+        ):
+            first_value = integer(first, field)
+            last_value = integer(last, field)
+            if first_value is None or last_value is None or last_value <= first_value:
+                issues.append(f"WORLD_GATE_{label}_DID_NOT_PROGRESS_DURING_DROPOUT")
+        first_clock = integer(first, "last_clock_ns")
+        last_clock = integer(last, "last_clock_ns")
+        if first_clock is None or last_clock is None or last_clock <= first_clock:
+            issues.append("WORLD_GATE_SIMULATION_CLOCK_DID_NOT_ADVANCE_DURING_DROPOUT")
+    else:
+        issues.append("WORLD_GATE_DROPOUT_TOO_FEW_INPUT_WITNESSES")
+    if dropped:
+        if integer(dropped[0], "command_admission_count") is None or integer(
+                dropped[0], "command_admission_count") <= 0:
+            issues.append("WORLD_GATE_ADAPTER_ADMISSION_NOT_OBSERVED")
+        if integer(dropped[0], "last_mode_state") != 0:  # NavigationModeStatus.ACTIVE
+            issues.append("WORLD_GATE_ADAPTER_NOT_ACTIVE_AT_FAULT_START")
+    try:
+        parameters = yaml.safe_load((session.directory / "navigation_runtime_params.yaml").read_text(
+            encoding="utf-8"))
+        topic = parameters["navigation_runtime_node"]["ros__parameters"][
+            "navigation_runtime"]["registered_scan_topic"]
+        if topic != "/test/world_gate/mapping_observation":
+            issues.append("WORLD_GATE_RUNTIME_REMAP_MISMATCH")
+    except (OSError, KeyError, TypeError, ValueError):
+        issues.append("WORLD_GATE_RUNTIME_REMAP_UNPROVEN")
+    return {
+        "status": "PASS" if not issues else "INCOMPLETE",
+        "duration_ms_sim": duration_ms,
+        "input_scans_dropped": len(dropped),
+        "forwarding_restored": len(restored) == 1,
+        "runtime_mapping_topic": "/test/world_gate/mapping_observation",
+        "issues": issues,
+        "evidence_path": str(path),
+    }
+
+
 def _stop_and_report(session: Session, workflow: str, config_path: Path, *, px4_dir: Path | None = None, observation_complete: bool = False) -> dict[str, Any]:
     # Bound the measured interval before processes are stopped.  A monitor
     # timer can otherwise report a final stale event after its publishers have
     # intentionally begun shutting down.
     _write_runtime(session, observation_finished_wall_ns=time.time_ns())
     cleanup_failures = session.stop()
+    world_gate_validation = _validate_world_observation_gate(session)
+    if world_gate_validation is not None:
+        failures = _load_runtime_failures(session)
+        if world_gate_validation["status"] != "PASS":
+            failures.append("world observation fault gate did not prove mapping-only isolation")
+        _write_runtime(
+            session,
+            world_observation_gate_validation=world_gate_validation,
+            failures=failures,
+        )
     nominal_snapshot_capture = _finalize_nominal_snapshot_capture(
         session.directory.name
     )
@@ -2634,6 +2944,8 @@ def _start_gazebo_native_observer(
             world,
             "--gz-command",
             gz_command,
+            "--gap-budget-s",
+            "0.15",
         ],
         cwd=ROOT,
     )
@@ -2646,6 +2958,7 @@ def _start_gazebo_native_observer(
             "samples": str(session.directory / "gazebo_native_samples.jsonl"),
             "summary": str(session.directory / "gazebo_native_summary.json"),
             "process_period_s": 1.0,
+            "gap_budget_s": 0.15,
             "verdict_owner": "diagnostic_only",
         },
     )
@@ -2674,16 +2987,24 @@ def _run_sim_unlocked(
     sitl_dynamics_profile: str = "off",
     gazebo_native_diagnostic: bool = False,
     experiment_id: str | None = None,
+    qualification_scope: str | None = None,
     inject_failed_replan_cycle_id: int | None = None,
     inject_failed_replan_once: bool = False,
     inject_failed_replan_when_safe: bool = False,
     inject_failed_replan_after_handoff: bool = False,
+    inject_exact_optimization_failed_once: bool = False,
+    inject_exact_optimization_predecessor_request: int = 0,
+    inject_exact_optimization_successor_request: int = 0,
+    inject_exact_optimization_alternate_predecessor_request: int = 0,
+    inject_exact_optimization_alternate_successor_request: int = 0,
     inject_failed_replan_repeated: bool = False,
     inject_failed_plan_from_rest_repeated: bool = False,
     inject_failed_same_identity_renewal_ordinal: int | None = None,
     characterization_profile: str | None = None,
     characterization_mode: str = "MODE_PX4_LOCAL",
     tracking_experiment_mode: str = DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
+    state_transport_trace: bool = False,
+    world_observation_fault_duration_ms: int = 0,
     tracking_experiment_base_m: float = 0.0,
     tracking_experiment_lateral_alpha_s: float = 0.0,
     tracking_experiment_longitudinal_beta_s: float = 0.0,
@@ -2697,8 +3018,18 @@ def _run_sim_unlocked(
     velocity_only_output_transport_bound_s: float = 0.0,
     velocity_only_px4_consume_bound_s: float = 0.0,
 ) -> int:
+    if qualification_scope not in {None, "C0_SW"}:
+        raise ValueError("unsupported qualification scope")
+    if qualification_scope == "C0_SW" and tracking_experiment_mode != "off":
+        raise ValueError("C0-SW requires explicitly requested tracking experiment mode off")
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
+    if state_transport_trace and control_interface != "external_mode":
+        raise ValueError("state transport trace requires external_mode SITL")
+    if world_observation_fault_duration_ms not in {0, 420, 430, 520, 700}:
+        raise ValueError("World observation fault duration must be 0, 420, 430, 520, or 700 ms")
+    if world_observation_fault_duration_ms and control_interface != "external_mode":
+        raise ValueError("World observation fault gate requires External Mode SITL")
     if visibility_max_endpoints not in {4096, 8192, 16384, 20160}:
         raise ValueError(
             "visibility_max_endpoints must be one of 4096, 8192, 16384 or 20160"
@@ -2767,6 +3098,12 @@ def _run_sim_unlocked(
     scenario_config = load_config(scenario_config_name)
     scenario_config.setdefault("scenario", {})["map_profile"] = map_profile
     scenario_config["scenario"].update({
+        "qualification_scope": qualification_scope,
+        "qualification_policy_version": "C0_SW_V1" if qualification_scope == "C0_SW" else None,
+        "qualification_policy_provenance": (
+            "user-approved task 2026-09-25: C0-SW software-first decision"
+            if qualification_scope == "C0_SW" else None
+        ),
         "map_scene": scene_descriptor["scene"],
         "test_case": scene_descriptor["test_case"],
         "motion_preset": scene_descriptor["motion_preset"],
@@ -2777,12 +3114,31 @@ def _run_sim_unlocked(
         "manual_takeoff": bool(manual_takeoff),
         "interactive_handover": bool(not headless and auto_scenario),
         "tracking_experiment": tracking_experiment,
+        "state_transport_trace": bool(state_transport_trace),
         "sitl_profile": sitl_profile_contract,
         "sitl_dynamics_profile": sitl_dynamics_profile_contract,
         "takeoff_reference": sitl_profile_contract["takeoff_reference"],
         "visibility_comparator": visibility_comparator,
         "backup_evidence_experiment": backup_evidence,
     })
+    if world_observation_fault_duration_ms:
+        scenario_config["scenario"].update({
+            "world_source_fault": {
+                "scope": "mapping_observation_only",
+                "duration_ms_sim": world_observation_fault_duration_ms,
+                "gate_trigger": "100 NavigationCommand STATUS_READY samples",
+                "delay_after_trigger_ms_sim": 1000,
+            },
+            "world_evidence_required": world_observation_fault_duration_ms in {420, 430, 520},
+            "required_world_event_kinds": (
+                ["WORLD_COMMAND_SUSPENDED", "WORLD_PUBLICATION_COMMITTED",
+                 "WORLD_COMMAND_RECERTIFIED", "WORLD_COMMAND_RESUMED"]
+                if world_observation_fault_duration_ms in {420, 430, 520} else []
+            ),
+            "required_world_transactions": (
+                3 if world_observation_fault_duration_ms in {420, 430, 520} else 0
+            ),
+        })
     if manual_takeoff:
         if headless or control_interface != "external_mode" or not auto_scenario:
             raise ValueError("manual takeoff is supported only by the automatic GUI External Mode workflow")
@@ -3098,6 +3454,14 @@ def _run_sim_unlocked(
         scenario_identity=scenario_identity,
         tracking_experiment=tracking_experiment,
     )
+    if qualification_scope == "C0_SW":
+        metadata_path = session.directory / "metadata.json"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        for name in ("qualification_scope", "qualification_policy_version",
+                     "qualification_policy_provenance"):
+            metadata[name] = scenario_config["scenario"][name]
+        metadata_path.write_text(
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if characterization_profile:
         metadata_path = session.directory / "metadata.json"
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -3159,6 +3523,7 @@ def _run_sim_unlocked(
             session,
             RUNTIME_CONFIG / "sim.yaml",
             visibility_range_max_m=visibility_range_max_m,
+            state_transport_trace=state_transport_trace,
         )
         mapping_config = None if characterization_profile else _mapping_params(
             session,
@@ -3182,12 +3547,18 @@ def _run_sim_unlocked(
             inject_failed_replan_once=inject_failed_replan_once,
             inject_failed_replan_when_safe=inject_failed_replan_when_safe,
             inject_failed_replan_after_handoff=inject_failed_replan_after_handoff,
+            inject_exact_optimization_failed_once=inject_exact_optimization_failed_once,
+            inject_exact_optimization_predecessor_request=inject_exact_optimization_predecessor_request,
+            inject_exact_optimization_successor_request=inject_exact_optimization_successor_request,
+            inject_exact_optimization_alternate_predecessor_request=inject_exact_optimization_alternate_predecessor_request,
+            inject_exact_optimization_alternate_successor_request=inject_exact_optimization_alternate_successor_request,
             inject_failed_replan_repeated=inject_failed_replan_repeated,
             inject_failed_plan_from_rest_repeated=inject_failed_plan_from_rest_repeated,
             inject_failed_same_identity_renewal_ordinal=inject_failed_same_identity_renewal_ordinal,
             tracking_experiment=tracking_experiment,
             raycasting_enabled=bool(backup_evidence["raycasting_enabled"]),
             backup_allow_unknown=bool(backup_evidence["backup_allow_unknown"]),
+            world_observation_fault_duration_ms=world_observation_fault_duration_ms,
         )
         external_mode_config: Path | None = None
         if control_interface == "external_mode":
@@ -3195,6 +3566,7 @@ def _run_sim_unlocked(
                 session,
                 RUNTIME_CONFIG / "external_mode.yaml",
                 tracking_experiment=tracking_experiment,
+                state_transport_trace=state_transport_trace,
             )
         generated_snapshot = session.directory / "config_snapshot"
         generated_config_snapshot: dict[str, str] = {}
@@ -3247,7 +3619,7 @@ def _run_sim_unlocked(
             _ros_shell([
                 str(CANONICAL_PYTHON), str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory),
                 "--workflow", "sim", "--config", str(RUNTIME_CONFIG / "sim.yaml"),
-            ]),
+            ] + (["--state-transport-trace"] if state_transport_trace else [])),
             cwd=ROOT,
         )
         session.start(
@@ -3338,6 +3710,20 @@ def _run_sim_unlocked(
                 "--params-file", str(ros_config), "-p", "use_sim_time:=true",
             ], enable_rviz=not headless), cwd=ROOT)
         if not characterization_profile:
+            if world_observation_fault_duration_ms:
+                gate_log = session.directory / "world_observation_gate.jsonl"
+                session.start("world_observation_gate", _ros_shell([
+                    str(CANONICAL_PYTHON),
+                    str(ROOT / "tools/runtime/world_observation_gate.py"),
+                    str(gate_log), "--ros-args",
+                    "-p", "use_sim_time:=true",
+                    "-p", "input_topic:=/lio/mapping_observation",
+                    "-p", "output_topic:=/test/world_gate/mapping_observation",
+                    "-p", "command_topic:=/navigation/navigation_command",
+                    "-p", "ready_commands_before_fault:=100",
+                    "-p", "delay_after_trigger_ns:=1000000000",
+                    "-p", f"drop_duration_ns:={world_observation_fault_duration_ms * 1000000}",
+                ]), cwd=ROOT)
             session.start(
                 "mapping",
                 _ros_shell(
@@ -3345,6 +3731,47 @@ def _run_sim_unlocked(
                     enable_rviz=not headless,
                 ),
                 cwd=ROOT,
+            )
+            _check_effective_tracking_configuration(
+                session, "mapping", tracking_experiment
+            )
+            product_planner = yaml.safe_load(
+                (ROOT / "src/runtime/navigation_runtime/config/planner.yaml").read_text(
+                    encoding="utf-8"
+                )
+            )
+            base_control = product_planner["planner"]["control_envelope"]
+            requested_dynamics = {
+                "velocity": float(
+                    sitl_dynamics_profile_contract["control_envelope_max_velocity_mps"]
+                    if sitl_dynamics_profile_contract["control_envelope_max_velocity_mps"] is not None
+                    else sitl_profile_contract["control_envelope_max_velocity_mps"]
+                    if sitl_profile_contract["control_envelope_max_velocity_mps"] is not None
+                    else base_control["maximum_velocity_mps"]
+                ),
+                "acceleration": float(
+                    sitl_dynamics_profile_contract["control_envelope_max_acceleration_mps2"]
+                    if sitl_dynamics_profile_contract["control_envelope_max_acceleration_mps2"] is not None
+                    else base_control["maximum_acceleration_mps2"]
+                ),
+                "jerk": float(
+                    sitl_dynamics_profile_contract["control_envelope_max_jerk_mps3"]
+                    if sitl_dynamics_profile_contract["control_envelope_max_jerk_mps3"] is not None
+                    else base_control["maximum_jerk_mps3"]
+                ),
+            }
+            requested_faults = {
+                "cycle": int(inject_failed_replan_cycle_id or 0),
+                "once": bool(inject_failed_replan_once),
+                "when_safe": bool(inject_failed_replan_when_safe),
+                "after_handoff": bool(inject_failed_replan_after_handoff),
+                "repeated": bool(inject_failed_replan_repeated),
+                "rest_repeated": bool(inject_failed_plan_from_rest_repeated),
+                "exact_optimization": bool(inject_exact_optimization_failed_once),
+                "renewal_ordinal": int(inject_failed_same_identity_renewal_ordinal or 0),
+            }
+            _check_effective_planner_configuration(
+                session, requested_faults, requested_dynamics
             )
         session.start("lio", _ros_shell([
             "ros2", "launch", "navigation_bringup", "fast_lio.launch.py",
@@ -3360,7 +3787,6 @@ def _run_sim_unlocked(
                 _ros_shell(
                     _external_mode_launch_command(
                         external_mode_config,
-                        mission_file,
                     ),
                     enable_rviz=True,
                 ),
@@ -3415,7 +3841,6 @@ def _run_sim_unlocked(
             if control_interface == "external_mode":
                 external_mode_args = _external_mode_launch_command(
                     external_mode_config,
-                    mission_file,
                 )
                 session.start("external_mode", _ros_shell([
                     *external_mode_args,
@@ -3426,6 +3851,9 @@ def _run_sim_unlocked(
                     EXTERNAL_MODE_READY_MARKER,
                     float(config["runtime"]["timeouts"].get("external_mode_registration_s", 15.0)),
                     "successful External Mode registration and startup",
+                )
+                _check_effective_tracking_configuration(
+                    session, "external_mode", tracking_experiment
                 )
 
             # The sensor stack and External Mode registration can run through
@@ -3483,7 +3911,14 @@ def _run_sim_unlocked(
         _write_runtime(session, failures=[])
         session.mark_stopped("user interrupt")
     except Exception as error:
-        _write_runtime(session, failures=[str(error)])
+        _write_runtime(
+            session,
+            failures=[str(error)],
+            setup_status=(
+                "CONFIGURATION_MISMATCH"
+                if str(error).startswith("CONFIGURATION_MISMATCH") else None
+            ),
+        )
     finally:
         result = _stop_and_report(
             session,
@@ -3900,8 +4335,25 @@ def main() -> int:
         help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
     )
     external_mode.add_argument(
+        "--state-transport-trace", action="store_true",
+        help="default-off SITL-only propagated-state producer/adapter timing trace",
+    )
+    external_mode.add_argument(
+        "--world-observation-fault-ms", type=int, choices=(420, 430, 520, 700), default=0,
+        help="test-only mapping RegisteredScan dropout in simulation time; 0 disables",
+    )
+    external_mode.add_argument(
         "--experiment-id", default=None,
         help="evidence experiment label stored in metadata.json",
+    )
+    external_mode.add_argument(
+        "--qualification-scope", choices=("C0_SW",), default=None,
+        help="versioned software qualification scope; omitted for other runs",
+    )
+    external_mode.add_argument(
+        "--tracking-experiment-mode", choices=TRACKING_EXPERIMENT_MODES,
+        default=DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
+        help="requested tracking experiment; C0-SW requires off",
     )
     external_mode.add_argument(
         "--inject-failed-replan-cycle-id", type=int, default=None,
@@ -3922,6 +4374,26 @@ def main() -> int:
     external_mode.add_argument(
         "--inject-failed-replan-after-handoff", action="store_true",
         help="arm one diagnostic failure only on a safe PASS_THROUGH hot handoff",
+    )
+    external_mode.add_argument(
+        "--inject-exact-optimization-failed-once", action="store_true",
+        help="test-only exact OptimizationFailed status on a semantic hot handoff",
+    )
+    external_mode.add_argument(
+        "--inject-exact-optimization-predecessor-request", type=int, default=0,
+        help="active predecessor request for exact OptimizationFailed injection",
+    )
+    external_mode.add_argument(
+        "--inject-exact-optimization-successor-request", type=int, default=0,
+        help="desired successor request for exact OptimizationFailed injection",
+    )
+    external_mode.add_argument(
+        "--inject-exact-optimization-alternate-predecessor-request", type=int, default=0,
+        help="optional second semantic predecessor request",
+    )
+    external_mode.add_argument(
+        "--inject-exact-optimization-alternate-successor-request", type=int, default=0,
+        help="optional second semantic successor request",
     )
     external_mode.add_argument(
         "--inject-failed-replan-repeated", action="store_true",
@@ -4081,11 +4553,20 @@ def main() -> int:
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
+            state_transport_trace=args.state_transport_trace,
             experiment_id=args.experiment_id,
+            qualification_scope=args.qualification_scope,
+            tracking_experiment_mode=args.tracking_experiment_mode,
+            world_observation_fault_duration_ms=args.world_observation_fault_ms,
             inject_failed_replan_cycle_id=args.inject_failed_replan_cycle_id,
             inject_failed_replan_once=args.inject_failed_replan_once,
             inject_failed_replan_when_safe=args.inject_failed_replan_when_safe,
             inject_failed_replan_after_handoff=args.inject_failed_replan_after_handoff,
+            inject_exact_optimization_failed_once=args.inject_exact_optimization_failed_once,
+            inject_exact_optimization_predecessor_request=args.inject_exact_optimization_predecessor_request,
+            inject_exact_optimization_successor_request=args.inject_exact_optimization_successor_request,
+            inject_exact_optimization_alternate_predecessor_request=args.inject_exact_optimization_alternate_predecessor_request,
+            inject_exact_optimization_alternate_successor_request=args.inject_exact_optimization_alternate_successor_request,
             inject_failed_replan_repeated=args.inject_failed_replan_repeated,
             inject_failed_same_identity_renewal_ordinal=
                 args.inject_failed_same_identity_renewal_ordinal,
@@ -4117,6 +4598,11 @@ def main() -> int:
             inject_failed_replan_once=args.inject_failed_replan_once,
             inject_failed_replan_when_safe=args.inject_failed_replan_when_safe,
             inject_failed_replan_after_handoff=args.inject_failed_replan_after_handoff,
+            inject_exact_optimization_failed_once=args.inject_exact_optimization_failed_once,
+            inject_exact_optimization_predecessor_request=args.inject_exact_optimization_predecessor_request,
+            inject_exact_optimization_successor_request=args.inject_exact_optimization_successor_request,
+            inject_exact_optimization_alternate_predecessor_request=args.inject_exact_optimization_alternate_predecessor_request,
+            inject_exact_optimization_alternate_successor_request=args.inject_exact_optimization_alternate_successor_request,
             inject_failed_replan_repeated=args.inject_failed_replan_repeated,
             inject_failed_same_identity_renewal_ordinal=
                 args.inject_failed_same_identity_renewal_ordinal,

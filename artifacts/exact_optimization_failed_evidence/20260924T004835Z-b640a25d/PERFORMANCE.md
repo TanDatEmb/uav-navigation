@@ -1,0 +1,5 @@
+# Focused timing observations
+
+The 3 positive exact-injection runs show last predecessor→first successor adapter admission gaps of 20.066, 19.889, 20.056 ms (min/median/max **19.889/20.056/20.066 ms**). During fault retention, maximum observed Core publish gap was **20.576 ms**, maximum observed adapter admission gap **20.726 ms**; both below the unchanged 100 ms downstream lease in these traces. See `HANDOFF_MEASUREMENTS.csv` for per-run p50/p95/p99/max over the fault→successor window and `FAULT_RETENTION_MEASUREMENTS.csv` for retention duration/sample count. Fault→next successor admission was 585.045, 575.780, 576.866 ms. There were 85 post-fault predecessor admissions in total.
+
+These are rosbag recorder/adapter boundary intervals, not PX4 firmware setpoint consumption or hard WCET. No timing threshold was retuned. The corresponding prior branch nominal handoff reference was 19.958/20.052/20.169 ms min/median/max; this tiny sample remains the same order, without a performance claim.

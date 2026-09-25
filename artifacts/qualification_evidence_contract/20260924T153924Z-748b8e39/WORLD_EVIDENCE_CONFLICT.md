@@ -1,0 +1,5 @@
+# World revision evidence conflict
+
+The pinned historical A3 audit recorded two NavigationCommand heartbeat groups where `world_revision` changed at an unchanged ROS source stamp: 194→195 at 23,611,999,999 ns and 244→245 at 28,731,999,999 ns. The A2 exact same-reference heartbeats were collapsible; A3 was not because certificate identity changed. This is evidence of a distinct authorization/certificate at one trajectory source tick, not proof of a world-policy defect. The current evaluator correctly retains `SOURCE_TIMESTAMP_DUPLICATE_CONFLICT` in that historical session.
+
+The ten-run product-stability cohort has no world-specific blocker in its evaluator reason list. No world behavior or policy is changed. An exact world transaction witness (generation, revision, observation source stamp, active execution identity, authorization event order) is needed to decide whether A3 represents legitimate recertification at a repeated simulation tick or conflicting evidence. Historical raw data cannot be relabeled solely from observer timestamp order.

@@ -306,6 +306,14 @@ _MODE_STATUS_REASON_NAMES = {
 }
 
 
+def _command_diagnostic_key(message: Any) -> tuple[Any, ...]:
+    """Exact producer sample identity; diagnostic arrival order is irrelevant."""
+    return tuple(getattr(message, name) for name in (
+        "mode_activation_id", "localization_epoch", "goal_epoch", "mission_id",
+        "waypoint_index", "request_id", "bundle_generation", "sample_id",
+    ))
+
+
 class ExternalModeScenario:
     def __init__(self, output: Path, config: dict[str, Any]) -> None:
         import rclpy
@@ -314,7 +322,11 @@ class ExternalModeScenario:
         from diagnostic_msgs.msg import DiagnosticArray
         from navigation_contracts.msg import (
             NavigationGoal,
+            NavigationMissionProgress,
             NavigationModeStatus,
+            NavigationExecutionDiagnostics,
+            NavigationCommandAdmission,
+            NavigationCommandRejection,
             PropagatedOdometry,
         )
         from px4_msgs.msg import (
@@ -339,6 +351,7 @@ class ExternalModeScenario:
         self.NavigationGoal = NavigationGoal
         self.Point = Point
         self.NavigationModeStatus = NavigationModeStatus
+        self.NavigationMissionProgress = NavigationMissionProgress
         self.VehicleCommand = VehicleCommand
         self.OffboardControlMode = OffboardControlMode
         self.TrajectorySetpoint = TrajectorySetpoint
@@ -446,6 +459,7 @@ class ExternalModeScenario:
         self.executable_trajectory_count = 0
         self.latest_trajectory: dict[str, Any] = {}
         self.trajectory_records: list[dict[str, Any]] = []
+        self._execution_diagnostics_by_sample: dict[tuple[Any, ...], dict[str, Any]] = {}
         # Keep one bounded, timestamped observation summary per LiDAR scan.
         # This is diagnostic evidence only; planner safety remains owned by
         # the immutable map certificate.
@@ -531,10 +545,26 @@ class ExternalModeScenario:
         self.node.create_subscription(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", self._setpoint, px4_qos)
         from navigation_contracts.msg import NavigationCommand
         self.NavigationCommand = NavigationCommand
+        self.NavigationExecutionDiagnostics = NavigationExecutionDiagnostics
         self.node.create_subscription(
             NavigationCommand, "/navigation/navigation_command", self._navigation_command, reliable_qos
         )
+        self.node.create_subscription(
+            NavigationExecutionDiagnostics, "/navigation/execution_diagnostics",
+            self._navigation_execution_diagnostics, px4_qos,
+        )
+        self.node.create_subscription(
+            NavigationCommandAdmission, "/navigation/command_admission",
+            self._navigation_command_admission, reliable_qos,
+        )
+        self.node.create_subscription(
+            NavigationCommandRejection, "/navigation/command_rejection",
+            self._navigation_command_rejection, px4_qos,
+        )
         self.node.create_subscription(NavigationGoal, "/navigation/goal", self._goal, reliable_qos)
+        self.node.create_subscription(
+            NavigationMissionProgress, "/navigation/mission_progress",
+            self._mission_progress, reliable_qos)
         self.node.create_subscription(Bool, "/navigation/mission_complete", self._mission_complete, reliable_qos)
         self.node.create_subscription(
             NavigationModeStatus, "/navigation/mode_status", self._mode_status, reliable_qos)
@@ -567,19 +597,10 @@ class ExternalModeScenario:
     ) -> None:
         """Record the observed authority handoff without affecting control."""
         self._lifecycle_sequence = getattr(self, "_lifecycle_sequence", 0) + 1
-        inherited: dict[str, Any] = {}
-        for key in (
-            "localization_epoch", "goal_epoch", "request_id",
-            "causal_planning_cycle_id", "bundle_generation", "sample_id",
-        ):
-            latest_pva = getattr(self, "latest_pva_command", {})
-            if key not in details and isinstance(latest_pva, dict):
-                value = latest_pva.get(key)
-                if value not in (None, 0):
-                    inherited[key] = value
-        latest_goal = getattr(self, "latest_goal", {})
-        if "request_id" not in details and latest_goal.get("request_id") not in (None, 0):
-            inherited["request_id"] = latest_goal["request_id"]
+        # A recent PVA/goal is an observer cache, not the causal owner of this
+        # event. Inheriting its identity fabricates cross-cycle lineage when
+        # planner, command and recorder callbacks interleave. Producers must
+        # pass only identities observed at the boundary that emitted details.
         payload = {
             "phase": phase,
             "disposition": disposition,
@@ -588,7 +609,6 @@ class ExternalModeScenario:
             "runtime_instance_id": getattr(self, "runtime_instance_id", "unknown"),
             "session_id": getattr(self, "session_id", "unknown"),
             "causal_event_sequence": self._lifecycle_sequence,
-            **inherited,
             **details,
         }
         self._record("lifecycle", payload)
@@ -654,8 +674,25 @@ class ExternalModeScenario:
                 request_boundary="navigation_runtime/planning_cycle",
                 disposition_source="navigation_runtime/planner",
             )
+            if values.get("planner_result_after_injection") is not None:
+                self._record_lifecycle(
+                    "result", "OBSERVED",
+                    source_stamp_ns=stamp_ns or None,
+                    request_id=request_id,
+                    goal_epoch=goal_epoch,
+                    localization_epoch=localization_epoch,
+                    causal_planning_cycle_id=cycle_id,
+                    bundle_owner_request_id=request_id,
+                    bundle_owner_cycle_id=cycle_id,
+                    planner_status=parse_int(values.get("planner_result_after_injection")),
+                    planner_disposition=parse_int(values.get("planner_disposition")),
+                    runtime_admission_attempted=parse_bool(
+                        values.get("runtime_admission_attempted")),
+                    disposition_source="navigation_runtime/planner",
+                )
         if parse_bool(values.get("runtime_admission_attempted")):
             succeeded = parse_bool(values.get("runtime_admission_succeeded"))
+            admission_disposition = values.get("runtime_admission_disposition")
             self._record_lifecycle(
                 "export", "EXPORTED" if succeeded else "REJECTED",
                 source_stamp_ns=stamp_ns or None,
@@ -667,39 +704,69 @@ class ExternalModeScenario:
                 bundle_owner_request_id=request_id,
                 bundle_owner_cycle_id=cycle_id,
                 disposition_source="navigation_runtime/planner",
-                result=values.get("runtime_admission_disposition"),
+                result=admission_disposition,
             )
-        activation_generation = parse_int(values.get("latest_execution_activation_generation"))
-        activation_result = parse_int(values.get("latest_execution_activation_result"))
-        if activation_generation and activation_result in {1, 2}:
-            activation_request_id = parse_int(values.get("active_execution_request_id")) or request_id
-            activation_goal_epoch = parse_int(values.get("active_execution_goal_epoch")) or goal_epoch
-            activation_localization_epoch = (
-                parse_int(values.get("active_execution_localization_epoch"))
-                or localization_epoch
-            )
-            # The runtime trace does not expose a planner cycle for this
-            # command-timer store transaction. Preserve the bundle identity
-            # and let the reducer attach it without inventing a cycle.
-            self._record_lifecycle(
-                "activate", "ACTIVATED" if activation_result == 1 else "FAILED",
-                source_stamp_ns=stamp_ns or None,
-                request_id=activation_request_id,
-                goal_epoch=activation_goal_epoch,
-                localization_epoch=activation_localization_epoch,
-                causal_planning_cycle_id=None,
-                bundle_generation=activation_generation,
-                bundle_owner_request_id=activation_request_id,
-                bundle_owner_cycle_id=None,
-                activation_result=activation_result,
-                disposition_source="navigation_runtime/execution_timeline",
-            )
+            if (succeeded and admission_disposition == "IMMEDIATELY_COMMITTED"
+                    and request_id and goal_epoch and localization_epoch
+                    and cycle_id and bundle_generation):
+                # The producer's successful commit atomically installs the
+                # active bundle. Staged candidates have a distinct later
+                # command-timer activation witness and are excluded here.
+                self._record_lifecycle(
+                    "activate", "ACTIVATED",
+                    source_stamp_ns=stamp_ns or None,
+                    request_id=request_id,
+                    goal_epoch=goal_epoch,
+                    localization_epoch=localization_epoch,
+                    causal_planning_cycle_id=cycle_id,
+                    bundle_generation=bundle_generation,
+                    bundle_owner_request_id=request_id,
+                    bundle_owner_cycle_id=cycle_id,
+                    bundle_owner_attribution="producer_declared",
+                    activation_result="IMMEDIATELY_COMMITTED",
+                    disposition_source="navigation_runtime/commit_planner_candidate",
+                )
+        # The rolling latest_execution_activation_* counters are not an
+        # activation event: another planner cycle may read them much later.
+        # The command timer emits an immutable producer witness instead.
 
     def _diagnostics(self, message: Any) -> None:
         receive_ns = self._receive_time_ns()
         for status in message.status:
             values = self._diagnostic_values(status)
-            if status.name == "navigation_external_mode/ALIGNMENT_LATCH_WITNESS":
+            if status.name == "navigation_runtime/world_transaction_witness":
+                # This is a producer-owned immutable event from the Core
+                # publication/suspension boundary. Keep its declared identity
+                # verbatim; do not join it to a nearby map diagnostic.
+                payload = dict(values)
+                payload.update({
+                    "status_name": str(status.name),
+                    "event_message": str(status.message),
+                    "event_header_ros_ns": _time_ns(message.header.stamp),
+                    "observer_receive_ros_ns": receive_ns,
+                    "observer_receive_steady_ns": time.monotonic_ns(),
+                    "observer_runtime_instance_id": self.runtime_instance_id,
+                    "producer_runtime_instance_id": str(
+                        values.get("runtime_instance_id", "")),
+                    "session_id": self.session_id,
+                    "source": "navigation_runtime/world_transaction_witness",
+                })
+                self._record("world_transaction", payload)
+            elif status.name == "navigation_mapping/world_model":
+                produced = _integer_value(values.get("world_transaction_events_produced"))
+                if produced is not None:
+                    self._record("world_transaction_producer_count", {
+                        "events_produced": produced,
+                        "producer_runtime_instance_id": str(values.get(
+                            "world_transaction_runtime_instance_id", "")),
+                        "world_generation": _integer_value(values.get("world_generation")),
+                        "world_revision": _integer_value(values.get("world_revision")),
+                        "diagnostic_source_ros_ns": _time_ns(message.header.stamp),
+                        "observer_receive_ros_ns": receive_ns,
+                        "observer_receive_steady_ns": time.monotonic_ns(),
+                        "source": "navigation_mapping/world_model",
+                    })
+            elif status.name == "navigation_external_mode/ALIGNMENT_LATCH_WITNESS":
                 witness = {
                     "status_name": str(status.name),
                     "level": self._diagnostic_level(status),
@@ -757,9 +824,178 @@ class ExternalModeScenario:
                     or _time_ns(message.header.stamp),
                     "trace_values": values,
                 })
+            elif status.name == "navigation_runtime/retained_command_decision":
+                # The producer separately names the desired solve and the
+                # incumbent execution; a hot retarget must never relabel N as
+                # N+1 merely because the callback used desired N+1.
+                desired_request = _integer_value(values.get("desired_request_id"))
+                desired_epoch = _integer_value(values.get("desired_goal_epoch"))
+                cycle = _integer_value(values.get("planning_cycle_id"))
+                disposition = _integer_value(values.get("disposition"))
+                payload = {
+                    "producer_event_sequence": _integer_value(values.get("event_sequence")),
+                    "purpose": _integer_value(values.get("purpose")),
+                    "planning_cycle_id": cycle,
+                    "desired_request_id": desired_request,
+                    "desired_goal_epoch": desired_epoch,
+                    "execution_request_id": _integer_value(values.get("request_id")),
+                    "execution_goal_epoch": _integer_value(values.get("goal_epoch")),
+                    "localization_epoch": _integer_value(values.get("localization_epoch")),
+                    "captured_bundle_generation": _integer_value(
+                        values.get("captured_bundle_generation")),
+                    "after_bundle_generation": _integer_value(
+                        values.get("after_bundle_generation")),
+                    "disposition": disposition,
+                    "owner_snapshot_current": _integer_value(
+                        values.get("owner_snapshot_current")),
+                    "callback_request_current": _integer_value(
+                        values.get("callback_request_current")),
+                    "after_command_available": _integer_value(
+                        values.get("after_command_available")),
+                    "after_failure_latched": _integer_value(
+                        values.get("after_failure_latched")),
+                    "monitor_window_current": _integer_value(
+                        values.get("monitor_window_current")),
+                    "final_freshness_reason": _integer_value(
+                        values.get("final_freshness_reason")),
+                    "final_witness_age_bounded": _integer_value(
+                        values.get("final_witness_age_bounded")),
+                    "final_body_known_free": _integer_value(
+                        values.get("final_body_known_free")),
+                    "final_anchor_valid": _integer_value(
+                        values.get("final_anchor_valid")),
+                    "final_bridge_usable": _integer_value(
+                        values.get("final_bridge_usable")),
+                    "final_state_source_ros_ns": _integer_value(
+                        values.get("final_state_source_ros_ns")),
+                    "final_state_receive_steady_ns": _integer_value(
+                        values.get("final_state_receive_steady_ns")),
+                    "state_ingress_sequence": _integer_value(
+                        values.get("state_ingress_sequence")),
+                    "published_before_event": _integer_value(
+                        values.get("published_before_event")),
+                    "suppressed_before_event": _integer_value(
+                        values.get("suppressed_before_event")),
+                    "failed_before_event": _integer_value(values.get("failed_before_event")),
+                }
+                self._record("retained_decision", payload)
+                self._record_lifecycle(
+                    "retained", "OBSERVED",
+                    source_stamp_ns=_integer_value(values.get("evaluation_ros_ns"))
+                    or _time_ns(message.header.stamp),
+                    request_id=desired_request,
+                    goal_epoch=desired_epoch,
+                    localization_epoch=payload["localization_epoch"],
+                    causal_planning_cycle_id=cycle,
+                    bundle_owner_request_id=desired_request,
+                    bundle_owner_cycle_id=cycle,
+                    disposition_code=disposition,
+                    **{key: value for key, value in payload.items()
+                       if key not in {"localization_epoch", "disposition"}},
+                )
+            elif status.name == "navigation_runtime/heading_rebind_admission_witness":
+                self._record_lifecycle(
+                    "heading_admitted", "ADMITTED",
+                    source_stamp_ns=_time_ns(message.header.stamp),
+                    request_id=_integer_value(values.get("request_id")),
+                    goal_epoch=_integer_value(values.get("goal_epoch")),
+                    localization_epoch=_integer_value(values.get("localization_epoch")),
+                    bundle_generation=_integer_value(values.get("bundle_generation")),
+                    bundle_source=_integer_value(values.get("bundle_source")),
+                    parent_bundle_generation=_integer_value(
+                        values.get("parent_bundle_generation")),
+                    world_generation=_integer_value(values.get("world_generation")),
+                    world_revision=_integer_value(values.get("world_revision")),
+                    activation_stamp_ns=_integer_value(
+                        values.get("activation_stamp_ns")),
+                    bundle_owner_attribution="producer_declared",
+                    disposition_source="navigation_runtime/heading_rebind_admission_witness",
+                )
+            elif status.name == "navigation_runtime/execution_pending_superseded_witness":
+                self._record_lifecycle(
+                    "supersede", "SUPERSEDED",
+                    source_stamp_ns=_time_ns(message.header.stamp),
+                    request_id=_integer_value(values.get("request_id")),
+                    goal_epoch=_integer_value(values.get("goal_epoch")),
+                    localization_epoch=_integer_value(values.get("localization_epoch")),
+                    bundle_generation=_integer_value(values.get("bundle_generation")),
+                    bundle_source=_integer_value(values.get("bundle_source")),
+                    bundle_owner_cycle_id=_integer_value(
+                        values.get("bundle_owner_cycle_id")) or None,
+                    bundle_owner_attribution="producer_declared",
+                    replacement_bundle_generation=_integer_value(
+                        values.get("replacement_bundle_generation")),
+                    admission_goal_epoch=_integer_value(
+                        values.get("admission_goal_epoch")),
+                    previous_snapshot_version=_integer_value(
+                        values.get("previous_snapshot_version")),
+                    current_snapshot_version=_integer_value(
+                        values.get("current_snapshot_version")),
+                    disposition_source="navigation_runtime/execution_pending_superseded_witness",
+                )
+            elif status.name == "navigation_runtime/recovery_retry_witness":
+                current = _integer_value(values.get("identity_current")) == 1
+                timed_out = _integer_value(values.get("timeout")) == 1
+                self._record_lifecycle(
+                    "recovery_retry",
+                    "SUPERSEDED" if not current else
+                    "FAIL_CLOSED" if timed_out else "RETRY_SCHEDULED",
+                    source_stamp_ns=_time_ns(message.header.stamp),
+                    request_id=_integer_value(values.get("request_id")),
+                    goal_epoch=_integer_value(values.get("goal_epoch")),
+                    localization_epoch=_integer_value(values.get("localization_epoch")),
+                    causal_planning_cycle_id=_integer_value(
+                        values.get("planning_cycle_id")),
+                    bundle_owner_cycle_id=_integer_value(
+                        values.get("planning_cycle_id")),
+                    bundle_owner_attribution="producer_declared",
+                    active_generation=_integer_value(values.get("active_generation")),
+                    identity_current=current,
+                    timeout=timed_out,
+                    after_failed=_integer_value(values.get("after_failed")) == 1,
+                    terminal_hold_pending=_integer_value(
+                        values.get("terminal_hold_pending")) == 1,
+                    disposition_source="navigation_runtime/recovery_retry_witness",
+                )
+            elif status.name == "navigation_runtime/execution_activation_witness":
+                request_id = _integer_value(values.get("request_id"))
+                owner_cycle = _integer_value(values.get("bundle_owner_cycle_id"))
+                self._record_lifecycle(
+                    "activate", "ACTIVATED",
+                    source_stamp_ns=_integer_value(values.get("activation_stamp_ns"))
+                    or _time_ns(message.header.stamp),
+                    request_id=request_id,
+                    goal_epoch=_integer_value(values.get("goal_epoch")),
+                    localization_epoch=_integer_value(values.get("localization_epoch")),
+                    bundle_generation=_integer_value(values.get("bundle_generation")),
+                    bundle_source=_integer_value(values.get("bundle_source")),
+                    bundle_owner_request_id=request_id,
+                    bundle_owner_cycle_id=owner_cycle,
+                    bundle_owner_attribution="producer_declared",
+                    world_generation=_integer_value(values.get("world_generation")),
+                    world_revision=_integer_value(values.get("world_revision")),
+                    pending_snapshot_version=_integer_value(
+                        values.get("pending_snapshot_version")),
+                    disposition_source="navigation_runtime/execution_activation_witness",
+                )
             elif status.name == "navigation_runtime/planner":
                 planner_stamp = _integer_value(values.get("execution_stamp_ns")) or _time_ns(
                     message.header.stamp)
+                produced = _integer_value(values.get("world_transaction_events_produced"))
+                if produced is not None:
+                    self._record("world_transaction_producer_count", {
+                        "events_produced": produced,
+                        "producer_runtime_instance_id": str(values.get(
+                            "world_transaction_runtime_instance_id", "")),
+                        "localization_epoch": _integer_value(
+                            values.get("localization_epoch")),
+                        "world_generation": _integer_value(values.get("world_generation")),
+                        "world_revision": _integer_value(values.get("world_revision")),
+                        "diagnostic_source_ros_ns": _time_ns(message.header.stamp),
+                        "observer_receive_ros_ns": receive_ns,
+                        "observer_receive_steady_ns": time.monotonic_ns(),
+                        "source": "navigation_runtime/planner",
+                    })
                 self._record("planner_trace", {
                     "trace_source": "navigation_runtime/planner",
                     "source_stamp_ns": planner_stamp,
@@ -1329,48 +1565,10 @@ class ExternalModeScenario:
             ))
         )
         self.pva_command_received += 1
-        authorization = int(getattr(
-            message, "execution_authorization",
-            self.NavigationCommand.EXECUTION_AUTHORIZATION_UNSPECIFIED,
-        ))
-        if authorization in {
-            self.NavigationCommand.EXECUTION_AUTHORIZATION_GRANTED,
-            self.NavigationCommand.EXECUTION_AUTHORIZATION_REJECTED,
-        }:
-            self._record_lifecycle(
-                "authorize",
-                "AUTHORIZED"
-                if authorization == self.NavigationCommand.EXECUTION_AUTHORIZATION_GRANTED
-                else "REJECTED",
-                source_stamp_ns=header_ns if header_ns > 0 else None,
-                sample_id=int(message.sample_id),
-                request_id=int(message.request_id),
-                bundle_generation=int(getattr(message, "bundle_generation", 0)),
-                localization_epoch=int(message.localization_epoch),
-                goal_epoch=int(message.goal_epoch),
-                causal_planning_cycle_id=int(getattr(message, "causal_planning_cycle_id", 0)),
-                bundle_owner_request_id=int(message.request_id),
-                # causal_planning_cycle_id identifies the retained-command
-                # validation which authorized this sample. It is not
-                # necessarily the cycle which exported the still-active
-                # bundle. Leave ownership unresolved here; the evaluator may
-                # bind it only through the unique export witness for this
-                # complete bundle identity.
-                bundle_owner_cycle_id=None,
-                bundle_owner_attribution="resolve_from_export",
-                authorization_boundary="execution_timeline_publish_if_current",
-                authorization_steady_ns=int(getattr(
-                    message, "execution_authorization_steady_ns", 0)),
-                world_generation=int(message.world_generation),
-                world_revision=int(message.world_revision),
-                world_observation_stamp_ns=world_stamp_ns,
-            )
-        else:
-            self._record("evidence_gap", {
-                "reason": "execution_authorization_witness_missing",
-                "sample_id": int(message.sample_id),
-                "request_id": int(message.request_id),
-            })
+        # The producer's execution-authorization witness is observer-only and
+        # arrives on NavigationExecutionDiagnostics. Command reception never
+        # waits for that stream and never infers authorization from its loss.
+        authorization = self.NavigationExecutionDiagnostics.EXECUTION_AUTHORIZATION_UNSPECIFIED
         if not valid:
             self.pva_command_failure_count += 1
             self._record("pva_command_failure", {"sample_id": int(message.sample_id)})
@@ -1402,6 +1600,7 @@ class ExternalModeScenario:
             "trajectory_status": int(message.status),
             "trajectory_flag": int(message.role),
             "mission_id": str(message.mission_id),
+            "mode_activation_id": int(message.mode_activation_id),
             "waypoint_index": int(message.waypoint_index),
             "request_id": int(message.request_id),
             "runtime_instance_id": self.runtime_instance_id,
@@ -1416,7 +1615,7 @@ class ExternalModeScenario:
             "sample_id": int(message.sample_id),
             "analytic_sample_role": int(getattr(
                 message, "analytic_sample_role",
-                self.NavigationCommand.ANALYTIC_ROLE_UNKNOWN)),
+                self.NavigationExecutionDiagnostics.ANALYTIC_ROLE_UNKNOWN)),
             "backup_available": bool(getattr(message, "backup_available", False)),
             "backup_start_time_s": float(getattr(message, "backup_start_time_s", 0.0)),
             "time_to_backup_start_s": float(getattr(message, "time_to_backup_start_s", 0.0)),
@@ -1496,7 +1695,7 @@ class ExternalModeScenario:
                 "trajectory_flag": int(message.role),
                 "analytic_sample_role": int(getattr(
                     message, "analytic_sample_role",
-                    self.NavigationCommand.ANALYTIC_ROLE_UNKNOWN)),
+                    self.NavigationExecutionDiagnostics.ANALYTIC_ROLE_UNKNOWN)),
                 "anchor_error_m": _json_number(getattr(message, "anchor_error_m", float("nan"))),
                 "projected_anchor_error_m": _json_number(getattr(message, "projected_anchor_error_m", float("nan"))),
                 "retained_tracking_limit_m": _json_number(getattr(message, "retained_tracking_limit_m", float("nan"))),
@@ -1544,10 +1743,133 @@ class ExternalModeScenario:
             previous = trajectory.get("pillar_min_distance_m")
             trajectory["pillar_min_distance_m"] = distance if previous is None else min(previous, distance)
         self.latest_trajectory = dict(trajectory)
+        diagnostic = self._execution_diagnostics_by_sample.get(
+            _command_diagnostic_key(message))
+        if diagnostic is not None:
+            self.latest_pva_command.update(diagnostic)
         self._record(
             "pva_command", self.latest_pva_command,
             arrival_steady_ns=arrival_steady_ns,
         )
+
+    def _navigation_execution_diagnostics(self, message: Any) -> None:
+        """Observe producer evidence without gating command reception or flight."""
+        key = _command_diagnostic_key(message)
+        payload: dict[str, Any] = {
+            "header_stamp_ns": _time_ns(message.header.stamp),
+            "mode_activation_id": int(message.mode_activation_id),
+            "localization_epoch": int(message.localization_epoch),
+            "goal_epoch": int(message.goal_epoch),
+            "mission_id": str(message.mission_id),
+            "waypoint_index": int(message.waypoint_index),
+            "request_id": int(message.request_id),
+            "bundle_generation": int(message.bundle_generation),
+            "bundle_owner_cycle_id": int(message.bundle_owner_cycle_id),
+            "bundle_source": int(message.bundle_source),
+            "sample_id": int(message.sample_id),
+            "world_generation": int(message.world_generation),
+            "world_revision": int(message.world_revision),
+            "world_observation_stamp_ns": _time_ns(message.world_observation_stamp),
+        }
+        identity_fields = {
+            "header", "mode_activation_id", "localization_epoch", "goal_epoch",
+            "mission_id", "waypoint_index", "request_id", "bundle_generation",
+            "bundle_owner_cycle_id", "bundle_source", "sample_id",
+            "world_generation", "world_revision",
+            "world_observation_stamp",
+        }
+        for name in message.get_fields_and_field_types():
+            if name in identity_fields:
+                continue
+            value = getattr(message, name)
+            if hasattr(value, "x") and hasattr(value, "y") and hasattr(value, "z"):
+                payload[name] = _json_xyz(value)
+            elif isinstance(value, bool):
+                payload[name] = value
+            elif isinstance(value, float):
+                payload[name] = _json_number(value)
+            elif isinstance(value, int):
+                payload[name] = value
+        self._execution_diagnostics_by_sample[key] = payload
+        if len(self._execution_diagnostics_by_sample) > 512:
+            self._execution_diagnostics_by_sample.pop(next(iter(self._execution_diagnostics_by_sample)))
+        latest = getattr(self, "latest_pva_command", {})
+        if isinstance(latest, dict) and tuple(latest.get(name) for name in (
+            "mode_activation_id", "localization_epoch", "goal_epoch", "mission_id",
+            "waypoint_index", "request_id", "bundle_generation", "sample_id",
+        )) == key:
+            latest.update(payload)
+        self._record("execution_diagnostics", payload)
+        authorization = int(message.execution_authorization)
+        if authorization in {
+            self.NavigationExecutionDiagnostics.EXECUTION_AUTHORIZATION_GRANTED,
+            self.NavigationExecutionDiagnostics.EXECUTION_AUTHORIZATION_REJECTED,
+        }:
+            self._record_lifecycle(
+                "authorize",
+                "AUTHORIZED" if authorization ==
+                self.NavigationExecutionDiagnostics.EXECUTION_AUTHORIZATION_GRANTED
+                else "REJECTED",
+                source_stamp_ns=payload["header_stamp_ns"] or None,
+                sample_id=payload["sample_id"],
+                request_id=payload["request_id"],
+                bundle_generation=payload["bundle_generation"],
+                localization_epoch=payload["localization_epoch"],
+                goal_epoch=payload["goal_epoch"],
+                causal_planning_cycle_id=payload["causal_planning_cycle_id"],
+                bundle_owner_request_id=payload["request_id"],
+                bundle_owner_cycle_id=payload["bundle_owner_cycle_id"] or None,
+                bundle_source=payload["bundle_source"],
+                bundle_owner_attribution="producer_declared",
+                authorization_boundary="execution_timeline_publish_if_current",
+                authorization_steady_ns=payload["execution_authorization_steady_ns"],
+                world_generation=payload["world_generation"],
+                world_revision=payload["world_revision"],
+                world_observation_stamp_ns=payload["world_observation_stamp_ns"],
+            )
+        else:
+            self._record("evidence_gap", {
+                "reason": "execution_authorization_witness_missing",
+                "sample_id": payload["sample_id"],
+                "request_id": payload["request_id"],
+            })
+
+    def _navigation_command_admission(self, message: Any) -> None:
+        self._record("command_admission", {
+            "admission_ros_ns": _time_ns(message.header.stamp),
+            "mode_activation_id": int(message.mode_activation_id),
+            "mission_id": str(message.mission_id),
+            "localization_epoch": int(message.localization_epoch),
+            "goal_epoch": int(message.goal_epoch),
+            "waypoint_index": int(message.waypoint_index),
+            "request_id": int(message.request_id),
+            "bundle_generation": int(message.bundle_generation),
+            "sample_id": int(message.sample_id),
+        })
+
+    def _navigation_command_rejection(self, message: Any) -> None:
+        self._record("command_rejection", {
+            "callback_ros_ns": _time_ns(message.header.stamp),
+            "callback_steady_ns": int(message.callback_steady_ns),
+            "command_present": bool(message.command_present),
+            "stage": int(message.stage),
+            "reason_code": int(message.reason_code),
+            "disposition": int(message.disposition),
+            "mode_activation_id": int(message.mode_activation_id),
+            "localization_epoch": int(message.localization_epoch),
+            "goal_epoch": int(message.goal_epoch),
+            "mission_id": str(message.mission_id),
+            "waypoint_index": int(message.waypoint_index),
+            "request_id": int(message.request_id),
+            "bundle_generation": int(message.bundle_generation),
+            "sample_id": int(message.sample_id),
+            "command_stamp_ns": _time_ns(message.command_stamp),
+            "valid_until_ns": _time_ns(message.valid_until),
+            "source_age_ms": _json_number(message.source_age_ms),
+            "receive_age_ms": _json_number(message.receive_age_ms),
+            "tracking_longitudinal_error_m": _json_number(message.tracking_longitudinal_error_m),
+            "tracking_lateral_error_m": _json_number(message.tracking_lateral_error_m),
+        })
 
     def _mission_complete(self, message: Any) -> None:
         if bool(message.data):
@@ -1586,10 +1908,37 @@ class ExternalModeScenario:
             if self.safety_stop_sim_ns is None:
                 self.safety_stop_sim_ns = self.sim_now_ns
             self.safety_stop_reason_name = record["reason_name"]
-        if record["waypoint_accepted"]:
+        if record["waypoint_accepted"] and self.execution != "mission":
             self.waypoint_acceptance_events.append(record)
             self._record("waypoint_accepted", record)
         self._record("navigation_mode_status", record)
+
+    def _mission_progress(self, message: Any) -> None:
+        """Observe Core's immutable mission decision, not adapter status echoes."""
+        if self.execution != "mission":
+            return
+        record = {
+            "mission_id": str(message.mission_id),
+            "route_revision": int(message.route_revision),
+            "localization_epoch": int(message.localization_epoch),
+            "mode_activation_id": int(message.mode_activation_id),
+            "waypoint_index": int(message.waypoint_index),
+            "request_id": int(message.request_id),
+            "event": int(message.event),
+            "waypoint_accepted": bool(message.waypoint_accepted),
+            "accepted_waypoint_index": int(message.accepted_waypoint_index),
+            "acceptance_position_error_m": float(message.acceptance_position_error_m),
+            "acceptance_speed_mps": float(message.acceptance_speed_mps),
+        }
+        if record["event"] == int(self.NavigationMissionProgress.GOAL):
+            index = record["waypoint_index"]
+            if not self.goal_indices or self.goal_indices[-1] != index:
+                self.goal_indices.append(index)
+            self._record("goal", record)
+        if record["waypoint_accepted"]:
+            self.waypoint_acceptance_events.append(record)
+            self._record("waypoint_accepted", record)
+        self._record("mission_progress", record)
 
     def _mode_completed(self, message: Any) -> None:
         if self.external_mode_id is None or int(message.nav_state) != self.external_mode_id:
@@ -1687,7 +2036,7 @@ class ExternalModeScenario:
         }
         self._record("goal", self.latest_goal)
         self._record_lifecycle(
-            "request", "PUBLISHED",
+            "goal_observed", "OBSERVED",
             source_stamp_ns=_time_ns(message.header.stamp),
             mission_id=str(message.mission_id),
             waypoint_index=waypoint_index,
@@ -2129,11 +2478,12 @@ class ExternalModeScenario:
         route.measured_lateral_error_m = 0.0
         self.goal_pub.publish(message)
         self.goal_publish_count += 1
-        # This is the producer boundary for the planning request.  The
-        # subscription callback below may observe the same topic message, but
-        # lifecycle attribution must not depend on that transport observation.
+        # This is the producer boundary for mission goal transport. The
+        # runtime's planning-cycle trace is the separate witness that binds a
+        # desired request to a solve. Do not label this cycleless goal event as
+        # a completed planning request or infer its cycle from the subscriber.
         self._record_lifecycle(
-            "request", "PUBLISHED",
+            "goal_issued", "PUBLISHED",
             source_stamp_ns=_time_ns(message.header.stamp),
             mission_id=route_id,
             waypoint_index=message.waypoint_index,

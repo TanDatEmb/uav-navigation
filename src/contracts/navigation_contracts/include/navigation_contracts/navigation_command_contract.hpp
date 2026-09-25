@@ -13,18 +13,91 @@ namespace navigation_contracts {
 
 using msg::NavigationCommand;
 
+enum class CommandContractReason : std::uint8_t {
+  kValid,
+  kExpectedFrameMissing,
+  kMissionIdEmpty,
+  kFrameMismatch,
+  kHeaderStampInvalid,
+  kValidityWindowInvalid,
+  kWorldStampInvalid,
+  kStateStampInvalid,
+  kLocalizationIdentityInvalid,
+  kGoalIdentityInvalid,
+  kWorldIdentityInvalid,
+  kSampleIdentityInvalid,
+  kStatusInvalid,
+  kRoleStatusMismatch,
+  kPvajOrYawNonFinite,
+  kContinuationContractInvalid,
+  kTrajectoryTimeInvalid,
+};
+
+enum class CommandTemporalReason : std::uint8_t {
+  kValid,
+  kNowInvalid,
+  kInvalidWindow,
+  kNotYetValid,
+  kExpired,
+};
+
+[[nodiscard]] constexpr const char* commandContractReasonName(
+    CommandContractReason reason) noexcept {
+  switch (reason) {
+    case CommandContractReason::kValid: return "VALID";
+    case CommandContractReason::kExpectedFrameMissing: return "EXPECTED_FRAME_MISSING";
+    case CommandContractReason::kMissionIdEmpty: return "MISSION_ID_EMPTY";
+    case CommandContractReason::kFrameMismatch: return "FRAME_MISMATCH";
+    case CommandContractReason::kHeaderStampInvalid: return "HEADER_STAMP_INVALID";
+    case CommandContractReason::kValidityWindowInvalid: return "VALIDITY_WINDOW_INVALID";
+    case CommandContractReason::kWorldStampInvalid: return "WORLD_STAMP_INVALID";
+    case CommandContractReason::kStateStampInvalid: return "STATE_STAMP_INVALID";
+    case CommandContractReason::kLocalizationIdentityInvalid: return "LOCALIZATION_ID_INVALID";
+    case CommandContractReason::kGoalIdentityInvalid: return "GOAL_ID_INVALID";
+    case CommandContractReason::kWorldIdentityInvalid: return "WORLD_ID_INVALID";
+    case CommandContractReason::kSampleIdentityInvalid: return "SAMPLE_ID_INVALID";
+    case CommandContractReason::kStatusInvalid: return "STATUS_INVALID";
+    case CommandContractReason::kRoleStatusMismatch: return "ROLE_STATUS_MISMATCH";
+    case CommandContractReason::kPvajOrYawNonFinite: return "PVAJ_OR_YAW_NONFINITE";
+    case CommandContractReason::kContinuationContractInvalid: return "CONTINUATION_CONTRACT_INVALID";
+    case CommandContractReason::kTrajectoryTimeInvalid: return "TRAJECTORY_TIME_INVALID";
+  }
+  return "UNRECOGNIZED_CONTRACT_REASON";
+}
+
+[[nodiscard]] constexpr const char* commandTemporalReasonName(
+    CommandTemporalReason reason) noexcept {
+  switch (reason) {
+    case CommandTemporalReason::kValid: return "VALID";
+    case CommandTemporalReason::kNowInvalid: return "NOW_INVALID";
+    case CommandTemporalReason::kInvalidWindow: return "INVALID_WINDOW";
+    case CommandTemporalReason::kNotYetValid: return "NOT_YET_VALID";
+    case CommandTemporalReason::kExpired: return "EXPIRED";
+  }
+  return "UNRECOGNIZED_TEMPORAL_REASON";
+}
+
 inline std::int64_t commandStampNanoseconds(
     const builtin_interfaces::msg::Time& stamp) noexcept {
   return navigation_common::rosTimeToNanoseconds(stamp).value_or(0);
 }
 
-inline bool commandValidAt(
+[[nodiscard]] inline CommandTemporalReason assessCommandTemporalLease(
     const NavigationCommand& command, std::int64_t now_ns) noexcept {
-  if (now_ns <= 0) return false;
+  if (now_ns <= 0) return CommandTemporalReason::kNowInvalid;
   const auto header_ns = commandStampNanoseconds(command.header.stamp);
   const auto valid_until_ns = commandStampNanoseconds(command.valid_until);
-  return header_ns > 0 && header_ns <= now_ns && valid_until_ns > header_ns &&
-         now_ns <= valid_until_ns;
+  if (header_ns <= 0 || valid_until_ns <= header_ns) {
+    return CommandTemporalReason::kInvalidWindow;
+  }
+  if (header_ns > now_ns) return CommandTemporalReason::kNotYetValid;
+  if (now_ns > valid_until_ns) return CommandTemporalReason::kExpired;
+  return CommandTemporalReason::kValid;
+}
+
+inline bool commandValidAt(
+    const NavigationCommand& command, std::int64_t now_ns) noexcept {
+  return assessCommandTemporalLease(command, now_ns) == CommandTemporalReason::kValid;
 }
 
 // Pure lease predicate shared by the PX4 update path and its focused tests.
@@ -83,7 +156,7 @@ inline bool commandWorldIdentityNonRegressing(
   return true;
 }
 
-inline bool commandContractValid(
+[[nodiscard]] inline CommandContractReason assessCommandContract(
     const NavigationCommand& command, std::string_view expected_frame) noexcept {
   const auto header_ns = commandStampNanoseconds(command.header.stamp);
   const auto valid_until_ns = commandStampNanoseconds(command.valid_until);
@@ -115,15 +188,36 @@ inline bool commandContractValid(
                           (braking && command.role == NavigationCommand::ROLE_EMERGENCY &&
                            command.bundle_generation != 0U) ||
                           (rejected && command.role == NavigationCommand::ROLE_EMERGENCY);
-  return !expected_frame.empty() && !command.mission_id.empty() &&
-         command.header.frame_id == expected_frame && header_ns > 0 &&
-         valid_until_ns > header_ns && world_stamp_ns > 0 && state_stamp_ns > 0 &&
-         command.localization_epoch != 0U && command.goal_epoch != 0U &&
-         command.world_generation != 0U && command.world_revision != 0U &&
-         command.sample_id != 0U && command.status != NavigationCommand::STATUS_EMPTY &&
-         (normal || braking || rejected) && role_valid && pvaj_finite &&
-         certifiedMainContinuationFieldsValid(command) &&
-         command.trajectory_time_s >= 0.0;
+  if (expected_frame.empty()) return CommandContractReason::kExpectedFrameMissing;
+  if (command.mission_id.empty()) return CommandContractReason::kMissionIdEmpty;
+  if (command.header.frame_id != expected_frame) return CommandContractReason::kFrameMismatch;
+  if (header_ns <= 0) return CommandContractReason::kHeaderStampInvalid;
+  if (valid_until_ns <= header_ns) return CommandContractReason::kValidityWindowInvalid;
+  if (world_stamp_ns <= 0) return CommandContractReason::kWorldStampInvalid;
+  if (state_stamp_ns <= 0) return CommandContractReason::kStateStampInvalid;
+  if (command.localization_epoch == 0U) {
+    return CommandContractReason::kLocalizationIdentityInvalid;
+  }
+  if (command.goal_epoch == 0U) return CommandContractReason::kGoalIdentityInvalid;
+  if (command.world_generation == 0U || command.world_revision == 0U) {
+    return CommandContractReason::kWorldIdentityInvalid;
+  }
+  if (command.sample_id == 0U) return CommandContractReason::kSampleIdentityInvalid;
+  if (!(normal || braking || rejected)) return CommandContractReason::kStatusInvalid;
+  if (!role_valid) return CommandContractReason::kRoleStatusMismatch;
+  if (!pvaj_finite) return CommandContractReason::kPvajOrYawNonFinite;
+  if (!certifiedMainContinuationFieldsValid(command)) {
+    return CommandContractReason::kContinuationContractInvalid;
+  }
+  if (command.trajectory_time_s < 0.0) {
+    return CommandContractReason::kTrajectoryTimeInvalid;
+  }
+  return CommandContractReason::kValid;
+}
+
+inline bool commandContractValid(
+    const NavigationCommand& command, std::string_view expected_frame) noexcept {
+  return assessCommandContract(command, expected_frame) == CommandContractReason::kValid;
 }
 
 }  // namespace navigation_contracts

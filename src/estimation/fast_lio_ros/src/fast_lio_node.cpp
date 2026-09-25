@@ -174,9 +174,10 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
           parameters_.propagated_odometry_maximum_correction_age_s);
   worker_config.publish_rate_hz = parameters_.propagated_odometry_publish_rate_hz;
   propagated_odometry_worker_ = std::make_unique<PropagatedOdometryWorker>(
-      worker_config, [this](const std::optional<KinematicStateEstimate>& estimate) {
+      worker_config, [this](const std::optional<KinematicStateEstimate>& estimate,
+                            const WorkerPublicationWitness& witness) {
         if (estimate.has_value()) {
-          propagated_odometry_publisher_->publish(*estimate);
+          propagated_odometry_publisher_->publish(*estimate, witness);
           transform_publisher_.publishPropagated(*estimate);
           output_publisher_.publishPropagatedHealth(estimate->estimate.time);
         }

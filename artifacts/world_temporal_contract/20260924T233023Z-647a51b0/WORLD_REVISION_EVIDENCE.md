@@ -1,0 +1,5 @@
+# World revision evidence
+
+Source behavior: same-generation snapshots require strict revision increase and source stamp nondecrease at the store. MappingActor is stricter on input: observation stamp and nonzero scan sequence must strictly increase within its current localization epoch. A newer world can retain active/pending by complete disjoint changed-region history, else the exact immutable candidate is fully recertified. Intersecting-but-safe therefore may retain after full validation; unsafe active is withdrawn before new world pointer publication; unsafe pending is dropped independently.
+
+The branch adds deterministic WorldSnapshotStore tests for store-level equal-source-tick revision advance and generation timestamp restart, plus failure-finalizer visibility. It does not claim a live mapping producer can emit equal-stamp revisions; current MappingActor rejects those. The historical A3 evidence remains unresolved and is not retroactively reclassified. No runtime world revision mutation/invalidation SITL was executed.

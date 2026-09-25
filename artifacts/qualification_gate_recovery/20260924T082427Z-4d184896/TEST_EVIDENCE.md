@@ -1,0 +1,7 @@
+# Test evidence
+
+Source changes are diagnostic sideband, evidence monitor/analysis, and exact evaluator heartbeat/lifecycle attribution. No admission, state-age, command-lease, world, planner or Hold threshold changed. The current authoritative Release build finished 23 packages. `colcon test-result --test-result-base test-results --verbose` reported 90 CTests, zero errors/failures/skips. Runtime Python discovery reported 408 tests, one skip. The focused clock-gap and rosbag fallback tests cover a 480 ms diagnostic gap below the 500 ms stale boundary, fixed CDR clock decoding, and correlation by observer interval. The adapter component test confirms a rejected source stamp cannot renew accepted-state receive time. The exact heartbeat test retains raw commands while collapsing only identical reference ticks; conflicting same-stamp world revisions remain invalid.
+
+The static guards for mission authority, execution authority, desired intent, fail-closed fencing, NavigationCommand, runtime config truth, exact OptimizationFailed injection and state-transport scope remain required at final HEAD. The runtime safety ledger validator and `git diff --check` must also pass. All of these are source/component checks, not SITL qualification.
+
+The ten-run nominal cohort and natural pilot are separate from the default-off fault injection regression. No test assertion, safety gate or evaluator policy was weakened to obtain a passing mission outcome. The evaluator returned `NOT_EVALUABLE` for all ten nominal attempts.

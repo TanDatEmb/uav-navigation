@@ -26,6 +26,14 @@ struct PropagatedOdometryWorkerConfig {
   double publish_rate_hz{50.0};
 };
 
+// Ephemeral diagnostic provenance delivered with one publication callback.
+// It is not an estimator state or an admission authority.
+struct WorkerPublicationWitness {
+  std::int64_t estimate_ready_steady_ns{0};
+  std::int64_t expected_publish_source_ns{0};
+  std::int64_t last_published_source_ns{0};
+};
+
 struct EstimatorStateUpdate {
   EstimatorStatus status{EstimatorStatus::kWaitingForSensors};
   bool navigation_valid{false};
@@ -85,7 +93,8 @@ struct PropagatedOdometryWorkerDiagnostics {
 class PropagatedOdometryWorker {
  public:
   using ImuProcessedCallback =
-      std::function<void(const std::optional<KinematicStateEstimate>&)>;
+      std::function<void(const std::optional<KinematicStateEstimate>&,
+                         const WorkerPublicationWitness&)>;
 
   explicit PropagatedOdometryWorker(
       PropagatedOdometryWorkerConfig config,

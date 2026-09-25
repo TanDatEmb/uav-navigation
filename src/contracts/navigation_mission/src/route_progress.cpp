@@ -297,6 +297,30 @@ RouteProgressState RouteProgress::update(const Eigen::Vector3d& position) noexce
   if (!projection.valid) return state_;
   const bool was_valid = state_.valid;
   const double previous_progress = state_.progress_arc_m;
+  if (was_valid && state_.projection.valid &&
+      state_.projection.segment_index < segments_.size() &&
+      projection.segment_index > state_.projection.segment_index + 1U) {
+    // A later near-parallel leg may be geometrically closer than the active
+    // leg before the vehicle has reached the connecting turn. Preserve the
+    // ordered branch while the active segment remains within the existing
+    // route backtrack/noise tolerance; an adjacent leg remains selectable.
+    const auto& segment = segments_[state_.projection.segment_index];
+    const double fraction = std::clamp(
+        (position - segment.start).dot(segment.tangent) / segment.length_m,
+        0.0, 1.0);
+    const Eigen::Vector3d point = segment.start + fraction *
+        (segment.end - segment.start);
+    const double distance = (position - point).norm();
+    if (std::isfinite(distance) &&
+        distance <= projection.lateral_error_m + config_.backtrack_tolerance_m) {
+      projection.segment_index = state_.projection.segment_index;
+      projection.arc_length_m = segment.start_arc_m + fraction * segment.length_m;
+      projection.lateral_error_m = distance;
+      projection.segment_fraction = fraction;
+      projection.point = point;
+      projection.tangent = segment.tangent;
+    }
+  }
   if (was_valid && !segments_.empty()) {
     // A route may overlap itself, especially at a 180-degree reversal. Pure
     // nearest-point projection cannot identify the active branch there. Among

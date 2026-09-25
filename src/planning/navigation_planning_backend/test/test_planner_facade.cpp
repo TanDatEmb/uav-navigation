@@ -6,6 +6,7 @@
 #include <planner_core/route_yaw_reference.hpp>
 #include <planner_core/route_backbone.hpp>
 #include <planner_core/planner_result.hpp>
+#include <planner_core/route_regression_certificate.hpp>
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/config.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
@@ -234,6 +235,53 @@ class PlannerBodySupportWorld final : public IdentityOnlyWorld {
     }
     return true;
   }
+};
+
+class EmergencyPolicyWorld final : public IdentityOnlyWorld {
+ public:
+  enum class BlockedState { kUnknown, kOccupied, kOutOfMap, kFree };
+  explicit EmergencyPolicyWorld(const BlockedState state, const std::uint64_t revision = 1U)
+      : state_(state), revision_(revision) {}
+
+  navigation_world_model::WorldSnapshotIdentity identity() const noexcept override {
+    return {1U, 1U, revision_, static_cast<std::int64_t>(100U + revision_)};
+  }
+
+  bool changedRegionIntersectsSince(
+      const navigation_world_model::WorldSnapshotIdentity&,
+      const navigation_world_model::AxisAlignedBox&) const noexcept override {
+    return true;  // Force a full sweep; no unchanged-certificate shortcut.
+  }
+
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    if (point.x() < 0.05) return navigation_world_model::CellState::kKnownFree;
+    switch (state_) {
+      case BlockedState::kUnknown: return navigation_world_model::CellState::kUnknown;
+      case BlockedState::kOccupied: return navigation_world_model::CellState::kOccupied;
+      case BlockedState::kOutOfMap: return navigation_world_model::CellState::kOutOfMap;
+      case BlockedState::kFree: return navigation_world_model::CellState::kKnownFree;
+    }
+    return navigation_world_model::CellState::kUndefined;
+  }
+
+  bool isSegmentTraversable(
+      const navigation_world_model::Point3& start,
+      const navigation_world_model::Point3& end,
+      navigation_world_model::GridLayer layer,
+      navigation_world_model::UnknownPolicy policy) const noexcept override {
+    if (state_ == BlockedState::kFree ||
+        (state_ == BlockedState::kUnknown &&
+         policy == navigation_world_model::UnknownPolicy::kAllowUnknown)) {
+      return contains(start) && contains(end);
+    }
+    return std::max(start.x(), end.x()) < 0.05;
+  }
+
+ private:
+  BlockedState state_;
+  const std::uint64_t revision_;
 };
 
 TEST(WorldGeometryBoundaries, ContinuousClearanceRejectsOverflowingDerivedQueryBox) {
@@ -611,6 +659,7 @@ TEST(PlannerFacade, WorldRevalidationPreservesOffCentreBlockingCellAfterActivati
   ASSERT_TRUE(outcome.candidate.has_value());
   ASSERT_TRUE(outcome.candidate->valid());
   const auto generation = outcome.candidate->bundle_generation;
+  ASSERT_TRUE(outcome.candidate->world_validator);
   const auto blocked_world = std::make_shared<OffCentreBlockedWorld>();
 
   // The initial centreline is known-free, but its certificate tube touches
@@ -619,7 +668,7 @@ TEST(PlannerFacade, WorldRevalidationPreservesOffCentreBlockingCellAfterActivati
   EXPECT_EQ(blocked_world->classify(Eigen::Vector3d{0.0, 0.0, 2.0},
                                   navigation_world_model::GridLayer::kInflated),
             navigation_world_model::CellState::kKnownFree);
-  const auto staged = facade.validateStagedCommandCandidate(blocked_world, 10.0, generation);
+  const auto staged = outcome.candidate->validateWorld(blocked_world, 10.0);
   ASSERT_FALSE(staged.valid);
   ASSERT_EQ(staged.failure_code,
             static_cast<int>(navigation_planning_backend::SweptValidationResult::Failure::
@@ -635,7 +684,7 @@ TEST(PlannerFacade, WorldRevalidationPreservesOffCentreBlockingCellAfterActivati
 
   facade.onExecutionTimelineActivated(generation);
   ASSERT_EQ(facade.committedSnapshot().generation, generation);
-  const auto committed = facade.validateCommittedTrajectory(blocked_world, 10.0, generation);
+  const auto committed = outcome.candidate->validateWorld(blocked_world, 10.0);
   ASSERT_FALSE(committed.valid);
   EXPECT_EQ(committed.failure_code, staged.failure_code);
   EXPECT_TRUE(committed.first_blocked_position.isApprox(blocked_world->blocker, 1.0e-12));
@@ -649,10 +698,13 @@ TEST(PlannerFacade, WorldRevalidationPreservesOffCentreBlockingCellAfterActivati
   EXPECT_EQ(committed.first_blocked_cell_state, staged.first_blocked_cell_state);
   EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
       committed.validated_world, blocked_world->identity()));
-  const auto wrong_generation = facade.validateCommittedTrajectory(
-      blocked_world, 10.0, generation + 1U);
+  auto wrong_generation_bundle = *outcome.candidate;
+  ++wrong_generation_bundle.bundle_generation;
+  const auto wrong_generation =
+      wrong_generation_bundle.validateWorld(blocked_world, 10.0);
   EXPECT_FALSE(wrong_generation.valid);
-  EXPECT_EQ(wrong_generation.evaluated_generation, 0U);
+  EXPECT_EQ(wrong_generation.evaluated_generation,
+            wrong_generation_bundle.bundle_generation);
   EXPECT_FALSE(wrong_generation.blocking_cell_observed);
 }
 
@@ -1102,6 +1154,57 @@ TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {
             successor_request.activation_stamp_ns);
   EXPECT_NE(successor.candidate->activation_stamp_ns,
             successor_request.key.anchor_stamp_ns);
+}
+
+TEST(PlannerFacade, EachPlanningRequestOwnsItsCruiseIntent) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  double ros_time_s = 10.0;
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer,
+      [&ros_time_s] { return ros_time_s; });
+  auto request_a = plannerBodySupportRequest(world, nullptr);
+  request_a.key.anchor_stamp_ns = 10'000'000'000LL;
+  request_a.start_state.source_stamp_ns = request_a.key.anchor_stamp_ns;
+  request_a.start_state.receive_stamp_ns = request_a.key.anchor_stamp_ns;
+  ASSERT_TRUE(request_a.valid());
+  auto cancelled_request = request_a;
+  std::stop_source cancelled_source;
+  cancelled_source.request_stop();
+  cancelled_request.cancellation_token = cancelled_source.get_token();
+  const auto cancelled_outcome = facade.plan(cancelled_request);
+  EXPECT_EQ(cancelled_outcome.outcome,
+            navigation_planning::CompletePlanningOutcome::kInvalidRequest);
+  EXPECT_FALSE(cancelled_outcome.candidate.has_value());
+  EXPECT_EQ(facade.committedGeneration(), 0U);
+
+  const auto outcome_a = facade.plan(request_a);
+  ASSERT_TRUE(outcome_a.valid());
+  ASSERT_TRUE(outcome_a.candidate.has_value());
+
+  auto request_b = request_a;
+  request_b.dynamics.intent.requested_cruise_speed_mps = 2.0;
+  const auto outcome_b = facade.plan(request_b);
+  ASSERT_TRUE(outcome_b.valid());
+  ASSERT_TRUE(outcome_b.candidate.has_value());
+  EXPECT_GT(outcome_b.candidate->bundle_generation,
+            outcome_a.candidate->bundle_generation);
+
+  const auto sampled_main_peak = [](const navigation_planning::CandidateBundle& bundle) {
+    double peak_mps = 0.0;
+    constexpr std::int64_t kStepNs = 20'000'000LL;
+    for (auto stamp_ns = bundle.declared_start_ns;
+         stamp_ns < bundle.declared_end_ns; stamp_ns += kStepNs) {
+      const auto point = bundle.sampleAtDeclaredStamp(stamp_ns);
+      if (point && point->role == navigation_planning::CandidateRole::kMain) {
+        peak_mps = std::max(peak_mps, point->velocity_world.norm());
+      }
+    }
+    return peak_mps;
+  };
+  const double peak_a = sampled_main_peak(*outcome_a.candidate);
+  const double peak_b = sampled_main_peak(*outcome_b.candidate);
+  EXPECT_GT(peak_b, peak_a + 0.25);
 }
 
 void expectRequestOwnedGuideOrigin(const std::int64_t backend_delay_ns,
@@ -1817,7 +1920,7 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   measured_brake.position_world = state.position_world;
   measured_brake.velocity_world = Eigen::Vector3d{0.5, 0.0, 0.0};
   measured_brake.yaw = state.yaw_rad;
-  ASSERT_TRUE(facade.commitEmergencyBrake(measured_brake, 10.6));
+  ASSERT_TRUE(facade.commitEmergencyBrake(measured_brake, 10.6, 1U, 3U, 3U));
   const auto emergency = facade.exportCommandCandidate(
       1U, 3U, 3U, 10600000000LL, 30000000000LL);
   ASSERT_TRUE(emergency);
@@ -1922,7 +2025,7 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   facade.onExecutionTimelineActivated(replacement->bundle_generation);
   EXPECT_EQ(facade.committedGeneration(), nominal->bundle_generation);
   ASSERT_GT(nominal->duration_s, 10.1);
-  ASSERT_TRUE(facade.commitEmergencyBrake(measured_brake, 30.3));
+  ASSERT_TRUE(facade.commitEmergencyBrake(measured_brake, 30.3, 1U, 5U, 5U));
   const auto older_position = facade.exportCommandCandidate(
       1U, 5U, 5U, 30300000000LL, 80000000000LL);
   ASSERT_TRUE(older_position);
@@ -2579,6 +2682,7 @@ navigation_planning::PlanningRequest unacceptedBoundaryGeometryRequest(
   request.key.route_revision = request.route_snapshot.route_revision;
   request.key.start_mode = navigation_planning::PlanningStartMode::kCommittedFutureState;
   request.key.committed_bundle_generation = 1U;
+  request.history.previous_bundle_generation = request.key.committed_bundle_generation;
   request.key.anchor_stamp_ns = 10'000'000'000LL;
   request.start_state.source_stamp_ns = request.key.anchor_stamp_ns;
   request.start_state.receive_stamp_ns = request.key.anchor_stamp_ns;
@@ -2650,6 +2754,7 @@ TEST(PlannerBoundaryGeometry, DoesNotApplyToHandoffRecoveryOrSafetyRoles) {
   auto stopped = base;
   stopped.key.start_mode = navigation_planning::PlanningStartMode::kStoppedMeasuredState;
   stopped.key.committed_bundle_generation = 0U;
+  stopped.history.previous_bundle_generation = 0U;
   stopped.anchor.reset();
   stopped.activation_stamp_ns = 0;
   ASSERT_TRUE(stopped.valid());
@@ -2824,7 +2929,7 @@ TEST(PlannerFacade, EmergencyBrakeDoesNotAdvertiseNominalPassThroughBoundary) {
   measured_command.yaw = 0.0;
   measured_command.yaw_rate = 0.0;
   ASSERT_TRUE(measured_command.finite());
-  ASSERT_TRUE(facade.commitEmergencyBrake(measured_command, 10.0));
+  ASSERT_TRUE(facade.commitEmergencyBrake(measured_command, 10.0, 1U, 1U, 1U));
 
   const auto candidate = facade.exportCommandCandidate(
       1U, 1U, 1U, 10000000000LL, 20000000000LL);
@@ -2835,6 +2940,413 @@ TEST(PlannerFacade, EmergencyBrakeDoesNotAdvertiseNominalPassThroughBoundary) {
   EXPECT_EQ(candidate->role, navigation_planning::CandidateRole::kEmergency);
   EXPECT_FALSE(candidate->route_boundary_event.has_value());
   EXPECT_FALSE(candidate->route_boundary_constraint.has_value());
+}
+
+TEST(PlannerFacade, EmergencyCorrectionAuthorizationUsesOnlyRequestPredecessorEvidence) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  auto request = plannerBodySupportRequest(world, nullptr);
+  request.key.committed_bundle_generation = 77U;
+  request.history.previous_bundle_generation = 77U;
+  request.history.predecessor = navigation_planning::PlanningPredecessorEvidence{
+      77U, 1U, 8U, 13U,
+      navigation_planning::CandidateBundleKind::kEmergencyBrake,
+      navigation_planning::CandidateRole::kEmergency,
+      Eigen::Vector3d{0.7, 0.0, 2.0}};
+  ASSERT_TRUE(request.history.valid());
+
+  navigation_mission::MissionWaypoint stop;
+  stop.position_enu = Eigen::Vector3d{0.0, 0.0, 2.0};
+  stop.acceptance_radius_m = 0.5;
+  stop.behavior = navigation_mission::MissionWaypoint::Behavior::Stop;
+  const Eigen::Vector3d candidate_start{0.72, 0.0, 2.0};
+  const Eigen::Vector3d candidate_end{0.4, 0.0, 2.0};
+
+  // The predecessor is from a different execution request than this STOP
+  // candidate. This is expected on recovery: the request key identifies the
+  // desired solve, while the witness identifies its exact predecessor.
+  const auto allowed = navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25);
+  EXPECT_TRUE(allowed.allowed);
+  EXPECT_DOUBLE_EQ(allowed.predecessor_endpoint_distance_m, 0.7);
+  EXPECT_DOUBLE_EQ(allowed.candidate_start_distance_m, 0.72);
+
+  // A mutable backend cache could later describe an emergency E2. That cache
+  // is intentionally absent from this authorization API, so E2 cannot turn
+  // an ordinary request-owned E1 into an emergency correction.
+  auto ordinary_request = request;
+  ordinary_request.history.predecessor->kind =
+      navigation_planning::CandidateBundleKind::kTerminalStop;
+  ordinary_request.history.predecessor->role =
+      navigation_planning::CandidateRole::kMain;
+  ordinary_request.history.predecessor->declared_endpoint_position_world.reset();
+  ASSERT_TRUE(ordinary_request.history.valid());
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      ordinary_request, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+
+  // Conversely, once this request captured emergency E1, later replacement
+  // of a warm-start cache by ordinary E2 cannot revoke E1's request-local
+  // evidence. The actual planner calls this same predicate in authorizeAndStage.
+  EXPECT_TRUE(navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch + 1U, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch, request.key.goal_epoch + 1U,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id + 1U, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.0).allowed);
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start,
+      Eigen::Vector3d{0.51, 0.0, 2.0}, true, false, 0.25).allowed);
+
+  auto wrong_generation = request;
+  wrong_generation.key.committed_bundle_generation += 1U;
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      wrong_generation, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+  auto wrong_predecessor_epoch = request;
+  wrong_predecessor_epoch.history.predecessor->localization_epoch += 1U;
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      wrong_predecessor_epoch, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+  auto missing_endpoint = request;
+  missing_endpoint.history.predecessor->declared_endpoint_position_world.reset();
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      missing_endpoint, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+  auto wrong_predecessor_role = request;
+  wrong_predecessor_role.history.predecessor->role =
+      navigation_planning::CandidateRole::kMain;
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      wrong_predecessor_role, request.key.localization_epoch,
+      request.key.goal_epoch, request.key.request_id, stop, candidate_start,
+      candidate_end, true, false, 0.25).allowed);
+}
+
+void expectEmergencyBrakeUnknownPolicy(
+    const char* config_path, const bool allow_unknown) {
+  auto world = std::make_shared<EmergencyPolicyWorld>(
+      EmergencyPolicyWorld::BlockedState::kUnknown);
+  TestCommitAuthorizer authorizer(world);
+  navigation_planning_backend::PlannerFacade facade(
+      config_path, world, std::nullopt, authorizer, [] { return 10.0; });
+  navigation_planning::KinematicState planner_state;
+  planner_state.position_world = Eigen::Vector3d{0.0, 0.0, 2.0};
+  planner_state.source_stamp_ns = 10'000'000'000LL;
+  planner_state.receive_stamp_ns = planner_state.source_stamp_ns;
+  planner_state.localization_epoch = 1U;
+  planner_state.world_frame_id = "lio_odom";
+  planner_state.body_frame_id = "base_link";
+  ASSERT_TRUE(facade.setState(planner_state));
+  facade.setCommandIdentity(1U, 1U, 1U);
+  navigation_planning::TrajectoryPoint measured;
+  measured.position_world = Eigen::Vector3d{0.0, 0.0, 2.0};
+  measured.velocity_world = Eigen::Vector3d{0.5, 0.0, 0.0};
+  measured.acceleration_world = Eigen::Vector3d::Zero();
+  measured.jerk_world = Eigen::Vector3d::Zero();
+  ASSERT_TRUE(measured.finite());
+  const bool committed = facade.commitEmergencyBrake(measured, 10.0, 1U, 1U, 1U);
+  EXPECT_EQ(committed, allow_unknown);
+  if (allow_unknown) {
+    const auto candidate = facade.exportCommandCandidate(
+        1U, 1U, 1U, 10'000'000'000LL, 30'000'000'000LL);
+    ASSERT_TRUE(candidate);
+    EXPECT_EQ(candidate->role, navigation_planning::CandidateRole::kEmergency);
+    EXPECT_EQ(candidate->kind, navigation_planning::CandidateBundleKind::kEmergencyBrake);
+    EXPECT_TRUE(facade.validateStagedCommandCandidate(
+        world, 10.0, candidate->bundle_generation).valid);
+    facade.onExecutionTimelineActivated(candidate->bundle_generation);
+    EXPECT_TRUE(facade.validateCommittedTrajectory(
+        world, 10.0, candidate->bundle_generation).valid);
+  }
+}
+
+TEST(PlannerFacade, SafeEmergencyBrakeRejectsUnknownTubeFastAllowsIt) {
+  expectEmergencyBrakeUnknownPolicy(PLANNER_FACADE_CONFIG_PATH, false);
+  expectEmergencyBrakeUnknownPolicy(PLANNER_FACADE_FAST_CONFIG_PATH, true);
+}
+
+void expectEmergencyBrakeRejectsBlockedState(
+    const EmergencyPolicyWorld::BlockedState blocked) {
+  auto world = std::make_shared<EmergencyPolicyWorld>(blocked);
+  TestCommitAuthorizer authorizer(world);
+  for (const char* config_path :
+       {PLANNER_FACADE_CONFIG_PATH, PLANNER_FACADE_FAST_CONFIG_PATH}) {
+    navigation_planning_backend::PlannerFacade facade(
+        config_path, world, std::nullopt, authorizer, [] { return 10.0; });
+    navigation_planning::KinematicState planner_state;
+    planner_state.position_world = Eigen::Vector3d{0.0, 0.0, 2.0};
+    planner_state.source_stamp_ns = 10'000'000'000LL;
+    planner_state.receive_stamp_ns = planner_state.source_stamp_ns;
+    planner_state.localization_epoch = 1U;
+    planner_state.world_frame_id = "lio_odom";
+    planner_state.body_frame_id = "base_link";
+    ASSERT_TRUE(facade.setState(planner_state));
+    facade.setCommandIdentity(1U, 1U, 1U);
+    navigation_planning::TrajectoryPoint measured;
+    measured.position_world = Eigen::Vector3d{0.0, 0.0, 2.0};
+    measured.velocity_world = Eigen::Vector3d{0.5, 0.0, 0.0};
+    measured.acceleration_world = Eigen::Vector3d::Zero();
+    measured.jerk_world = Eigen::Vector3d::Zero();
+    ASSERT_TRUE(measured.finite());
+    EXPECT_FALSE(facade.commitEmergencyBrake(measured, 10.0, 1U, 1U, 1U));
+  }
+}
+
+TEST(PlannerFacade, EmergencyBrakeRejectsOccupiedAndOutOfMapForBothPolicies) {
+  expectEmergencyBrakeRejectsBlockedState(
+      EmergencyPolicyWorld::BlockedState::kOccupied);
+  expectEmergencyBrakeRejectsBlockedState(
+      EmergencyPolicyWorld::BlockedState::kOutOfMap);
+}
+
+TEST(PlannerFacade, EmergencyFullWorldRecertificationKeepsBackupPolicyBeforeAndAfterAck) {
+  for (const bool fast : {false, true}) {
+    SCOPED_TRACE(fast ? "FAST" : "SAFE");
+    auto original_world = std::make_shared<EmergencyPolicyWorld>(
+        EmergencyPolicyWorld::BlockedState::kFree);
+    TestCommitAuthorizer authorizer(original_world);
+    navigation_planning_backend::PlannerFacade facade(
+        fast ? PLANNER_FACADE_FAST_CONFIG_PATH : PLANNER_FACADE_CONFIG_PATH,
+        original_world, std::nullopt, authorizer, [] { return 10.0; });
+    navigation_planning::KinematicState state;
+    state.position_world = Eigen::Vector3d{0.0, 0.0, 2.0};
+    state.source_stamp_ns = 10'000'000'000LL;
+    state.receive_stamp_ns = state.source_stamp_ns;
+    state.localization_epoch = 1U;
+    state.world_frame_id = "lio_odom";
+    state.body_frame_id = "base_link";
+    ASSERT_TRUE(facade.setState(state));
+    facade.setCommandIdentity(1U, 1U, 1U);
+    navigation_planning::TrajectoryPoint measured;
+    measured.position_world = state.position_world;
+    measured.velocity_world = Eigen::Vector3d{0.5, 0.0, 0.0};
+    ASSERT_TRUE(facade.commitEmergencyBrake(measured, 10.0, 1U, 1U, 1U))
+        << "FIXTURE_BLOCKED: known-free H must certify before any negative control";
+    const auto candidate = facade.exportCommandCandidate(
+        1U, 1U, 1U, 10'000'000'000LL, 30'000'000'000LL);
+    ASSERT_TRUE(candidate);
+    ASSERT_TRUE(candidate->valid());
+    const auto verify_phase = [&](const bool staged) {
+      SCOPED_TRACE(staged ? "STAGED" : "COMMITTED");
+      for (const auto blocked : {EmergencyPolicyWorld::BlockedState::kUnknown,
+                                EmergencyPolicyWorld::BlockedState::kOccupied,
+                                EmergencyPolicyWorld::BlockedState::kOutOfMap}) {
+        const auto changed_world = std::make_shared<EmergencyPolicyWorld>(
+            blocked, 2U + static_cast<std::uint64_t>(blocked));
+        ASSERT_EQ(changed_world->classify(measured.position_world,
+                                         navigation_world_model::GridLayer::kInflated),
+                  navigation_world_model::CellState::kKnownFree);
+        const auto result = staged
+            ? facade.validateStagedCommandCandidate(changed_world, 10.0, candidate->bundle_generation)
+            : facade.validateCommittedTrajectory(changed_world, 10.0, candidate->bundle_generation);
+        EXPECT_FALSE(result.reused_unchanged_certificate);
+        EXPECT_EQ(result.evaluated_generation, candidate->bundle_generation);
+        EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+            result.validated_world, changed_world->identity()));
+        EXPECT_EQ(result.valid, fast && blocked == EmergencyPolicyWorld::BlockedState::kUnknown);
+        if (!result.valid) {
+          EXPECT_TRUE(result.blocking_cell_observed);
+          const auto expected = blocked == EmergencyPolicyWorld::BlockedState::kUnknown
+              ? navigation_world_model::CellState::kUnknown
+              : blocked == EmergencyPolicyWorld::BlockedState::kOccupied
+                  ? navigation_world_model::CellState::kOccupied
+                  : navigation_world_model::CellState::kOutOfMap;
+          EXPECT_EQ(result.first_blocked_cell_state, static_cast<int>(expected));
+        }
+      }
+    };
+    verify_phase(true);
+    facade.onExecutionTimelineActivated(candidate->bundle_generation);
+    ASSERT_EQ(facade.committedGeneration(), candidate->bundle_generation);
+    verify_phase(false);
+  }
+}
+
+void expectShortFrontierBackup(const bool fast_policy) {
+  // A bounded known-free prefix admits an actual positive stop, although the
+  // legacy visibility seed retreats to the origin. Frontier cells beyond it
+  // remain UNKNOWN, not an empty-map permission for SAFE execution.
+  class ShortFrontierWorld final : public IdentityOnlyWorld {
+   public:
+    explicit ShortFrontierWorld(
+        const std::optional<navigation_world_model::CellState> blocked_cell = std::nullopt,
+        const std::uint64_t revision = 1U)
+        : blocked_cell_(blocked_cell), revision_(revision) {}
+
+    navigation_world_model::WorldGeometry geometry() const noexcept override {
+      auto value = IdentityOnlyWorld::geometry();
+      value.evidence_bounds.global_min_index = Eigen::Vector3i{-75, -125, -5};
+      value.inflated_bounds.global_min_index = value.evidence_bounds.global_min_index;
+      return value;
+    }
+    navigation_world_model::WorldSnapshotIdentity identity() const noexcept override {
+      return {1U, 1U, revision_, 10'000'000'000LL};
+    }
+    bool changedRegionIntersectsSince(
+        const navigation_world_model::WorldSnapshotIdentity&,
+        const navigation_world_model::AxisAlignedBox&) const noexcept override {
+      return true;  // Preserve the default and force full changed-world sweeps.
+    }
+    bool contains(const navigation_world_model::Point3& p) const noexcept override {
+      return p.allFinite() && p.x() >= -15 && p.x() < 35 && p.y() >= -25 &&
+          p.y() < 25 && p.z() >= -1 && p.z() < 5 &&
+          !(blocked_cell_ == navigation_world_model::CellState::kOutOfMap && p.x() >= .05);
+    }
+    navigation_world_model::CellState classify(const navigation_world_model::Point3& p,
+        navigation_world_model::GridLayer) const noexcept override {
+      if (!contains(p)) return navigation_world_model::CellState::kOutOfMap;
+      if (blocked_cell_ && p.x() >= .05) return *blocked_cell_;
+      return p.x() < .4 ? navigation_world_model::CellState::kKnownFree
+                       : navigation_world_model::CellState::kUnknown;
+    }
+    bool isSegmentTraversable(const navigation_world_model::Point3& a,
+        const navigation_world_model::Point3& b, navigation_world_model::GridLayer,
+        navigation_world_model::UnknownPolicy policy) const noexcept override {
+      if (blocked_cell_ && std::max(a.x(), b.x()) >= .05 &&
+          (*blocked_cell_ != navigation_world_model::CellState::kUnknown ||
+           policy != navigation_world_model::UnknownPolicy::kAllowUnknown)) {
+        return false;
+      }
+      return contains(a) && contains(b) &&
+          (policy == navigation_world_model::UnknownPolicy::kAllowUnknown ||
+           std::max(a.x(), b.x()) < .4);
+    }
+    navigation_world_model::AxisAlignedBox clampToLocalBounds(
+        const navigation_world_model::AxisAlignedBox& box) const noexcept override {
+      return {box.minimum.cwiseMax(Eigen::Vector3d{-15,-25,-1}),
+              box.maximum.cwiseMin(Eigen::Vector3d{35,25,5})};
+    }
+
+   private:
+    const std::optional<navigation_world_model::CellState> blocked_cell_;
+    const std::uint64_t revision_;
+  };
+  auto world = std::make_shared<const ShortFrontierWorld>();
+  TestCommitAuthorizer authorizer(world);
+  navigation_planning::DynamicLimits limits;
+  limits.intent.requested_cruise_speed_mps = 5;
+  limits.unknown_space_policy = navigation_world_model::UnknownPolicy::kAllowUnknown;
+  navigation_planning_backend::PlannerFacade facade(
+      fast_policy ? PLANNER_FACADE_FAST_CONFIG_PATH : PLANNER_FACADE_CONFIG_PATH,
+      world, limits, authorizer, [] { return 10.0; });
+  auto request = plannerBodySupportRequest(world, nullptr, Eigen::Vector3d{48,0,2});
+  navigation_mission::Mission mission;
+  mission.id = request.goal.mission_id;
+  mission.frame = "lio_odom";
+  mission.planning.requested_cruise_speed_mps = 5;
+  mission.waypoints = {
+      {"start", {0,0,2}, .2, 0, navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"remote-pass", {48,0,2}, .3, 0, navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"stop", {60,0,2}, .3, 0, navigation_mission::MissionWaypoint::Behavior::Stop}};
+  navigation_mission::RouteProgress progress(mission);
+  ASSERT_TRUE(progress.update({0,0,2}).valid);
+  request.route_snapshot = progress.snapshot(mission.id, mission.frame, 1U,
+      request.key.request_id, 1U);
+  request.key.route_revision = request.route_snapshot.route_revision;
+  request.dynamics = limits;
+  request.start_state.source_stamp_ns = request.start_state.receive_stamp_ns = 10'000'000'000LL;
+  request.key.anchor_stamp_ns = request.start_state.source_stamp_ns;
+  request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+      std::chrono::milliseconds(80);
+  request.budget.steady_deadline_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      request.budget.deadline.time_since_epoch()).count();
+  ASSERT_TRUE(request.valid());
+  const auto result = facade.plan(request);
+  ASSERT_TRUE(result.valid());
+  ASSERT_TRUE(navigation_planning::completePlanningSucceeded(result.outcome))
+      << "failure=" << navigation_planning::planningFailureReasonName(result.failure_reason);
+  ASSERT_TRUE(result.candidate);
+  const auto& candidate = *result.candidate;
+  EXPECT_TRUE(candidate.backup_available);
+  EXPECT_GE(candidate.backup_start_time_s,
+            navigation_planning::PlanningTimingContract::kMinimumMainReserveS);
+  EXPECT_LT(candidate.backup_start_time_s, candidate.duration_s);
+  EXPECT_EQ(candidate.kind, navigation_planning::CandidateBundleKind::kMainWithBackup);
+  EXPECT_FALSE(candidate.terminal_stop);
+  const auto before_backup = candidate.sampleAtDeclaredStamp(candidate.declared_start_ns +
+      static_cast<std::int64_t>(std::llround(candidate.backup_start_time_s * 1e9)) - 1);
+  ASSERT_TRUE(before_backup);
+  EXPECT_EQ(before_backup->role, navigation_planning::CandidateRole::kMain);
+  EXPECT_GT(before_backup->velocity_world.norm(), 0.0);
+  EXPECT_EQ(facade.committedGeneration(), 0U);  // Staging is not activation.
+  EXPECT_TRUE(facade.hasStagedCommandCandidate());
+  EXPECT_TRUE(facade.validateStagedCommandCandidate(world, 10, candidate.bundle_generation).valid);
+  const auto diagnostic = facade.diagnostics();
+  EXPECT_TRUE(diagnostic.backup_certificate.selected);
+  EXPECT_GT(diagnostic.backup_certificate.aligned_hull_pass_count, 0U);
+  EXPECT_GT(diagnostic.backup_certificate.known_free_pass_count, 0U);
+
+  // Revalidate this same actual short-stop candidate, without setting a new
+  // backend world, staging a replacement or activating anything. The changed
+  // cell domain must meet the BACKUP itself, not only the exploratory MAIN.
+  const auto endpoint = candidate.sampleAtDeclaredEnd();
+  ASSERT_TRUE(endpoint);
+  ASSERT_EQ(endpoint->role, navigation_planning::CandidateRole::kBackup);
+  ASSERT_GE(endpoint->position_world.x(), .05)
+      << "FIXTURE_BLOCKED: changed cells must intersect the actual BACKUP";
+  std::uint64_t changed_revision = 2U;
+  for (const auto blocked : {navigation_world_model::CellState::kUnknown,
+                            navigation_world_model::CellState::kOccupied,
+                            navigation_world_model::CellState::kOutOfMap}) {
+    SCOPED_TRACE(static_cast<int>(blocked));
+    const auto changed_world = std::make_shared<const ShortFrontierWorld>(
+        blocked, changed_revision++);
+    ASSERT_EQ(changed_world->classify(endpoint->position_world,
+                                    navigation_world_model::GridLayer::kInflated), blocked);
+    EXPECT_EQ(changed_world->contains(endpoint->position_world),
+              blocked != navigation_world_model::CellState::kOutOfMap);
+    const auto validation = facade.validateStagedCommandCandidate(
+        changed_world, 10.0, candidate.bundle_generation);
+    ASSERT_FALSE(validation.reused_unchanged_certificate);
+    ASSERT_EQ(validation.evaluated_generation, candidate.bundle_generation);
+    ASSERT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+        validation.validated_world, changed_world->identity()));
+    EXPECT_EQ(validation.valid,
+              fast_policy && blocked == navigation_world_model::CellState::kUnknown);
+    if (!validation.valid) {
+      ASSERT_TRUE(validation.blocking_cell_observed)
+          << "FIXTURE_BLOCKED: rejection must carry a cell witness, not a freshness failure";
+      EXPECT_EQ(validation.first_blocked_cell_state, static_cast<int>(blocked));
+      EXPECT_TRUE(validation.first_blocked_position.allFinite());
+      if (blocked == navigation_world_model::CellState::kUnknown) {
+        EXPECT_EQ(validation.blocked_role,
+                  static_cast<int>(navigation_planning_backend::CandidateTrajectoryRole::BACKUP));
+      }
+    }
+  }
+  EXPECT_EQ(facade.committedGeneration(), 0U);
+  EXPECT_TRUE(facade.hasStagedCommandCandidate());
+  EXPECT_TRUE(facade.validateStagedCommandCandidate(
+      world, 10.0, candidate.bundle_generation).valid);
+}
+
+TEST(PlannerFacade, SafeShortFrontierAdmitsCertifiedPositiveBackup) {
+  expectShortFrontierBackup(false);
+}
+
+TEST(PlannerFacade, FastShortFrontierAdmitsExplicitUnknownBackup) {
+  expectShortFrontierBackup(true);
 }
 
 }  // namespace

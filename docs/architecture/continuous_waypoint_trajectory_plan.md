@@ -662,8 +662,9 @@ shorten the candidate or fail closed, not permission to use `UNKNOWN` as free.
 Rollback is by the last milestone commit. Never mix a route behavior change with a
 new hard-gate value, a temporary bypass, or a large observability refactor. Any
 temporary experiment must be recorded in
-`runtime_safety_decision_ledger.md` with owner, scope, impact, evidence,
-removal condition, and verification command.
+`docs/safety/runtime_safety_current.md` with owner, scope, impact, evidence,
+removal condition, and verification command; link targeted history through
+`docs/safety/runtime_safety_index.md`.
 
 The project is not flight-ready merely because dataset shadow planning or one
 SITL speed passes. The release claim is made only after the full M9 evidence

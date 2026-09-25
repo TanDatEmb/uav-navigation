@@ -475,6 +475,15 @@ TEST(PlanningWorker, ConcurrentSubmittersKeepBoundedOwnership) {
   auto planner = std::make_unique<FakePlanner>();
   PlanningWorker<FakePlanner> worker(std::move(planner));
   worker.start();
+  JobGate gate;
+  ASSERT_EQ(worker.submit(
+      makeKey(1U), PlanningPriority::kNormalRenewal,
+      [&](FakePlanner&, std::stop_token stop) {
+        gate.started();
+        gate.waitUntilReleased(stop);
+      }), PlanningSubmitDisposition::kAccepted);
+  ASSERT_TRUE(gate.waitUntilStarted());
+
   constexpr int kSubmitterCount = 4;
   constexpr int kSubmitsPerThread = 32;
   std::vector<std::thread> submitters;
@@ -482,21 +491,32 @@ TEST(PlanningWorker, ConcurrentSubmittersKeepBoundedOwnership) {
   for (int thread_index = 0; thread_index < kSubmitterCount; ++thread_index) {
     submitters.emplace_back([&worker, thread_index] {
       for (int index = 0; index < kSubmitsPerThread; ++index) {
-        const auto request_id = static_cast<std::uint64_t>(
-            100 + thread_index * kSubmitsPerThread + index);
+        const auto revision = static_cast<std::uint64_t>(
+            7 + thread_index * kSubmitsPerThread + index);
+        auto key = makeKey(1U);
+        key.pinned_world_revision = revision;
+        key.anchor_stamp_ns = static_cast<std::int64_t>(revision + 1U);
         (void)worker.submit(
-            makeKey(request_id), PlanningPriority::kNormalRenewal,
+            key, PlanningPriority::kNormalRenewal,
             [](FakePlanner&, std::stop_token) {});
       }
     });
   }
   for (auto& submitter : submitters) submitter.join();
+  gate.release();
+  for (int attempt = 0; attempt < 200 && worker.snapshot().completed < 2U; ++attempt) {
+    std::this_thread::sleep_for(5ms);
+  }
   worker.shutdown();
   const auto snapshot = worker.snapshot();
   EXPECT_FALSE(snapshot.fatal);
   EXPECT_FALSE(snapshot.in_flight);
   EXPECT_FALSE(snapshot.pending);
-  EXPECT_GT(snapshot.started, 0U);
+  EXPECT_EQ(snapshot.started, 2U);
+  EXPECT_EQ(snapshot.completed, 2U);
+  EXPECT_EQ(snapshot.cancelled, 0U);
+  EXPECT_EQ(snapshot.replaced_pending,
+            static_cast<std::uint64_t>(kSubmitterCount * kSubmitsPerThread - 1));
 }
 
 }  // namespace

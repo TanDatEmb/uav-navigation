@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <set>
 
 #include <data_structure/cmd_traj.h>
 #include <navigation_mission/route_progress.hpp>
+#include <navigation_planning/planning_request.hpp>
 #include <utils/optimization/root_finder.h>
 
 namespace navigation_planning_backend {
@@ -18,6 +20,67 @@ struct RouteRegressionCertificate {
   double maximum_regression_m{std::numeric_limits<double>::infinity()};
   double first_violation_time_s{std::numeric_limits<double>::quiet_NaN()};
 };
+
+struct EmergencyCorrectionAuthorization {
+  bool allowed{false};
+  double predecessor_endpoint_distance_m{std::numeric_limits<double>::quiet_NaN()};
+  double candidate_start_distance_m{std::numeric_limits<double>::quiet_NaN()};
+};
+
+// This is the exact request-proven exception consumed by candidate admission.
+// It deliberately accepts no planner-cache/warm-start input: the request's
+// immutable predecessor value is the only source that can authorize recovery.
+inline EmergencyCorrectionAuthorization authorizeEmergencyCorrection(
+    const navigation_planning::PlanningRequest& request,
+    const std::uint64_t candidate_localization_epoch,
+    const std::uint64_t candidate_goal_epoch,
+    const std::uint64_t candidate_request_id,
+    const navigation_mission::MissionWaypoint& waypoint,
+    const Eigen::Vector3d& candidate_start,
+    const Eigen::Vector3d& candidate_end,
+    const bool candidate_terminal_stop,
+    const bool candidate_backup_suffix_available,
+    const double tracking_error_budget_m) noexcept {
+  EmergencyCorrectionAuthorization result;
+  if (request.key.localization_epoch != candidate_localization_epoch ||
+      request.key.goal_epoch != candidate_goal_epoch ||
+      request.key.request_id != candidate_request_id) {
+    return result;
+  }
+  const auto endpoint = request.history.emergencyEndpointFor(
+      request.key.committed_bundle_generation,
+      request.key.localization_epoch);
+  if (!endpoint || !candidate_start.allFinite() || !candidate_end.allFinite() ||
+      !std::isfinite(tracking_error_budget_m) ||
+      tracking_error_budget_m < 0.0 ||
+      !std::isfinite(waypoint.acceptance_radius_m) ||
+      waypoint.acceptance_radius_m <= 0.0) {
+    return result;
+  }
+  const bool supported_behavior =
+      (waypoint.behavior == navigation_mission::MissionWaypoint::Behavior::Stop &&
+       candidate_terminal_stop) ||
+      (waypoint.behavior == navigation_mission::MissionWaypoint::Behavior::PassThrough &&
+       !candidate_terminal_stop && candidate_backup_suffix_available);
+  if (!supported_behavior) return result;
+
+  const double endpoint_distance =
+      (*endpoint - waypoint.position_enu).norm();
+  const double start_distance =
+      (candidate_start - waypoint.position_enu).norm();
+  const double recovery_radius =
+      waypoint.acceptance_radius_m + tracking_error_budget_m;
+  result.predecessor_endpoint_distance_m = endpoint_distance;
+  result.candidate_start_distance_m = start_distance;
+  result.allowed = std::isfinite(endpoint_distance) &&
+      std::isfinite(start_distance) && std::isfinite(recovery_radius) &&
+      recovery_radius > 0.0 &&
+      endpoint_distance <= recovery_radius + 1.0e-9 &&
+      start_distance <= recovery_radius + 1.0e-9 &&
+      (candidate_end - waypoint.position_enu).norm() <=
+          waypoint.acceptance_radius_m + 1.0e-9;
+  return result;
+}
 
 inline RouteRegressionCertificate certifyMainRouteRegression(
     const CandidateCommandBundle& candidate,

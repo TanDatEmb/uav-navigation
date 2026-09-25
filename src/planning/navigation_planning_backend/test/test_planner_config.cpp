@@ -1463,21 +1463,296 @@ TEST(PlannerProductConfig, DirectionalSupportUsesTheFirstAxisAlignedBoundary) {
       Eigen::Vector3d::Zero(), Eigen::Vector3d::UnitX(), world_geometry));
 }
 
-TEST(PlannerSpeedGovernor, UsesWeakestEvidenceAndBoundedBisection) {
+TEST(PlannerSpeedGovernor, UsesWeakestEvidenceAndConcreteBoundedCandidates) {
   const auto limited = navigation_planning_backend::evidenceAwareSpeedLimit(
       8.0, 4.0, 12.0, {20.0, 7.5, 12.0, 5.0});
   ASSERT_TRUE(limited.sufficient);
   EXPECT_DOUBLE_EQ(limited.support_m, 5.0);
   EXPECT_GT(limited.speed_mps, 0.0);
-  EXPECT_LE(navigation_planning_backend::jerkLimitedStopDistance(
-                limited.speed_mps, 4.0, 12.0),
-            5.0 + 1.0e-9);
+  navigation_math::StatePVAJ cruise_state = navigation_math::StatePVAJ::Zero();
+  cruise_state.col(1).x() = limited.speed_mps;
+  navigation_planning::DynamicLimits physical;
+  physical.vehicle.maximum_velocity_mps = 8.0;
+  physical.vehicle.maximum_acceleration_mps2 = 4.0;
+  physical.vehicle.maximum_jerk_mps3 = 12.0;
+  physical.intent.requested_cruise_speed_mps = 8.0;
+  const auto concrete_stop = navigation_planning_backend::evaluateStopReachability(
+      cruise_state, physical, 5.0);
+  EXPECT_TRUE(concrete_stop.feasible);
+  EXPECT_LE(concrete_stop.stopping_distance_m, 5.0);
   EXPECT_LT(8.0 - limited.speed_mps, 8.0);
 
   const auto missing = navigation_planning_backend::evidenceAwareSpeedLimit(
       8.0, 4.0, 12.0, {20.0, 7.5, 0.0, 5.0});
   EXPECT_FALSE(missing.sufficient);
   EXPECT_DOUBLE_EQ(missing.speed_mps, 0.0);
+  EXPECT_EQ(missing.failure,
+            navigation_planning_backend::EvidenceSpeedFailure::kInsufficientSupport);
+}
+
+TEST(PlannerSpeedGovernor, FindsFeasibleSteadyCruiseBelowOldGridFloor) {
+  navigation_math::StatePVAJ measured = navigation_math::StatePVAJ::Zero();
+  navigation_planning::DynamicLimits dynamics;
+  dynamics.vehicle.maximum_velocity_mps = 12.0;
+  dynamics.vehicle.maximum_acceleration_mps2 = 12.0;
+  dynamics.vehicle.maximum_jerk_mps3 = 30.0;
+  dynamics.intent.requested_cruise_speed_mps = 5.0;
+
+  // The former 16-point grid bottomed out at 0.3125 m/s. This scalar fixture
+  // is intentionally not a corridor/world certificate: it only demonstrates
+  // that the production polynomial family has a feasible point below that
+  // grid floor under the caller's V/A/J limits.
+  const auto governed = navigation_planning_backend::evidenceAwareSpeedLimit(
+      measured, dynamics, {0.02, 0.02, 0.02, 0.02}, 0.05,
+      [] { return false; });
+  ASSERT_TRUE(governed.sufficient)
+      << "failure=" << static_cast<int>(governed.failure);
+  EXPECT_GT(governed.speed_mps, 0.0);
+  EXPECT_LT(governed.speed_mps, 0.3125);
+
+  // Independent numerical oracle for the specified positive steady-cruise
+  // member. Evaluate the actual production polynomial and continuous extrema;
+  // do not use the governor's duration/support helper as the test oracle.
+  navigation_math::StatePVAJ oracle_state = navigation_math::StatePVAJ::Zero();
+  oracle_state.col(1).x() = 0.1;
+  const auto polynomial = navigation_planning_backend::minimumSnapStopPiece(
+      oracle_state, 0.2);
+  EXPECT_NEAR(polynomial.getMaxVelRate(), 0.1, 1.0e-10);
+  EXPECT_NEAR(polynomial.getMaxAccRate(), 0.9375, 1.0e-9);
+  EXPECT_NEAR(polynomial.getMaxJerRate(), 14.433756729740645, 1.0e-8);
+  EXPECT_NEAR(
+      navigation_planning_backend::minimumSnapStopSupportBound(
+          polynomial, oracle_state.col(0)),
+      0.01, 1.0e-10);
+  EXPECT_TRUE(polynomial.getState(0.2).col(1).isZero(1.0e-9));
+  EXPECT_TRUE(polynomial.getState(0.2).col(2).isZero(1.0e-8));
+  EXPECT_TRUE(polynomial.getState(0.2).col(3).isZero(1.0e-7));
+}
+
+TEST(PlannerBackupBraking, CorrectsSteadyAccelerationDurationRoundDown) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  constexpr double speed = 0.08839407447163837;
+  constexpr double acceleration_limit = 0.00012525139441244633;
+  constexpr double jerk_limit = 1.0e6;
+  state.col(1).x() = speed;
+  const double rounded_lower_bound =
+      navigation_planning_backend::minimumSnapSteadyCruiseDuration(
+          speed, acceleration_limit, jerk_limit, 0.001);
+  const auto uncorrected = navigation_planning_backend::minimumSnapStopPiece(
+      state, rounded_lower_bound);
+  ASSERT_GT(uncorrected.getMaxAccRate(), acceleration_limit);
+  EXPECT_TRUE(navigation_planning::withinNumericalDynamicLimit(
+      uncorrected.getMaxAccRate(), acceleration_limit));
+
+  const auto seed = navigation_planning_backend::makeBackupBrakingSeed(
+      0.0, state, speed, acceleration_limit, jerk_limit, 0.001, 0.0);
+  ASSERT_TRUE(seed.feasible) << static_cast<int>(seed.failure);
+  EXPECT_DOUBLE_EQ(seed.duration_s, std::nextafter(
+      rounded_lower_bound, std::numeric_limits<double>::infinity()));
+  EXPECT_LE(seed.maximum_acceleration_mps2, acceleration_limit);
+  EXPECT_LE(seed.maximum_jerk_mps3, jerk_limit);
+  EXPECT_TRUE(std::isfinite(seed.support_bound_m));
+}
+
+TEST(PlannerBackupBraking, CorrectsSteadyJerkDurationRoundDown) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  constexpr double speed = 0.028138831782626911;
+  constexpr double jerk_limit = 4.2389422825644623;
+  constexpr double acceleration_limit = 1.0e6;
+  state.col(1).x() = speed;
+  const double rounded_lower_bound =
+      navigation_planning_backend::minimumSnapSteadyCruiseDuration(
+          speed, acceleration_limit, jerk_limit, 0.001);
+  const auto uncorrected = navigation_planning_backend::minimumSnapStopPiece(
+      state, rounded_lower_bound);
+  ASSERT_GT(uncorrected.getMaxJerRate(), jerk_limit);
+  EXPECT_TRUE(navigation_planning::withinNumericalDynamicLimit(
+      uncorrected.getMaxJerRate(), jerk_limit));
+
+  const auto seed = navigation_planning_backend::makeBackupBrakingSeed(
+      0.0, state, speed, acceleration_limit, jerk_limit, 0.001, 0.0);
+  ASSERT_TRUE(seed.feasible) << static_cast<int>(seed.failure);
+  EXPECT_DOUBLE_EQ(seed.duration_s, std::nextafter(
+      rounded_lower_bound, std::numeric_limits<double>::infinity()));
+  EXPECT_LE(seed.maximum_acceleration_mps2, acceleration_limit);
+  EXPECT_LE(seed.maximum_jerk_mps3, jerk_limit);
+  EXPECT_TRUE(std::isfinite(seed.support_bound_m));
+}
+
+TEST(PlannerBackupBraking, InteriorSteadyDurationNeedsNoBoundaryCorrection) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  state.col(1).x() = 0.1;
+  const double lower_bound =
+      navigation_planning_backend::minimumSnapSteadyCruiseDuration(
+          0.1, 2.0, 10.0, 0.05);
+  const auto seed = navigation_planning_backend::makeBackupBrakingSeed(
+      0.0, state, 1.0, 2.0, 10.0, 0.05, 0.0);
+  ASSERT_TRUE(seed.feasible);
+  EXPECT_DOUBLE_EQ(seed.duration_s, lower_bound);
+}
+
+TEST(PlannerBackupBraking, AbortDuringSteadyBoundaryCorrectionIsObserved) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  state.col(1).x() = 0.08839407447163837;
+  int abort_checks = 0;
+  const auto seed = navigation_planning_backend::makeBackupBrakingSeedWithAbort(
+      0.0, state, 0.08839407447163837, 0.00012525139441244633, 1.0e6,
+      0.001, 0.0, [&] { return ++abort_checks == 3; });
+  EXPECT_FALSE(seed.feasible);
+  EXPECT_EQ(seed.failure,
+            navigation_planning_backend::StopFailureReason::kBudgetExhausted);
+}
+
+TEST(PlannerBackupBraking, MaterialMeasuredAccelerationIsNotLaundered) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  state.col(1).x() = 0.08839407447163837;
+  state.col(2).x() = 0.00012525139441244633 + 1.0e-5;
+  const auto seed = navigation_planning_backend::makeBackupBrakingSeed(
+      0.0, state, 0.08839407447163837, 0.00012525139441244633, 1.0e6,
+      0.001, 0.0);
+  EXPECT_FALSE(seed.feasible);
+  EXPECT_EQ(seed.failure,
+            navigation_planning_backend::StopFailureReason::kOutsideRecoveryEnvelope);
+  EXPECT_FALSE(navigation_planning::withinNumericalDynamicLimit(
+      state.col(2).norm(), 0.00012525139441244633));
+}
+
+TEST(PlannerSpeedGovernor, DoesNotReplaceMeasuredPvajWithDesiredCruiseSpeed) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  state.col(1).x() = 12.0;
+  state.col(2).x() = 1.0;
+  navigation_planning::DynamicLimits recovery;
+  recovery.vehicle.maximum_velocity_mps = 15.0;
+  recovery.vehicle.maximum_acceleration_mps2 = 12.0;
+  recovery.vehicle.maximum_jerk_mps3 = 30.0;
+  recovery.intent.requested_cruise_speed_mps = 5.0;
+
+  const auto enough_support = navigation_planning_backend::evidenceAwareSpeedLimit(
+      state, recovery, {100.0, 100.0, 100.0, 100.0});
+  ASSERT_TRUE(enough_support.sufficient)
+      << static_cast<int>(enough_support.failure);
+  EXPECT_DOUBLE_EQ(enough_support.speed_mps, 5.0);
+
+  const auto insufficient_for_current_state =
+      navigation_planning_backend::evidenceAwareSpeedLimit(
+          state, recovery, {1.0, 1.0, 1.0, 1.0});
+  EXPECT_FALSE(insufficient_for_current_state.sufficient);
+  EXPECT_EQ(insufficient_for_current_state.failure,
+            navigation_planning_backend::EvidenceSpeedFailure::kInsufficientSupport);
+
+  recovery.vehicle.maximum_velocity_mps = 12.0;
+  recovery.intent.requested_cruise_speed_mps = 5.0;
+  const auto outside_physical_recovery =
+      navigation_planning_backend::evidenceAwareSpeedLimit(
+          state, recovery, {100.0, 100.0, 100.0, 100.0});
+  EXPECT_FALSE(outside_physical_recovery.sufficient);
+  EXPECT_EQ(outside_physical_recovery.failure,
+            navigation_planning_backend::EvidenceSpeedFailure::kOutsideRecoveryEnvelope);
+}
+
+TEST(PlannerSpeedGovernor, CorrectsRepresentableSpeedAtCertifiedSupportBoundary) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  navigation_planning::DynamicLimits dynamics;
+  dynamics.vehicle.maximum_velocity_mps = 5.0;
+  dynamics.vehicle.maximum_acceleration_mps2 = 5.0;
+  dynamics.vehicle.maximum_jerk_mps3 = 8.0;
+  dynamics.intent.requested_cruise_speed_mps = 5.0;
+  constexpr double support_m = 0.72322330470336316;
+  const double analytic_cap =
+      navigation_planning_backend::detail::minimumSnapSteadyCruiseSpeedCap(
+          dynamics.intent.requested_cruise_speed_mps,
+          dynamics.vehicle.maximum_velocity_mps,
+          dynamics.vehicle.maximum_acceleration_mps2,
+          dynamics.vehicle.maximum_jerk_mps3, support_m, 0.05);
+
+  const auto result = navigation_planning_backend::evidenceAwareSpeedLimit(
+      state, dynamics, {support_m, support_m, support_m, support_m});
+  ASSERT_TRUE(result.sufficient) << static_cast<int>(result.failure);
+  EXPECT_LT(result.speed_mps, analytic_cap);
+  auto candidate = state;
+  candidate.col(1) = Eigen::Vector3d{result.speed_mps, 0.0, 0.0};
+  const auto stop = navigation_planning_backend::evaluateStopReachability(
+      candidate, dynamics, support_m);
+  EXPECT_TRUE(stop.feasible);
+}
+
+TEST(PlannerSpeedGovernor, ReportsBudgetExhaustionSeparately) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  navigation_planning::DynamicLimits dynamics;
+  dynamics.vehicle.maximum_velocity_mps = 8.0;
+  dynamics.vehicle.maximum_acceleration_mps2 = 4.0;
+  dynamics.vehicle.maximum_jerk_mps3 = 12.0;
+  dynamics.intent.requested_cruise_speed_mps = 5.0;
+  const auto result = navigation_planning_backend::evidenceAwareSpeedLimit(
+      state, dynamics, {100.0, 100.0, 100.0, 100.0}, 0.05,
+      [] { return true; });
+  EXPECT_FALSE(result.sufficient);
+  EXPECT_EQ(result.failure,
+            navigation_planning_backend::EvidenceSpeedFailure::kBudgetExhausted);
+}
+
+TEST(PlannerSpeedGovernor, AbortBeforeCurrentStopDoesNotStartPolynomialWork) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  navigation_planning::DynamicLimits dynamics;
+  dynamics.vehicle.maximum_velocity_mps = 8.0;
+  dynamics.vehicle.maximum_acceleration_mps2 = 4.0;
+  dynamics.vehicle.maximum_jerk_mps3 = 12.0;
+  dynamics.intent.requested_cruise_speed_mps = 5.0;
+  int abort_checks = 0;
+  const auto result = navigation_planning_backend::evidenceAwareSpeedLimit(
+      state, dynamics, {100.0, 100.0, 100.0, 100.0}, 0.05,
+      [&] { return ++abort_checks == 1; });
+  EXPECT_FALSE(result.sufficient);
+  EXPECT_EQ(result.failure,
+            navigation_planning_backend::EvidenceSpeedFailure::kBudgetExhausted);
+  EXPECT_EQ(abort_checks, 1);
+}
+
+TEST(PlannerBackupBraking, AbortIsObservedBetweenBoundedDurationTrials) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  state.col(1).x() = 2.0;
+  state.col(2).x() = 1.5;
+  int abort_checks = 0;
+  const auto seed = navigation_planning_backend::makeBackupBrakingSeedWithAbort(
+      0.0, state, 5.0, 2.0, 8.0, 0.05, 0.0,
+      [&] { return ++abort_checks == 3; });
+  EXPECT_FALSE(seed.feasible);
+  EXPECT_EQ(seed.failure,
+            navigation_planning_backend::StopFailureReason::kBudgetExhausted);
+  EXPECT_EQ(abort_checks, 3);
+}
+
+TEST(PlannerBackupBraking, AbortIsObservedInsideTerminalAltitudeAdjustment) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  state.col(0).z() = 3.0;
+  state.col(1).x() = 2.0;
+  int abort_checks = 0;
+  const auto seed =
+      navigation_planning_backend::makeBackupBrakingSeedWithTerminalAltitudeAndAbort(
+          0.0, state, 5.0, 2.0, 8.0, 0.05, 0.0, 3.0,
+          [&] { return ++abort_checks == 4; });
+  EXPECT_FALSE(seed.feasible);
+  EXPECT_EQ(seed.failure,
+            navigation_planning_backend::StopFailureReason::kBudgetExhausted);
+  EXPECT_FALSE(seed.terminal_altitude_preserved);
+  EXPECT_EQ(abort_checks, 4);
+}
+
+TEST(PlannerSpeedGovernor, AbortImmediatelyBeforeSuccessfulReturnIsContained) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  navigation_planning::DynamicLimits dynamics;
+  dynamics.vehicle.maximum_velocity_mps = 8.0;
+  dynamics.vehicle.maximum_acceleration_mps2 = 4.0;
+  dynamics.vehicle.maximum_jerk_mps3 = 12.0;
+  dynamics.intent.requested_cruise_speed_mps = 5.0;
+  int abort_checks = 0;
+  const auto result = navigation_planning_backend::evidenceAwareSpeedLimit(
+      state, dynamics, {100.0, 100.0, 100.0, 100.0}, 0.05,
+      [&] { return ++abort_checks == 9; });
+  EXPECT_FALSE(result.sufficient);
+  EXPECT_EQ(result.failure,
+            navigation_planning_backend::EvidenceSpeedFailure::kBudgetExhausted);
+  EXPECT_EQ(abort_checks, 9);
 }
 
 TEST(PlannerCorridorPlanes, NormalizesFinitePlanesAndRejectsMalformedNormals) {
@@ -1595,8 +1870,89 @@ TEST(PlannerBackupBraking, FullStateStopRetainsAccelerationAtTheBoundary) {
   ASSERT_TRUE(stopped.feasible);
   ASSERT_TRUE(accelerating.feasible);
   EXPECT_GT(accelerating.stopping_distance_m, stopped.stopping_distance_m);
-  EXPECT_GT(accelerating.admissible_entry_speed_mps,
-            stopped.admissible_entry_speed_mps);
+  EXPECT_GT(accelerating.estimated_entry_speed_mps,
+            stopped.estimated_entry_speed_mps);
+}
+
+TEST(PlannerBackupBraking, PositiveAccelerationLowerBoundRejectsOneMeterAsCertifiedStop) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  state.col(2).x() = 5.0;
+  navigation_planning::DynamicLimits dynamics;
+  dynamics.vehicle.maximum_velocity_mps = 12.0;
+  dynamics.vehicle.maximum_acceleration_mps2 = 5.0;
+  dynamics.vehicle.maximum_jerk_mps3 = 8.0;
+  dynamics.intent.requested_cruise_speed_mps = 5.0;
+
+  // Independent necessary-bound oracle: integrate a(t) >= 5 - 8t until
+  // t=2a/J. This is only a lower bound, not a full-state optimal stop.
+  const double acceleration = 5.0;
+  const double jerk = 8.0;
+  const double lower_bound_m = 2.0 * acceleration * acceleration * acceleration /
+      (3.0 * jerk * jerk);
+  EXPECT_NEAR(lower_bound_m, 1.3020833333333333, 1.0e-12);
+  const auto one_meter = navigation_planning_backend::evaluateStopReachability(
+      state, dynamics, 1.0);
+  EXPECT_FALSE(one_meter.feasible);
+  EXPECT_NE(one_meter.failure, navigation_planning_backend::StopFailureReason::kNone);
+  const auto seed = navigation_planning_backend::makeBackupBrakingSeed(
+      0.0, state, dynamics.vehicle.maximum_velocity_mps,
+      dynamics.vehicle.maximum_acceleration_mps2,
+      dynamics.vehicle.maximum_jerk_mps3, 0.05, 0.0);
+  if (seed.feasible) {
+    EXPECT_GE(seed.support_bound_m + 1.0e-9, lower_bound_m);
+    EXPECT_GT(seed.support_bound_m, 1.0);
+  }
+}
+
+TEST(PlannerBackupBraking, UnavoidablePeakUsesCallerRecoveryVelocityLimit) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  state.col(1).x() = 12.0;
+  state.col(2).x() = 1.0;
+  constexpr double jerk = 30.0;
+  // Independent necessary-bound oracle from a(t) >= 1 - 30t until a=0.
+  const double lower_bound_mps = 12.0 + 1.0 * 1.0 / (2.0 * jerk);
+  EXPECT_NEAR(lower_bound_mps, 12.016666666666667, 1.0e-12);
+
+  const auto nominal_cap_seed = navigation_planning_backend::makeBackupBrakingSeed(
+      0.0, state, 12.0, 12.0, jerk, 0.05, 0.0);
+  EXPECT_FALSE(nominal_cap_seed.feasible);
+  EXPECT_EQ(nominal_cap_seed.failure,
+            navigation_planning_backend::StopFailureReason::kOutsideRecoveryEnvelope);
+
+  // The same nominally overshooting boundary is not physically outside a
+  // caller's wider recovery envelope; don't classify it as impossible.
+  const auto physical_recovery_seed = navigation_planning_backend::makeBackupBrakingSeed(
+      0.0, state, 15.0, 12.0, jerk, 0.05, 0.0);
+  EXPECT_TRUE(physical_recovery_seed.feasible)
+      << "failure=" << static_cast<int>(physical_recovery_seed.failure);
+}
+
+TEST(PlannerBackupBraking, PolynomialSupportIsNotSCurveSupport) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  state.col(1).x() = 5.0;
+  navigation_planning::DynamicLimits dynamics;
+  dynamics.vehicle.maximum_velocity_mps = 5.0;
+  dynamics.vehicle.maximum_acceleration_mps2 = 5.0;
+  dynamics.vehicle.maximum_jerk_mps3 = 8.0;
+  dynamics.intent.requested_cruise_speed_mps = 5.0;
+
+  // Independent symmetric S-curve oracle for the trapezoidal case:
+  // v^2/(2A) + vA/(2J) = 4.0625 m. It does not certify the minimum-snap family.
+  const double s_curve_distance_m = 5.0 * 5.0 / (2.0 * 5.0) +
+      5.0 * 5.0 / (2.0 * 8.0);
+  EXPECT_NEAR(s_curve_distance_m, 4.0625, 1.0e-12);
+  EXPECT_GT(4.3, s_curve_distance_m);
+  const auto seed = navigation_planning_backend::makeBackupBrakingSeed(
+      0.0, state, 5.0, 5.0, 8.0, 0.05, 0.0);
+  ASSERT_TRUE(seed.feasible)
+      << "failure=" << static_cast<int>(seed.failure);
+  EXPECT_GT(seed.support_bound_m, 4.3);
+  const auto polynomial_stop = navigation_planning_backend::evaluateStopReachability(
+      state, dynamics, 4.3);
+  EXPECT_FALSE(polynomial_stop.feasible);
+  if (std::isfinite(polynomial_stop.stopping_distance_m)) {
+    EXPECT_GT(polynomial_stop.stopping_distance_m, 4.3);
+  }
 }
 
 TEST(PlannerBackupBraking, MinimumSnapSeedPreservesPVAJAndStopsWithinBounds) {
@@ -1610,6 +1966,16 @@ TEST(PlannerBackupBraking, MinimumSnapSeedPreservesPVAJAndStopsWithinBounds) {
   const auto seed = navigation_planning_backend::makeBackupBrakingSeed(
       0.6, initial, 3.0, 2.0, 8.0, 0.05, 0.05);
   ASSERT_TRUE(seed.feasible);
+  navigation_planning::DynamicLimits recovery_limits;
+  recovery_limits.vehicle.maximum_velocity_mps = 3.0;
+  recovery_limits.vehicle.maximum_acceleration_mps2 = 2.0;
+  recovery_limits.vehicle.maximum_jerk_mps3 = 8.0;
+  recovery_limits.intent.requested_cruise_speed_mps = 3.0;
+  const auto authorized_stop =
+      navigation_planning_backend::evaluateStopReachability(
+          initial, recovery_limits, 100.0);
+  EXPECT_TRUE(authorized_stop.feasible);
+  EXPECT_TRUE(std::isfinite(authorized_stop.stopping_distance_m));
   ASSERT_GT(seed.duration_s, 0.0);
   const auto piece = navigation_planning_backend::minimumSnapStopPiece(initial, seed.duration_s);
   const auto control_points =

@@ -35,17 +35,9 @@ class PlannerFacade final {
   PlannerFacade& operator=(const PlannerFacade&) = delete;
 
   void cancelActiveSolve() noexcept;
-  void resetSolveCancellation() noexcept;
-  void resetOptimizationDiagnostics() noexcept;
   void setCommandIdentity(std::uint64_t localization_epoch,
                           std::uint64_t goal_epoch,
                           std::uint64_t request_id);
-  // Diagnostic-only correlation identity for an optional nominal-problem
-  // snapshot. It never participates in request admission or candidate
-  // validity.
-  void setNominalProblemDiagnosticIdentity(
-      std::uint64_t solve_generation,
-      std::uint64_t planner_cycle) noexcept;
   void discardCommandCandidate() noexcept;
   // Caller owns an unadmitted retained candidate; zero/wrong/retired
   // generations cannot clear the currently registered heading owner.
@@ -80,8 +72,6 @@ class PlannerFacade final {
       std::uint64_t request_id,
       std::int64_t valid_from_ns,
       std::int64_t valid_until_ns);
-  void setPassThroughNextTarget(
-      const std::optional<Eigen::Vector3d>& next_target) noexcept;
   bool setState(const navigation_planning::KinematicState& state);
   // Initial planning is valid only for a stopped/hold state. The runtime
   // owns that gate; this API names the lifecycle contract explicitly.
@@ -96,15 +86,6 @@ class PlannerFacade final {
   [[nodiscard]] navigation_planning::PlanningOutcome plan(
       const navigation_planning::PlanningRequest& request);
 
-  // Source-compatibility aliases for tools that have not yet migrated. They
-  // are not used by the runtime lifecycle and do not authorize moving resets.
-  [[deprecated("use planInitialFromStoppedState")]]
-  [[nodiscard]] navigation_planning::PlannerStatus planFromRest(
-      const Eigen::Vector3d& target_world, double target_yaw_rad, bool new_goal);
-  [[deprecated("use planSuccessorFromExecutionAnchor")]]
-  [[nodiscard]] navigation_planning::PlannerStatus replanOnce(
-      const Eigen::Vector3d& target_world, double target_yaw_rad, bool new_goal);
-
   [[nodiscard]] std::optional<navigation_planning::CandidateBundle> exportCommandCandidate(
       std::uint64_t localization_epoch,
       std::uint64_t goal_epoch,
@@ -115,6 +96,9 @@ class PlannerFacade final {
   [[nodiscard]] bool commitEmergencyBrake(
       const navigation_planning::TrajectoryPoint& initial_command,
       double start_wall_time_s,
+      std::uint64_t localization_epoch,
+      std::uint64_t goal_epoch,
+      std::uint64_t request_id,
       // Optional execution-owned terminal altitude. The caller must bound it
       // against the measured boundary; the planner still certifies the full
       // emergency trajectory before committing it.
@@ -132,6 +116,7 @@ class PlannerFacade final {
   [[nodiscard]] int solveStage() const noexcept;
   [[nodiscard]] std::size_t solvePointCount() const noexcept;
   [[nodiscard]] double solveDeadlineSeconds() const noexcept;
+  [[nodiscard]] navigation_planning::VehicleControlEnvelope controlEnvelope() const noexcept;
   [[nodiscard]] double replanForwardSeconds() const noexcept;
   [[nodiscard]] double trackingErrorBudgetMeters() const noexcept;
   [[nodiscard]] double yawRateLimitRadS() const noexcept;

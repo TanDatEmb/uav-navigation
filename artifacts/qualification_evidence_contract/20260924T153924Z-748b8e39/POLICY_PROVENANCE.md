@@ -1,0 +1,7 @@
+# Policy provenance and requested decision
+
+The ten-run cohort has truthful requested/effective tracking experiment `off`; Core and adapter suppression are false. This is a runtime configuration fact only. The evaluator's C0 coverage/acceptance dictionaries are absent from the scenario, metadata and product policy files. The evaluator now rejects unversioned or provenance-free policy records even when numeric limits are supplied. Synthetic test fixture thresholds have `synthetic_test_policy` provenance and are excluded.
+
+The user confirmed there is no unified approved tracking/motion threshold document and requested calculation/analysis. `TRACKING_POLICY_CONTRACT.md` reports the ten-run distributions and the missing independent estimator/frame allocation; `MOTION_POLICY_CONTRACT.md` reports the missing post-hoc motion objective. The cohort can characterize candidate policies, but using its maxima to set limits and then qualifying the same cohort would be circular. No numeric limit is installed or labeled approved.
+
+Decision needed before integrated C0 PASS/FAIL eligibility: select a hazard-based allocation for independent-truth position/velocity tracking and a versioned measured-motion objective, then validate it on an independent holdout cohort and representative sensor data. Until then the evaluator returns `TRACKING_COVERAGE_POLICY_UNAVAILABLE` and `MOTION_ACCEPTANCE_POLICY_UNAVAILABLE` as `NOT_EVALUABLE`. A software-only axis may report exact control/safety logic separately but may not use missing flight-performance policy as a hidden PASS.

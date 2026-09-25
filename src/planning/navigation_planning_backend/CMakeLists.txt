@@ -22,6 +22,7 @@ set(NAVIGATION_PLANNING_BACKEND_SOURCES
   src/planner_core/astar.cpp
   src/planner_core/ciri.cpp
   src/planner_core/corridor_generator.cpp
+  src/planner_core/nominal_problem_snapshot_writer.cpp
   src/planner_core/planner.cpp
   src/planner_core/route_yaw_reference.cpp
   src/planner_facade.cpp

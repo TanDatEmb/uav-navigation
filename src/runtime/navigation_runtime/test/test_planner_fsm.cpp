@@ -1,8 +1,12 @@
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/baseline_refinement.hpp"
 #include "navigation_runtime/commit_trace.hpp"
-#include "navigation_runtime/execution_episode.hpp"
+#include "execution_authority_lifecycle_fixture.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
+#include "navigation_runtime/desired_planning_intent.hpp"
+#include <navigation_common/time.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
+#include <navigation_execution/execution_state_store.hpp>
 
 #include <gtest/gtest.h>
 #include <barrier>
@@ -60,6 +64,25 @@ TEST(PlannerFsm, ClassifiesDesiredAndExecutingIdentityTransitions) {
                "same_route_waypoint_advance");
 }
 
+TEST(PlannerFsm, DesiredPassGateAdvanceCannotRevokeInFlightPredecessorSample) {
+  const std::optional predecessor{goal("mission", 2U, 3U, 7U)};
+  const std::optional successor{goal("mission", 3U, 4U, 7U)};
+  ASSERT_EQ(classifyGoalTransition(successor, predecessor),
+            GoalTransitionKind::kSameRouteWaypointAdvance);
+  // Mission acceptance changes desired intent; the old certified execution
+  // still owns a sample captured just before that event.
+  EXPECT_TRUE(sameExecutionPublicationIdentity(
+      predecessor, predecessor, 9U, 9U, 5U, 5U));
+  // Once successor activation changes execution authority, the late old
+  // sample must lose the final publication gate.
+  EXPECT_FALSE(sameExecutionPublicationIdentity(
+      predecessor, successor, 9U, 10U, 5U, 5U));
+  EXPECT_FALSE(sameExecutionPublicationIdentity(
+      predecessor, predecessor, 9U, 9U, 5U, 6U));
+  EXPECT_FALSE(sameExecutionPublicationIdentity(
+      predecessor, goal("other", 2U, 3U, 7U), 9U, 9U, 5U, 5U));
+}
+
 TEST(PlannerFsm, PlannerSolveActivityDisarmsOnlyItsOwnedGeneration) {
   std::int64_t started_ns{0};
   std::uint64_t active_generation{0};
@@ -81,6 +104,61 @@ TEST(PlannerFsm, PlannerSolveActivityDisarmsOnlyItsOwnedGeneration) {
   }
   EXPECT_EQ(active_generation, 9U);
   EXPECT_EQ(started_ns, 3000);
+}
+
+TEST(PlannerFsm, PlannerSolveActivityRetainsOnlyCurrentFailureWitness) {
+  std::int64_t started_ns{0};
+  std::uint64_t active_generation{0};
+  std::mutex activity_mutex;
+  std::optional<PlannerSolveFailureWitness> current;
+  PlannerSolveFailureWitness first;
+  first.key.goal_epoch = 7U;
+  {
+    const PlannerSolveActivityScope activity(
+        activity_mutex, started_ns, active_generation, 11U, 1234,
+        &current, first);
+    ASSERT_TRUE(current);
+    EXPECT_EQ(current->key.goal_epoch, 7U);
+    // A newer solve owns the slot before the old destructor runs.
+    active_generation = 12U;
+    current->key.goal_epoch = 8U;
+  }
+  ASSERT_TRUE(current);
+  EXPECT_EQ(current->key.goal_epoch, 8U);
+  active_generation = 0U;
+  current.reset();
+}
+
+TEST(PlannerFsm, SupersededStateLeaseCannotAuthorizeFailure) {
+  navigation_execution::ExecutionStateStore states;
+  navigation_planning::KinematicState first;
+  first.source_stamp_ns = 100U;
+  first.receive_stamp_ns = 100U;
+  first.localization_epoch = 1U;
+  first.world_frame_id = "lio_odom";
+  first.body_frame_id = "base_link";
+  ASSERT_TRUE(states.publish(first));
+  const auto failed_l1 = states.load();
+  std::barrier observed(2);
+  std::barrier replacement_installed(2);
+  std::atomic_bool may_fail_close{true};
+  std::thread callback([&] {
+    observed.arrive_and_wait();
+    replacement_installed.arrive_and_wait();
+    may_fail_close.store(
+        failedExecutionLeaseIsCurrent(failed_l1, states.load()),
+        std::memory_order_release);
+  });
+  observed.arrive_and_wait();
+  first.source_stamp_ns = 200U;
+  first.receive_stamp_ns = 200U;
+  const bool replacement_published = states.publish(first);
+  replacement_installed.arrive_and_wait();
+  callback.join();
+  ASSERT_TRUE(replacement_published);
+  EXPECT_FALSE(may_fail_close.load(std::memory_order_acquire));
+  const auto failed_l2 = states.load();
+  EXPECT_TRUE(failedExecutionLeaseIsCurrent(failed_l2, states.load()));
 }
 
 TEST(PlannerFsm, PlannerSolveActivityBlocksScopeExitDuringWatchdogDecision) {
@@ -140,7 +218,7 @@ TEST(PlannerFsm, RetainsOnlyCertifiedPassThroughTerminalAcknowledgement) {
   facts.status_matches_active_identity = false;
   EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
   facts = valid;
-  facts.active_goal_is_pass_through = false;
+  facts.desired_goal_is_pass_through = false;
   EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
   facts = valid;
   facts.outgoing_route_exists = false;
@@ -200,6 +278,323 @@ TEST(PlannerFsm, UsesCoherentTenHertzTimingContract) {
           navigation_planning::PlanningTimingContract::kStitchDurationS +
           navigation_planning::PlanningTimingContract::kPlannerPeriodS +
           navigation_planning::PlanningTimingContract::kCommitGuardS);
+}
+
+navigation_planning::CandidateBundle baselineRefinementSchedulingCandidate() {
+  navigation_planning::CandidateBundle a;
+  a.localization_epoch = a.goal_epoch = a.request_id = 1U;
+  a.bundle_generation = 7U;
+  a.world_identity = a.pinned_world_identity = {1U, 2U, 3U, 10'000'000'000LL};
+  a.start_wall_time_s = 10.0;
+  a.duration_s = 6.0;
+  a.backup_start_time_s = 5.0;
+  a.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  a.backup_available = true;
+  a.certificates = {true, true, true, true};
+  a.valid_from_ns = a.activation_stamp_ns = a.declared_start_ns = 10'000'000'000LL;
+  a.declared_end_ns = a.valid_until_ns = 16'000'000'000LL;
+  a.protected_region.minimum = Eigen::Vector3d{-1.0, -1.0, -1.0};
+  a.protected_region.maximum = Eigen::Vector3d{1.0, 1.0, 1.0};
+  a.role_schedule = {{0.0, 5.0, navigation_planning::CandidateRole::kMain},
+                     {5.0, 6.0, navigation_planning::CandidateRole::kBackup}};
+  a.evaluator = [](std::int64_t, navigation_planning::TrajectoryPoint&) { return true; };
+  return a;  // Scheduling-only fixture; not numerical/world certificate evidence.
+}
+
+TEST(PlannerFsm, ExactOptimizationFailureInjectionSelectsOnlyOneHotHandoff) {
+  auto incumbent = baselineRefinementSchedulingCandidate();
+  incumbent.goal_epoch = 3U;
+  incumbent.request_id = 2U;
+  ASSERT_TRUE(incumbent.valid());
+  const auto active = std::make_shared<const navigation_planning::CandidateBundle>(incumbent);
+  auto predecessor = goal("mission", 1U, 2U, 4U);
+  auto successor = goal("mission", 2U, 3U, 4U);
+  successor.behavior = successor.BEHAVIOR_PASS_THROUGH;
+  navigation_execution::ExecutionAuthoritySnapshot execution;
+  execution.active = active;
+  execution.active_goal = std::make_shared<const navigation_contracts::msg::NavigationGoal>(
+      predecessor);
+  execution.admission_goal_epoch = 4U;
+  execution.admission_localization_epoch = 1U;
+  execution.lifecycle.exposure = navigation_execution::ExecutionExposure::kAvailable;
+  const PlanningKey key{1U, 4U, 3U, 4U, 7U, 2U, 3U,
+      PlanningStartMode::kCommittedFutureState, 11'000'000'000LL, 5U};
+  const ExactOptimizationFailureTarget target{2U, 3U};
+  const auto eligible = [&](bool desired_current, bool execution_current) {
+    return exactOptimizationFailureHotHandoffEligible(target, key, successor,
+        execution, classifyGoalTransition(successor, predecessor),
+        desired_current, execution_current, true, true, 11'000'000'000LL);
+  };
+  ASSERT_TRUE(eligible(true, true));
+  auto staged_execution = execution;
+  staged_execution.pending = active;
+  EXPECT_FALSE(exactOptimizationFailureHotHandoffEligible(target, key, successor,
+      staged_execution, GoalTransitionKind::kSameRouteWaypointAdvance,
+      true, true, true, true, 11'000'000'000LL));
+  EXPECT_FALSE(eligible(false, true));
+  EXPECT_FALSE(eligible(true, false));
+  auto stale_successor = successor;
+  stale_successor.request_id = 4U;
+  EXPECT_FALSE(exactOptimizationFailureHotHandoffEligible(target, key, stale_successor,
+      execution, classifyGoalTransition(stale_successor, predecessor),
+      true, true, true, true, 11'000'000'000LL));
+  EXPECT_FALSE(exactOptimizationFailureHotHandoffEligible(target, key, successor,
+      execution, GoalTransitionKind::kSteady, true, true, true, true,
+      11'000'000'000LL));
+  EXPECT_FALSE(exactOptimizationFailureHotHandoffEligible(target, key, successor,
+      execution, GoalTransitionKind::kSameRouteWaypointAdvance,
+      true, true, true, false, 11'000'000'000LL));
+  auto stopped_key = key;
+  stopped_key.start_mode = PlanningStartMode::kStoppedMeasuredState;
+  EXPECT_FALSE(exactOptimizationFailureHotHandoffEligible(target, stopped_key,
+      successor, execution, GoalTransitionKind::kSameRouteWaypointAdvance,
+      true, true, true, true, 11'000'000'000LL));
+  ExactOptimizationFailureInjection injection;
+  EXPECT_FALSE(injection.consumeIfEligible(true));
+  injection.setTarget(target);
+  injection.setAlternateTarget({3U, 4U});
+  EXPECT_TRUE(injection.armed());
+  ASSERT_TRUE(injection.matchingTarget(2U, 3U));
+  ASSERT_TRUE(injection.matchingTarget(3U, 4U));
+  EXPECT_FALSE(injection.matchingTarget(1U, 2U));
+  EXPECT_FALSE(injection.consumeIfEligible(false));
+  EXPECT_TRUE(injection.consumeIfEligible(eligible(true, true)));
+  EXPECT_TRUE(injection.consumed());
+  EXPECT_FALSE(injection.matchingTarget(3U, 4U));
+  EXPECT_FALSE(injection.consumeIfEligible(true));
+}
+
+TEST(PlannerFsm, ExactOptimizationFailureStillRequiresRetainedValidation) {
+  EXPECT_EQ(classifyPlannerResult(
+      navigation_planning::PlannerStatus::kOptimizationFailed,
+      false, true, false), PlannerResultDisposition::RetainCommittedCommand);
+  // Classification requests validation; it does not certify the incumbent.
+  // An invalid HG-023 witness retains the existing fail-closed fallback.
+  EXPECT_EQ(retainedValidationTransition(false),
+            RetainedValidationTransition::FailClosed);
+  EXPECT_EQ(classifyPlannerResult(
+      navigation_planning::PlannerStatus::kOptimizationFailed,
+      false, false, false), PlannerResultDisposition::FailClosed);
+}
+
+TEST(PlannerFsm, OldOptimizationFailureCannotRevokeActivatedSuccessor) {
+  ExecutionLifecycleFixture execution;
+  execution.beginGoal(1U, 1U, 1U, false);
+  auto predecessor = baselineRefinementSchedulingCandidate();
+  ASSERT_EQ(execution.commandCommitted(predecessor),
+            navigation_execution::CommitDecision::kCommitted);
+  execution.beginGoal(1U, 2U, 2U, true);
+  const auto captured = execution.snapshot();
+  ASSERT_EQ(captured.activeRequestId(), 1U);
+  ASSERT_EQ(classifyPlannerResult(
+      navigation_planning::PlannerStatus::kOptimizationFailed, false,
+      captured.commandAvailable(), false),
+      PlannerResultDisposition::RetainCommittedCommand);
+
+  auto successor = predecessor;
+  successor.goal_epoch = 2U;
+  successor.request_id = 2U;
+  successor.bundle_generation = predecessor.bundle_generation + 1U;
+  ASSERT_EQ(execution.commandCommitted(successor),
+            navigation_execution::CommitDecision::kCommitted);
+  EXPECT_EQ(execution.failClosedIfCurrentSnapshot(captured),
+            navigation_execution::ConditionalExecutionMutation::kStale);
+  EXPECT_EQ(execution.snapshot().activeRequestId(), 2U);
+  EXPECT_TRUE(execution.snapshot().commandAvailable());
+}
+
+TEST(PlannerFsm, OldDesiredRevisionOptimizationFailureIsDiscardOnly) {
+  DesiredPlanningIntent desired;
+  ASSERT_EQ(desired.advanceRevision(), 1U);
+  const auto old_goal = goal("mission", 1U, 2U, 4U);
+  desired.install(old_goal, PlanningIntentTransition::kHotRetarget);
+  const auto captured_revision = desired.revision();
+  ASSERT_EQ(desired.advanceRevision(), 2U);
+  desired.install(goal("mission", 2U, 3U, 4U),
+                  PlanningIntentTransition::kHotRetarget);
+  ASSERT_EQ(classifyPlannerResult(
+      navigation_planning::PlannerStatus::kOptimizationFailed, false,
+      true, false), PlannerResultDisposition::RetainCommittedCommand);
+  EXPECT_FALSE(desired.matches(old_goal, captured_revision));
+  EXPECT_TRUE(desired.goal().has_value());
+  EXPECT_EQ(desired.goal()->request_id, 3U);
+}
+
+PlanningKey baselineRefinementInitialKey() {
+  return {1U, 1U, 1U, 4U, 0U, 2U, 3U,
+          PlanningStartMode::kStoppedMeasuredState, 10'000'000'000LL, 5U};
+}
+
+BaselineRefinementContext baselineRefinementContext(
+    const navigation_planning::CandidateBundle& a) {
+  auto key = baselineRefinementInitialKey();
+  key.start_mode = PlanningStartMode::kCommittedFutureState;
+  key.committed_bundle_generation = a.bundle_generation;
+  key.anchor_stamp_ns = 11'000'000'000LL;
+  ExecutionLifecycleFixture execution_fixture;
+  execution_fixture.beginGoal(1U, 1U, 1U, false);
+  execution_fixture.commandCommitted(a);
+  return {key, &a, execution_fixture.snapshot(), a.world_identity, a.bundle_generation,
+          11'000'000'000LL, navigation_planning::CandidateRole::kMain,
+          false, true, true, true};
+}
+
+PlannerRenewalDecision baselineRefinementOrdinaryDecision() {
+  return classifyPlannerRenewal(false, true, false,
+      navigation_planning::CandidateRole::kMain, true, 1.0, 5.0,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS,
+      navigation_planning::PlanningTimingContract::kStitchDurationS,
+      navigation_planning::PlanningTimingContract::kPlannerPeriodS);
+}
+
+TEST(PlannerFsm, InitialBaselineAckOpensOneEarlyRefinementWithoutForcedTransition) {
+  const auto a = baselineRefinementSchedulingCandidate();
+  ASSERT_TRUE(a.valid());
+  const auto ordinary = baselineRefinementOrdinaryDecision();
+  ASSERT_FALSE(ordinary.run_optimizer);
+  BaselineRefinementOpportunity opportunity;
+  auto c = baselineRefinementContext(a);
+  EXPECT_FALSE(opportunity.ready(ordinary, c));
+  opportunity.noteAdmission(baselineRefinementInitialKey(), a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  c.backend_generation = 0U;
+  EXPECT_FALSE(opportunity.ready(ordinary, c));  // Stage is not ACK.
+  c.backend_generation = a.bundle_generation + 1U;
+  EXPECT_FALSE(opportunity.ready(ordinary, c));  // Watermark/no-op ACK is insufficient.
+  c.backend_generation = a.bundle_generation;
+  ASSERT_TRUE(opportunity.ready(ordinary, c));
+  const auto quality = withBaselineRefinement(ordinary, opportunity.ready(ordinary, c));
+  EXPECT_TRUE(quality.run_optimizer);
+  EXPECT_EQ(quality.reason, PlannerRenewalReason::kQualityRefinement);
+  EXPECT_DOUBLE_EQ(quality.remaining_main_horizon_s, ordinary.remaining_main_horizon_s);
+  EXPECT_DOUBLE_EQ(quality.required_lead_time_s, ordinary.required_lead_time_s);
+  EXPECT_TRUE(opportunity.consume(ordinary, c));
+  EXPECT_FALSE(opportunity.consume(ordinary, c));
+  EXPECT_FALSE(opportunity.ready(ordinary, c));
+}
+
+TEST(PlannerFsm, BaselineRefinementNeverRearmsFromSeedSuccessorRecoveryOrRecertification) {
+  auto a = baselineRefinementSchedulingCandidate();
+  const auto key = baselineRefinementInitialKey();
+  const auto ordinary = baselineRefinementOrdinaryDecision();
+  BaselineRefinementOpportunity opportunity;
+  opportunity.noteAdmission(key, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  ASSERT_TRUE(opportunity.consume(ordinary, baselineRefinementContext(a)));
+  ++a.world_identity.revision;
+  opportunity.noteAdmission(key, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  EXPECT_FALSE(opportunity.ready(ordinary, baselineRefinementContext(a)));
+  auto replaced_route = key;
+  ++replaced_route.route_revision;
+  opportunity.noteAdmission(replaced_route, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  auto replaced_context = baselineRefinementContext(a);
+  replaced_context.key.route_revision = replaced_route.route_revision;
+  EXPECT_FALSE(opportunity.ready(ordinary, replaced_context));
+  ++a.bundle_generation;
+  opportunity.noteAdmission(key, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, false);
+  EXPECT_FALSE(opportunity.ready(ordinary, baselineRefinementContext(a)));
+  opportunity.noteAdmission(key, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  EXPECT_FALSE(opportunity.ready(ordinary, baselineRefinementContext(a)));
+  BaselineRefinementOpportunity recovery;
+  recovery.noteAdmission(key, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, false);
+  recovery.noteAdmission(key, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  EXPECT_FALSE(recovery.ready(ordinary, baselineRefinementContext(a)));
+}
+
+TEST(PlannerFsm, BaselineRefinementRequiresExactHealthyMainOwnership) {
+  const auto a = baselineRefinementSchedulingCandidate();
+  const auto ordinary = baselineRefinementOrdinaryDecision();
+  BaselineRefinementOpportunity opportunity;
+  opportunity.noteAdmission(baselineRefinementInitialKey(), a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  const auto valid = baselineRefinementContext(a);
+  ASSERT_TRUE(opportunity.ready(ordinary, valid));
+  const auto reject = [&](BaselineRefinementContext c) {
+    EXPECT_FALSE(opportunity.ready(ordinary, c));
+    EXPECT_FALSE(opportunity.consume(ordinary, c));
+  };
+  auto c = valid; ++c.key.localization_epoch; reject(c);
+  c = valid; ++c.key.goal_epoch; reject(c);
+  c = valid; ++c.key.request_id; reject(c);
+  c = valid; ++c.key.route_revision; reject(c);
+  c = valid; ++c.key.dynamics_hash; reject(c);
+  c = valid; ++c.key.committed_bundle_generation; reject(c);
+  c = valid; ++c.key.pinned_world_generation; reject(c);
+  c = valid; ++c.key.pinned_world_revision; reject(c);
+  c = valid; ++c.world.revision; reject(c);
+  c = valid;
+  auto changed_generation =
+      std::make_shared<navigation_planning::CandidateBundle>(*c.execution.active);
+  ++changed_generation->bundle_generation;
+  c.execution.active = changed_generation;
+  reject(c);
+  c = valid;
+  auto changed_request =
+      std::make_shared<navigation_planning::CandidateBundle>(*c.execution.active);
+  ++changed_request->request_id;
+  c.execution.active = changed_request;
+  reject(c);
+  c = valid; c.execution.lifecycle.phase = ExecutionPhase::kStoppedHold; reject(c);
+  c = valid; c.execution.lifecycle.recovery = ExecutionRecoveryState::kEmergencyBrake; reject(c);
+  c = valid;
+  c.execution.lifecycle.restart = navigation_execution::ExecutionRestartRequest::kFromRest;
+  reject(c);
+  c = valid;
+  c.execution.lifecycle.safety = navigation_execution::ExecutionSafetyOwnership::kSafetySuffix;
+  reject(c);
+  c = valid;
+  c.execution.lifecycle.exposure = navigation_execution::ExecutionExposure::kFailed;
+  reject(c);
+  c = valid;
+  c.execution.lifecycle.exposure = navigation_execution::ExecutionExposure::kUnavailable;
+  reject(c);
+  c = valid; c.sampled_role = navigation_planning::CandidateRole::kBackup; reject(c);
+  c = valid; c.pending = true; reject(c);
+  c = valid; c.desired_matches_executing = false; reject(c);
+  c = valid; c.exposure_allowed = false; reject(c);
+  c = valid; c.tracking_supported = false; reject(c);
+  c = valid; c.now_ns = a.valid_until_ns + 1; reject(c);
+  ASSERT_TRUE(opportunity.ready(ordinary, valid));  // Rejected contexts did not consume.
+  // Same-G world recertification may update the revision, but the request
+  // must carry that current revision; the initial receipt is not rearmed.
+  auto recertified = a;
+  ++recertified.world_identity.revision;
+  auto refreshed = valid;
+  refreshed.active = &recertified;
+  refreshed.world = recertified.world_identity;
+  refreshed.key.pinned_world_revision = refreshed.world.revision;
+  ASSERT_TRUE(opportunity.ready(ordinary, refreshed));
+  ASSERT_TRUE(opportunity.consume(ordinary, refreshed));
+  EXPECT_FALSE(opportunity.ready(ordinary, refreshed));
+}
+
+TEST(PlannerFsm, BaselineRefinementCannotOverrideOrdinaryUrgencyOrSafetyDecisions) {
+  const auto a = baselineRefinementSchedulingCandidate();
+  const auto c = baselineRefinementContext(a);
+  BaselineRefinementOpportunity opportunity;
+  opportunity.noteAdmission(baselineRefinementInitialKey(), a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  for (const auto reason : {PlannerRenewalReason::kForcedTransition,
+                           PlannerRenewalReason::kNoCommand,
+                           PlannerRenewalReason::kSafetyRecovery,
+                           PlannerRenewalReason::kInvalidHorizon,
+                           PlannerRenewalReason::kRenewalDue}) {
+    const PlannerRenewalDecision ordinary{true, reason, 0.8, 1.0};
+    EXPECT_FALSE(opportunity.ready(ordinary, c));
+    EXPECT_EQ(withBaselineRefinement(ordinary, true).reason, reason);
+  }
+  auto ordinary = baselineRefinementOrdinaryDecision();
+  ordinary.remaining_main_horizon_s =
+      navigation_planning::PlanningTimingContract::kUrgentBaselineThresholdS;
+  EXPECT_FALSE(opportunity.ready(ordinary, c));
+  ordinary.remaining_main_horizon_s = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(opportunity.ready(ordinary, c));
 }
 
 TEST(PlannerFsm, ProductionRenewalLeadIncludesTwoForwardIntervals) {
@@ -421,6 +816,88 @@ TEST(PlannerFsm, RetainedValidationPreservesValidStateAndFailsClosedOtherwise) {
             RetainedValidationTransition::FailClosed);
 }
 
+TEST(PlannerFsm, IndeterminatePreStartPressureIsNarrowAndUsesExistingBounds) {
+  // Classification fixture only: no factory/certificate/admission is claimed.
+  navigation_planning::CandidateBundle terminal;
+  terminal.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  terminal.terminal_stop = true;
+  terminal.role = navigation_planning::CandidateRole::kMain;
+  terminal.start_wall_time_s = 1.0;
+  terminal.duration_s = 1.0;
+  terminal.declared_start_ns = 1'000'000'000LL;
+  terminal.declared_end_ns = 2'000'000'000LL;
+  terminal.valid_from_ns = terminal.declared_start_ns;
+  terminal.valid_until_ns = 1'500'000'000LL;
+  const auto classify = [&](const navigation_planning::CandidateBundle& candidate,
+                            const bool source_valid = false,
+                            const std::int64_t source = 996'000'000LL,
+                            const std::int64_t now = 1'000'000'000LL,
+                            const double raw = 0.34,
+                            const double tracking = 0.25,
+                            const double cap = 0.75) {
+    return terminalMainHasIndeterminatePreStartPressure(
+        candidate, source_valid, source, now, raw, tracking, cap);
+  };
+  EXPECT_TRUE(classify(terminal));
+  EXPECT_FALSE(classify(terminal, true));
+  EXPECT_FALSE(classify(terminal, false, 0));
+  EXPECT_FALSE(classify(terminal, false, terminal.declared_start_ns));
+  EXPECT_FALSE(classify(terminal, false, terminal.declared_start_ns + 1));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, terminal.declared_start_ns - 1));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, terminal.declared_end_ns));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, terminal.valid_until_ns + 1));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL, 0.25));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL, 0.750001));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL,
+                        std::numeric_limits<double>::quiet_NaN()));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL,
+                        std::numeric_limits<double>::infinity()));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL, 0.34, 0.0));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL, 0.34,
+                        std::numeric_limits<double>::quiet_NaN()));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL, 0.34, 0.25, 0.2));
+  auto wrong_kind = terminal;
+  wrong_kind.kind = navigation_planning::CandidateBundleKind::kEmergencyBrake;
+  EXPECT_FALSE(classify(wrong_kind));
+  auto moving_endpoint = terminal;
+  moving_endpoint.terminal_stop = false;
+  EXPECT_FALSE(classify(moving_endpoint));
+  auto with_backup = terminal;
+  with_backup.backup_available = true;
+  EXPECT_FALSE(classify(with_backup));
+  auto wrong_role = terminal;
+  wrong_role.role = navigation_planning::CandidateRole::kEmergency;
+  EXPECT_FALSE(classify(wrong_role));
+}
+
+TEST(PlannerFsm, IndeterminateSupportCannotBypassFreshnessRoleOrRecovery) {
+  const auto attempt = [](bool fresh = true, bool committed = true,
+                          bool anchor = true, bool known_free = true,
+                          bool backup = false, bool terminal = true,
+                          ExecutionRecoveryState recovery = ExecutionRecoveryState::kTrackMain,
+                          navigation_planning::CandidateRole role = navigation_planning::CandidateRole::kMain,
+                          bool validation_only = false) {
+    return measuredStateEmergencyMayReplaceCommittedCommand(
+        validation_only, false, fresh, committed, anchor, false, recovery,
+        role, false, known_free, backup, terminal, true);
+  };
+  EXPECT_TRUE(attempt());
+  EXPECT_FALSE(attempt(false));
+  EXPECT_FALSE(attempt(true, false));
+  EXPECT_FALSE(attempt(true, true, false));
+  EXPECT_FALSE(attempt(true, true, true, false));
+  EXPECT_FALSE(attempt(true, true, true, true, true));
+  EXPECT_FALSE(attempt(true, true, true, true, false, false));
+  EXPECT_FALSE(attempt(true, true, true, true, false, true,
+                       ExecutionRecoveryState::kEmergencyBrake));
+  EXPECT_FALSE(attempt(true, true, true, true, false, true,
+                       ExecutionRecoveryState::kTrackMain,
+                       navigation_planning::CandidateRole::kEmergency));
+  EXPECT_FALSE(attempt(true, true, true, true, false, true,
+                       ExecutionRecoveryState::kTrackMain,
+                       navigation_planning::CandidateRole::kMain, true));
+}
+
 TEST(PlannerFsm, EmergencyBrakeCannotBeRearmedFromADriftingEmergency) {
   EXPECT_TRUE(measuredStateEmergencyMayReplaceCommittedCommand(
       false, false, true, true, true, true,
@@ -512,6 +989,14 @@ TEST(PlannerFsm, EmergencyTerminalAltitudeUsesBoundedCertifiedAnchor) {
 }
 
 TEST(PlannerFsm, BackupAndEmergencyAreOneWayUntilCertifiedStop) {
+  EXPECT_EQ(transitionExecutionRecovery(
+                ExecutionRecoveryState::kInitialHold,
+                ExecutionRecoveryEvent::kBackupActivated),
+            ExecutionRecoveryState::kTrackBackup);
+  EXPECT_EQ(transitionExecutionRecovery(
+                ExecutionRecoveryState::kInitialHold,
+                ExecutionRecoveryEvent::kEmergencyCommitted),
+            ExecutionRecoveryState::kEmergencyBrake);
   EXPECT_FALSE(nominalPlanningAllowed(ExecutionRecoveryState::kTrackBackup));
   EXPECT_FALSE(nominalPlanningAllowed(ExecutionRecoveryState::kEmergencyBrake));
   EXPECT_EQ(transitionExecutionRecovery(
@@ -541,43 +1026,59 @@ TEST(PlannerFsm, EmergencyCertificationFailureGoesDirectlyToPx4Hold) {
 }
 
 TEST(PlannerFsm, SerializedRecoveryEventsHaveOneLinearOrder) {
-  ExecutionEpisode episode;
-  episode.beginGoal(1U, 1U, 1U, true);
+  ExecutionLifecycleFixture execution_fixture;
+  execution_fixture.beginGoal(1U, 1U, 1U, true);
+  navigation_planning::CandidateBundle active;
+  active.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  active.role = navigation_planning::CandidateRole::kMain;
+  active.localization_epoch = 1U;
+  active.goal_epoch = 1U;
+  active.request_id = 1U;
+  active.bundle_generation = 1U;
+  execution_fixture.commandCommitted(active);
   std::barrier rendezvous(3);
   std::thread backup([&] {
     rendezvous.arrive_and_wait();
-    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated);
+    execution_fixture.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated, active);
   });
   std::thread emergency([&] {
     rendezvous.arrive_and_wait();
-    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kEmergencyCommitted);
+    execution_fixture.applyRecoveryEvent(ExecutionRecoveryEvent::kEmergencyCommitted, active);
   });
   rendezvous.arrive_and_wait();
   backup.join();
   emergency.join();
 
-  const auto result = episode.snapshot().recovery_state;
+  const auto result = execution_fixture.snapshot().lifecycle.recovery;
   EXPECT_TRUE(result == ExecutionRecoveryState::kTrackBackup ||
               result == ExecutionRecoveryState::kEmergencyBrake);
 }
 
 TEST(PlannerFsm, SerializedFailClosedCannotBeResurrectedByNominalEvent) {
-  ExecutionEpisode episode;
-  episode.beginGoal(1U, 1U, 1U, true);
+  ExecutionLifecycleFixture execution_fixture;
+  execution_fixture.beginGoal(1U, 1U, 1U, true);
+  navigation_planning::CandidateBundle active;
+  active.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  active.role = navigation_planning::CandidateRole::kMain;
+  active.localization_epoch = 1U;
+  active.goal_epoch = 1U;
+  active.request_id = 1U;
+  active.bundle_generation = 1U;
+  execution_fixture.commandCommitted(active);
   std::barrier rendezvous(3);
   std::thread nominal([&] {
     rendezvous.arrive_and_wait();
-    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated);
+    execution_fixture.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated, active);
   });
   std::thread fail_closed([&] {
     rendezvous.arrive_and_wait();
-    episode.failClosed();
+    execution_fixture.failClosed();
   });
   rendezvous.arrive_and_wait();
   nominal.join();
   fail_closed.join();
 
-  EXPECT_EQ(episode.snapshot().recovery_state,
+  EXPECT_EQ(execution_fixture.snapshot().lifecycle.recovery,
             ExecutionRecoveryState::kPx4Hold);
 }
 
@@ -680,6 +1181,40 @@ TEST(PlannerFsm, PendingGoalOwnerConcurrentSupersedeKeepsNewestOnly) {
   EXPECT_EQ(pending->request_id, 12U);
 }
 
+TEST(PlannerFsm, OldTimeoutCannotClearNewPendingGoal) {
+  PendingGoalHandoffOwner owner;
+  navigation_contracts::msg::NavigationGoal active;
+  active.mission_id = "mission";
+  active.request_id = 10U;
+  active.waypoint_index = 1U;
+  active.route.route_revision = 1U;
+  auto make_goal = [](std::uint64_t request) {
+    auto next = std::make_shared<navigation_contracts::msg::NavigationGoal>();
+    next->mission_id = "mission";
+    next->request_id = request;
+    next->waypoint_index = static_cast<std::uint32_t>(request - 9U);
+    next->route.route_revision = request;
+    return std::shared_ptr<const navigation_contracts::msg::NavigationGoal>(next);
+  };
+  ASSERT_TRUE(owner.enqueueGoal(make_goal(11U), active, true));
+  const auto stale = owner.goalSnapshot();
+  std::barrier captured(2);
+  std::barrier superseded(2);
+  std::atomic_bool stale_cleared{true};
+  std::thread old_timeout([&] {
+    captured.arrive_and_wait();
+    superseded.arrive_and_wait();
+    stale_cleared.store(owner.clearIfCurrent(stale), std::memory_order_release);
+  });
+  captured.arrive_and_wait();
+  ASSERT_TRUE(owner.enqueueGoal(make_goal(12U), active, true));
+  superseded.arrive_and_wait();
+  old_timeout.join();
+  EXPECT_FALSE(stale_cleared.load(std::memory_order_acquire));
+  ASSERT_TRUE(owner.goalSnapshot());
+  EXPECT_EQ(owner.goalSnapshot()->request_id, 12U);
+}
+
 TEST(PlannerFsm, ContinuesOnlyCompletedPassThroughGoalEndpoints) {
   EXPECT_TRUE(completedPassThroughRequiresContinuation(true, true, true, true));
   EXPECT_FALSE(completedPassThroughRequiresContinuation(false, true, true, true));
@@ -774,9 +1309,9 @@ TEST(PlannerFsm, StaleCommandPublicationCannotMutateNewExecution) {
       StaleCommandPublicationDisposition::kFailClosed);
 }
 
-TEST(PlannerFsm, SuccessWithoutNewCommittedGenerationFailsClosed) {
+TEST(PlannerFsm, SuccessWithoutNewCommittedGenerationRetainsCertifiedIncumbent) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kSuccess, false, true, false),
-            PlannerResultDisposition::FailClosed);
+            PlannerResultDisposition::RetainCommittedCommand);
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kFinished, true, false, false),
             PlannerResultDisposition::FailClosed);
 }
@@ -1118,6 +1653,63 @@ TEST(PlannerFsm, MeasuredStateRestartRetainsCurrentCertifiedCommandOnSolveFailur
             PlannerResultDisposition::RetainCommittedCommand);
 }
 
+TEST(PlannerFsm, HotRetargetOptimizationFailureDoesNotRevokePredecessor) {
+  ExecutionLifecycleFixture execution;
+  execution.beginGoal(1U, 1U, 1U, false);
+  const auto predecessor = baselineRefinementSchedulingCandidate();
+  ASSERT_EQ(execution.commandCommitted(predecessor),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto before = execution.snapshot();
+  ASSERT_TRUE(before.commandAvailable());
+  ASSERT_TRUE(before.active);
+  // Desired successor N+1 can coexist with active execution N. A failed
+  // replacement is routed to the full retained-command validator, not to
+  // an immediate fail-close of N.
+  EXPECT_EQ(classifyPlannerResult(
+                navigation_planning::PlannerStatus::kOptimizationFailed,
+                false, before.commandAvailable(), false),
+            PlannerResultDisposition::RetainCommittedCommand);
+  EXPECT_EQ(execution.snapshot().active.get(), before.active.get());
+  EXPECT_TRUE(execution.snapshot().commandAvailable());
+}
+
+TEST(PlannerFsm, StoppedTimeoutNeedsCurrentDesiredAndStoppedExecution) {
+  ExecutionLifecycleFixture execution;
+  execution.beginGoal(1U, 1U, 1U, false);
+  auto terminal = baselineRefinementSchedulingCandidate();
+  terminal.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  terminal.terminal_stop = true;
+  terminal.backup_available = false;
+  ASSERT_EQ(execution.commandCommitted(terminal),
+            navigation_execution::CommitDecision::kCommitted);
+  ASSERT_TRUE(execution.applyRecoveryEvent(
+      ExecutionRecoveryEvent::kTerminalStopCompleted, terminal));
+  ASSERT_TRUE(execution.stoppedHold(terminal));
+  const auto stopped = execution.snapshot();
+  ASSERT_EQ(stopped.lifecycle.recovery, ExecutionRecoveryState::kStoppedRecovery);
+  ASSERT_TRUE(stoppedPlanningTimeoutMayFailClosed(
+      stopped.lifecycle.recovery, true, 5.1, 5.0));
+
+  DesiredPlanningIntent desired;
+  const auto desired_goal = goal("mission", 2U, 3U, 7U);
+  ASSERT_EQ(desired.advanceRevision(), 1U);
+  desired.install(desired_goal, PlanningIntentTransition::kNewIntent);
+  ASSERT_TRUE(desired.matches(desired_goal, 1U));
+  ASSERT_EQ(desired.advanceRevision(), 2U);
+  EXPECT_FALSE(desired.matches(desired_goal, 1U));
+  EXPECT_TRUE(execution.snapshot().commandAvailable());
+  // A fresh desired attempt with the exact stopped owner still permits the
+  // original timeout policy; changing desired alone does not revoke it.
+  EXPECT_EQ(execution.snapshot().active.get(), stopped.active.get());
+  EXPECT_EQ(execution.snapshot().lifecycle.recovery,
+            ExecutionRecoveryState::kStoppedRecovery);
+  desired.install(desired_goal, PlanningIntentTransition::kNewIntent);
+  ASSERT_TRUE(desired.matches(desired_goal, 2U));
+  EXPECT_EQ(execution.failClosedIfCurrentSnapshot(stopped),
+            navigation_execution::ConditionalExecutionMutation::kApplied);
+  EXPECT_TRUE(execution.snapshot().failed());
+}
+
 TEST(PlannerFsm, FailsClosedForEmergencyOrUnrecoverableFailures) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kFailed, false, false, false),
             PlannerResultDisposition::FailClosed);
@@ -1127,6 +1719,10 @@ TEST(PlannerFsm, FailsClosedForEmergencyOrUnrecoverableFailures) {
             PlannerResultDisposition::FailClosed);
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kOptimizationFailed, true, false, false),
             PlannerResultDisposition::FailClosed);
+  EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kOptimizationFailed, false, true, false),
+            PlannerResultDisposition::RetainCommittedCommand);
+  EXPECT_EQ(classifyPlannerResult(static_cast<navigation_planning::PlannerStatus>(255), false, true, false),
+            PlannerResultDisposition::RetainCommittedCommand);
 }
 
 TEST(PlannerFsm, AcceptsOnlyAContinuousValidCommittedSafetySuffix) {
@@ -1142,6 +1738,24 @@ TEST(PlannerFsm, AcceptsOnlyAContinuousValidCommittedSafetySuffix) {
       true, 1.0, 4.0, 2.0, 0.2, 0.75, false));
   EXPECT_FALSE(committedSafetySuffixIsUsable(
       true, 4.0, 4.0, 4.0, 0.2, 0.75, true));
+}
+
+TEST(PlannerFsm, CanonicalIntegerElapsedPreservesFutureAndExpirySemantics) {
+  constexpr std::int64_t start_ns = 56'092'000'000LL;
+  for (const std::int64_t offset_ns :
+       {-1LL, 0LL, 1LL, 20'000'000LL, 1'000'000'000LL, 1'000'000'001LL}) {
+    const auto elapsed_ns = navigation_common::checkedDifference(start_ns + offset_ns, start_ns);
+    ASSERT_TRUE(elapsed_ns);
+    const double elapsed_s = static_cast<double>(*elapsed_ns) * 1.0e-9;
+    EXPECT_EQ(committedSafetySuffixIsUsable(
+                  false, elapsed_s, 1.0, std::max(0.0, elapsed_s), 0.1, 0.25, true),
+              offset_ns >= 0 && offset_ns < 1'000'000'000LL);
+  }
+  EXPECT_FALSE(navigation_common::checkedDifference(
+      std::numeric_limits<std::int64_t>::min(),
+      std::numeric_limits<std::int64_t>::max()));
+  EXPECT_FALSE(committedSafetySuffixIsUsable(
+      false, std::numeric_limits<double>::infinity(), 1.0, 0.0, 0.1, 0.25, true));
 }
 
 TEST(PlannerFsm, RetainedCommandCannotConsumeUncertifiedTrackingClearance) {

@@ -72,6 +72,15 @@ class PendingGoalHandoffOwner {
     pending_goal_.reset();
   }
 
+  [[nodiscard]] bool clearIfCurrent(const GoalConstPtr& expected) {
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    if (!expected || !pending_goal_ || pending_goal_.get() != expected.get()) {
+      return false;
+    }
+    pending_goal_.reset();
+    return true;
+  }
+
  private:
   static bool goalMessageNewer(
       const navigation_contracts::msg::NavigationGoal& candidate,
@@ -110,7 +119,7 @@ inline bool canHotRetargetAtWaypointTransition(
 struct PassThroughTerminalAckFacts final {
   bool successful_terminal_status{false};
   bool status_matches_active_identity{false};
-  bool active_goal_is_pass_through{false};
+  bool desired_goal_is_pass_through{false};
   bool outgoing_route_exists{false};
   bool certified_main_command{false};
   bool certified_continuation_boundary{false};
@@ -125,7 +134,7 @@ struct PassThroughTerminalAckFacts final {
     const PassThroughTerminalAckFacts& facts) noexcept {
   return facts.successful_terminal_status &&
          facts.status_matches_active_identity &&
-         facts.active_goal_is_pass_through && facts.outgoing_route_exists &&
+         facts.desired_goal_is_pass_through && facts.outgoing_route_exists &&
          facts.certified_main_command && facts.certified_continuation_boundary &&
          facts.execution_identity_current && !facts.failure_latched &&
          !facts.safety_suffix_active && facts.command_exposure_allowed &&
@@ -224,6 +233,7 @@ enum class PlannerRenewalReason : std::uint8_t {
   kSafetyRecovery,
   kInvalidHorizon,
   kRenewalDue,
+  kQualityRefinement,
 };
 
 struct PlannerRenewalDecision {
@@ -457,11 +467,32 @@ inline RetainedValidationTransition retainedValidationTransition(bool usable) no
                 : RetainedValidationTransition::FailClosed;
 }
 
+// Classify only the activation seam of an actual terminal MAIN. A missing
+// SOURCE sample is not proof of a tracking violation; raw pressure can only
+// request independently certified recovery, never authorize continued MAIN.
+inline bool terminalMainHasIndeterminatePreStartPressure(
+    const navigation_planning::CandidateBundle& bundle,
+    const bool source_sample_valid, const std::int64_t source_ns,
+    const std::int64_t now_ns, const double raw_error_m,
+    const double tracking_limit_m, const double command_anchor_limit_m) noexcept {
+  return bundle.kind == navigation_planning::CandidateBundleKind::kTerminalStop &&
+      bundle.terminal_stop && !bundle.backup_available &&
+      bundle.role == navigation_planning::CandidateRole::kMain &&
+      bundle.hasDeclaredEndpointMetadata() && !source_sample_valid &&
+      source_ns > 0 && source_ns < bundle.declared_start_ns &&
+      now_ns >= bundle.declared_start_ns && now_ns < bundle.declared_end_ns &&
+      now_ns >= bundle.valid_from_ns && now_ns <= bundle.valid_until_ns &&
+      std::isfinite(raw_error_m) && std::isfinite(tracking_limit_m) &&
+      std::isfinite(command_anchor_limit_m) && tracking_limit_m > 0.0 &&
+      command_anchor_limit_m >= tracking_limit_m && raw_error_m > tracking_limit_m &&
+      raw_error_m <= command_anchor_limit_m;
+}
+
 // A measured-state emergency brake is a one-way transition for one recovery
-// episode. If PX4 diverges far enough that this exact brake loses its tracking
+// cycle. If PX4 diverges far enough that this exact brake loses its tracking
 // certificate, constructing another brake from the newly drifting state every
 // planner tick resets deceleration indefinitely. A later certified MAIN may
-// start a new episode; an unusable emergency must fail closed to PX4 Hold.
+// start a new recovery cycle; an unusable emergency must fail closed to PX4 Hold.
 // When the conservative projected anchor bound crosses the unchanged hard
 // limit, a fresh measured state may trigger this same one-shot brake early,
 // but only while the current state is KNOWN_FREE in the inflated map. The
@@ -476,18 +507,23 @@ inline bool measuredStateEmergencyMayReplaceCommittedCommand(
     bool projected_tracking_certificate_exceeded = false,
     bool current_vehicle_state_known_free = false,
     bool safety_trajectory_available = false,
-    bool terminal_stop = false) noexcept {
+    bool terminal_stop = false,
+    bool indeterminate_pre_start_tracking = false) noexcept {
   // Terminal STOP is intentionally not exempt here: before measured waypoint
   // acceptance it still owns the same tracking certificate as any MAIN.
-  (void)terminal_stop;
   const bool actual_anchor_recovery = !committed_suffix_usable &&
       tracking_certificate_exceeded;
   const bool projected_main_only_recovery =
       projected_tracking_certificate_exceeded && !tracking_certificate_exceeded &&
       current_vehicle_state_known_free && !safety_trajectory_available;
+  const bool indeterminate_terminal_main_recovery = terminal_stop &&
+      indeterminate_pre_start_tracking && current_vehicle_state_known_free &&
+      !safety_trajectory_available &&
+      committed_role == navigation_planning::CandidateRole::kMain;
   return !validate_without_new_commit && fresh_vehicle_state &&
          committed_command_available && command_anchor_valid &&
-         (actual_anchor_recovery || projected_main_only_recovery) &&
+         (actual_anchor_recovery || projected_main_only_recovery ||
+          indeterminate_terminal_main_recovery) &&
          recovery_state == ExecutionRecoveryState::kTrackMain &&
          committed_role != navigation_planning::CandidateRole::kEmergency;
 }
@@ -603,7 +639,7 @@ inline bool worldFreshnessSuspendedCommandMayResume(
     std::uint64_t bundle_localization_epoch,
     std::uint64_t bundle_goal_epoch,
     std::uint64_t active_localization_epoch,
-    std::uint64_t active_goal_epoch,
+    std::uint64_t executing_goal_epoch,
     std::int64_t valid_until_ns,
     std::int64_t now_ns,
     bool bundle_valid,
@@ -612,7 +648,7 @@ inline bool worldFreshnessSuspendedCommandMayResume(
   return suspended_generation != 0U &&
          recertified_generation == suspended_generation && bundle_valid &&
          bundle_localization_epoch == active_localization_epoch &&
-         bundle_goal_epoch == active_goal_epoch && valid_until_ns >= now_ns &&
+         bundle_goal_epoch == executing_goal_epoch && valid_until_ns >= now_ns &&
          !planner_failure_latched && execution_lease_allows_command;
 }
 
@@ -628,7 +664,7 @@ inline bool supersedingBundleMayRemainAvailable(
     std::uint64_t bundle_localization_epoch,
     std::uint64_t bundle_goal_epoch,
     std::uint64_t active_localization_epoch,
-    std::uint64_t active_goal_epoch,
+    std::uint64_t executing_goal_epoch,
     std::int64_t valid_until_ns,
     std::int64_t now_ns,
     bool bundle_valid,
@@ -637,7 +673,7 @@ inline bool supersedingBundleMayRemainAvailable(
   return sampled_generation != 0U &&
          current_generation >= sampled_generation && bundle_valid &&
          bundle_localization_epoch == active_localization_epoch &&
-         bundle_goal_epoch == active_goal_epoch && valid_until_ns >= now_ns &&
+         bundle_goal_epoch == executing_goal_epoch && valid_until_ns >= now_ns &&
          !planner_failure_latched && execution_lease_allows_command;
 }
 
@@ -667,40 +703,39 @@ enum class StaleCommandPublicationDisposition : std::uint8_t {
 inline PlannerResultDisposition classifyPlannerResult(
     navigation_planning::PlannerStatus result, bool plan_from_rest, bool command_available,
     bool commit_observed) {
-  if ((result == navigation_planning::PlannerStatus::kSuccess ||
-       result == navigation_planning::PlannerStatus::kFinished) && commit_observed) {
-    return PlannerResultDisposition::CommandReady;
+  using Status = navigation_planning::PlannerStatus;
+  switch (result) {
+    case Status::kSuccess:
+    case Status::kFinished:
+      if (commit_observed) return PlannerResultDisposition::CommandReady;
+      // A completed replacement without an admitted candidate did not revoke
+      // the incumbent. Validate it through the normal retained-command path.
+      if (command_available) return PlannerResultDisposition::RetainCommittedCommand;
+      return PlannerResultDisposition::FailClosed;
+    case Status::kNoNeed:
+      return command_available ? PlannerResultDisposition::ValidateRetainedCommand
+                               : PlannerResultDisposition::FailClosed;
+    case Status::kRestartFromRest:
+      return PlannerResultDisposition::RestartFromRest;
+    case Status::kFailed:
+      // HG-023 applies to every failed replacement status, including the
+      // backend's typed optimizer failure below. Retention still requires the full
+      // latest-world/anchor/suffix/lease validation in RuntimeNode.
+      if (command_available) return PlannerResultDisposition::RetainCommittedCommand;
+      return plan_from_rest ? PlannerResultDisposition::RetryFromRest
+                            : PlannerResultDisposition::FailClosed;
+    case Status::kOptimizationFailed:
+      return command_available ? PlannerResultDisposition::RetainCommittedCommand
+                               : PlannerResultDisposition::FailClosed;
+    case Status::kEmergency:
+      // The retained-command path attempts the existing one-shot measured
+      // emergency transition; it still fails closed if certification fails.
+      return command_available ? PlannerResultDisposition::RetainCommittedCommand
+                               : PlannerResultDisposition::FailClosed;
   }
-  if (result == navigation_planning::PlannerStatus::kNoNeed && command_available) {
-    return PlannerResultDisposition::ValidateRetainedCommand;
-  }
-  if (result == navigation_planning::PlannerStatus::kRestartFromRest) {
-    return PlannerResultDisposition::RestartFromRest;
-  }
-  // A failed replacement solve leaves the execution bundle untouched. This is
-  // true even when the planner has intentionally restarted from measured
-  // state: the existing immutable main-to-backup command remains the only
-  // certified source while the replacement is retried. Revalidate/retain it
-  // before applying the no-command PlanFromRest stopped-recovery deadline.
-  if (result == navigation_planning::PlannerStatus::kFailed && command_available) {
-    return PlannerResultDisposition::RetainCommittedCommand;
-  }
-  // A backend EMERGENCY result means that nominal hot replanning cannot
-  // continue. If a previously committed command still exists, route the
-  // result through the same retained-command validation and one-shot measured
-  // emergency-brake path. That path remains fail-closed when freshness,
-  // clearance, anchor, or brake certification is unavailable. Dropping
-  // directly to PX4 Hold here would skip the bounded recovery transition.
-  if (result == navigation_planning::PlannerStatus::kEmergency &&
-      command_available) {
-    return PlannerResultDisposition::RetainCommittedCommand;
-  }
-  // A failed rest-to-rest solve with no executable command is classified for
-  // retry. The runtime's existing stopped-recovery timeout and failure
-  // handling decide when retrying ends and the node fails closed.
-  if (result == navigation_planning::PlannerStatus::kFailed && plan_from_rest) {
-    return PlannerResultDisposition::RetryFromRest;
-  }
+  // An unknown future status cannot gain authority to revoke a certified
+  // incumbent by falling through a destructive default.
+  if (command_available) return PlannerResultDisposition::RetainCommittedCommand;
   return PlannerResultDisposition::FailClosed;
 }
 

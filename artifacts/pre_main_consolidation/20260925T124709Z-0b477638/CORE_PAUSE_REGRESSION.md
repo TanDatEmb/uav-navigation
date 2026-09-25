@@ -1,0 +1,5 @@
+# Core command pause regression
+
+A controlled runtime fault SIGSTOPped only the Core `navigation_runtime_node` process for 350.091 ms after waypoint 0 was accepted; mapping, PX4 adapter, simulator, and odometry stayed live. Session: `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260925T150807-150443`.
+
+Adapter trace reports `planner backend PVA command stale; safety hold then handover to PX4 Hold`, followed by the expected Hold request. A subsequent command was rejected with typed `TEMPORAL_LEASE / EXPIRED`. Odom receive age was 20 ms and `stale_state_failures=0`, isolating command publication silence. Thus the unchanged 100 ms command lease fail-close remains active. The session accepted waypoint `[0]`; its C0-SW result is NOT_EVALUABLE because the special pause session lacks the exact C0-SW witness contract. Count this only as runtime safety regression evidence, not as C0-SW eligibility. Raw scenario, report, metadata, and bag sizes/SHA256 are in `RAW_SESSION_MANIFEST.csv`.

@@ -11,6 +11,7 @@
 
 #include <navigation_planning/route_boundary.hpp>
 #include <navigation_common/time.hpp>
+#include <navigation_world_model/world_model_view.hpp>
 
 namespace navigation_planning {
 
@@ -35,6 +36,32 @@ struct CandidateRoleInterval {
   double end_time_s{0.0};
   CandidateRole role{CandidateRole::kMain};
 };
+
+struct TrajectoryValidationResult {
+  bool valid{false};
+  bool reused_unchanged_certificate{false};
+  navigation_world_model::WorldSnapshotIdentity pinned_world{};
+  navigation_world_model::WorldSnapshotIdentity validated_world{};
+  double begin_time_s{0.0};
+  double first_blocked_time_s{0.0};
+  Eigen::Vector3d first_blocked_position{Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::quiet_NaN())};
+  int first_blocked_cell_state{0};
+  int failure_code{0};
+  int blocked_role{0};
+  std::size_t sample_count{0};
+  std::size_t segment_count{0};
+  bool blocking_cell_observed{false};
+  int tube_failure_code{0};
+  int evaluated_unknown_policy{-1};
+  std::uint64_t evaluated_generation{0};
+  double unsafe_interval_end_time_s{std::numeric_limits<double>::quiet_NaN()};
+  double curve_deviation_bound_m{std::numeric_limits<double>::quiet_NaN()};
+  double curve_deviation_tolerance_m{std::numeric_limits<double>::quiet_NaN()};
+};
+
+using CandidateWorldValidator = std::function<TrajectoryValidationResult(
+    const navigation_world_model::WorldModelViewPtr&, double)>;
 
 struct CompleteBundleCertificates {
   bool dynamics{false};
@@ -99,6 +126,9 @@ struct CandidateBundle {
   std::uint64_t goal_epoch{0};
   std::uint64_t request_id{0};
   std::uint64_t bundle_generation{0};
+  // Diagnostic provenance captured from the immutable planning request when
+  // this bundle is produced. It is not used by admission or flight control.
+  std::uint64_t producer_planning_cycle_id{0};
   std::int64_t valid_from_ns{0};
   std::int64_t valid_until_ns{0};
   // Future activation is distinct from the trajectory's analytic origin. A
@@ -129,6 +159,9 @@ struct CandidateBundle {
   std::optional<CompleteCandidateQuality> quality{};
   std::optional<RouteBoundaryConstraint> route_boundary_constraint{};
   std::optional<RouteBoundaryEvent> route_boundary_event{};
+  // Immutable retained-world revalidation is part of the execution candidate
+  // so map callbacks never consult a planner's mutable committed cache.
+  CandidateWorldValidator world_validator{};
   std::function<bool(std::int64_t, TrajectoryPoint&)> evaluator;
 
   [[nodiscard]] bool roleScheduleValid() const noexcept {
@@ -264,6 +297,33 @@ struct CandidateBundle {
   [[nodiscard]] bool hasDeclaredEndpointMetadata() const noexcept {
     return std::isfinite(start_wall_time_s) && start_wall_time_s > 0.0 &&
            std::isfinite(duration_s) && duration_s >= 0.0;
+  }
+
+  [[nodiscard]] TrajectoryValidationResult validateWorld(
+      const navigation_world_model::WorldModelViewPtr& world,
+      const double authorization_wall_time_s) const noexcept {
+    TrajectoryValidationResult result;
+    result.pinned_world = pinned_world_identity;
+    result.validated_world = world ? world->identity()
+                                   : navigation_world_model::WorldSnapshotIdentity{};
+    result.evaluated_generation = bundle_generation;
+    if (!world || !valid() || !world_validator ||
+        !std::isfinite(authorization_wall_time_s)) {
+      return result;
+    }
+    try {
+      auto validated = world_validator(world, authorization_wall_time_s);
+      if (validated.evaluated_generation != 0U &&
+          validated.evaluated_generation != bundle_generation) {
+        return result;
+      }
+      validated.pinned_world = pinned_world_identity;
+      validated.validated_world = world->identity();
+      validated.evaluated_generation = bundle_generation;
+      return validated;
+    } catch (...) {
+      return result;
+    }
   }
 
   [[nodiscard]] std::optional<TrajectoryPoint> sample(std::int64_t stamp_ns) const {

@@ -460,7 +460,12 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
                 mode = "adaptive" if bool(value.get("enabled", False)) else "off"
         enabled = bool(value.get("enabled", mode != "off"))
         if "suppress_braking" not in value:
-            suppress_braking = mode == "relaxed"
+            suppress_braking = enabled and (
+                mode == "relaxed" or bool(value.get("tracking_gate_relaxed", False))
+                or zero_disabled_gate
+            )
+        if "suppress_estimator_health_response" not in value:
+            suppress_estimator_health_response = suppress_braking
         return {
             "mode": mode,
             "enabled": enabled,
@@ -572,6 +577,40 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
         return result
     result = dict(all_candidates[0][1])
     result["source"] = "+".join(name for name, _ in all_candidates)
+    runtime_configuration = metadata.get("runtime_configuration", {}) if isinstance(metadata, dict) else {}
+    if isinstance(runtime_configuration, dict):
+        witnesses: dict[str, dict[str, Any]] = {}
+        for role in ("mapping", "external_mode"):
+            record = runtime_configuration.get(role)
+            if not isinstance(record, dict) or not isinstance(record.get("effective"), dict):
+                continue
+            effective = record["effective"]
+            for key in (
+                "mode", "enabled", "suppress_braking",
+                "suppress_estimator_health_response", "velocity_only_enabled",
+                "base_m", "lateral_alpha_s", "longitudinal_beta_s",
+                "velocity_only_gain_s_inv", "velocity_only_cap_mps",
+                "velocity_only_max_acceleration_mps2", "velocity_only_max_jerk_mps3",
+                "velocity_only_max_timing_bound_s", "velocity_only_max_reference_age_s",
+                "velocity_only_output_transport_bound_s", "velocity_only_px4_consume_bound_s",
+            ):
+                if effective.get(key) != result.get(key):
+                    mismatch = dict(defaults)
+                    mismatch["source"] = f"runtime_configuration:{role}:{key}"
+                    mismatch["risk_warning"] = "Live tracking policy differs from recorded configuration."
+                    return mismatch
+            witnesses[role] = {
+                "effective": effective,
+                "source": record.get("source"),
+            }
+        if witnesses:
+            result["requested"] = {
+                key: result[key] for key in (
+                    "mode", "enabled", "suppress_braking",
+                    "suppress_estimator_health_response", "velocity_only_enabled",
+                )
+            }
+            result["effective_by_node"] = witnesses
     return result
 def _mission_waypoints_for_acceptance(
     session: Path,
@@ -3037,7 +3076,10 @@ def _navigation_mapping_summary(
         stream_names=("planning_diagnostics", "mapping_diagnostics", "diagnostics"),
     )
     result["timing_distributions"] = {**mapping_timing, **planner_timing}
-    result["output_topics"] = ["/navigation/navigation_command", "/navigation/diagnostics"]
+    result["output_topics"] = [
+        "/navigation/navigation_command", "/navigation/execution_diagnostics",
+        "/navigation/diagnostics",
+    ]
     return result
 
 
@@ -3650,19 +3692,13 @@ def _build_complete_report(session: Path, workflow: str, config_path: Path, work
     report["evaluation"] = evaluate_session(evaluation_inputs)
     evaluation_guard_reasons = _versioned_evaluation_guard(report["evaluation"])
     evaluator = report["evaluation"] if isinstance(report["evaluation"], dict) else {}
-    evaluator_eligible = evaluator.get("qualification_eligible")
-    if report.get("verdict") == "PASS" and (
-        evaluation_guard_reasons
-        or evaluator.get("assessment_status") != "PASS"
-        or evaluator_eligible is not True
-    ):
-        report["verdict"] = "FAIL"
-        report.setdefault("reasons", []).extend(evaluation_guard_reasons)
-        if evaluator.get("assessment_status") != "PASS":
-            report["reasons"].append("versioned evaluation assessment is not PASS")
-        if evaluator_eligible is not True:
-            report["reasons"].append("versioned evaluation is not qualification eligible")
-        report["reasons"] = _dedupe_reasons(report["reasons"])
+    # Runtime outcome, C0-SW eligibility, and C0-IFP eligibility are separate
+    # result domains.  In particular, an unavailable integrated-flight policy
+    # must not rewrite a completed runtime mission as FAIL.  Keep malformed
+    # evaluator output visible as a contract error without changing the
+    # runtime verdict.
+    report["runtime_verdict"] = report.get("verdict")
+    report["evaluation_contract_errors"] = evaluation_guard_reasons
     if observation_complete:
         # Observation completion is a lifecycle fact, not an acceptance
         # verdict. Preserve the evaluated stream/mission reasons so an
@@ -3676,6 +3712,46 @@ def _build_complete_report(session: Path, workflow: str, config_path: Path, work
     report["session"] = str(session.resolve())
     report["schema_version"] = 1
     report["qualification_timelines"] = _write_qualification_timelines(session)
+    software_assessment = evaluator.get("software_qualification", {})
+    integrated_assessment = evaluator
+    selected_scope = evaluation_inputs.get("metadata", {}).get("qualification_scope")
+    report["qualification_scope"] = selected_scope
+    report["software_qualification"] = {
+        "qualification_scope": "C0_SW",
+        "assessment_status": software_assessment.get("assessment_status"),
+        "software_qualification_eligible": (
+            software_assessment.get("software_qualification_eligible") is True),
+        "blocking_reasons": list(software_assessment.get("blocking_reasons", [])),
+    } if isinstance(software_assessment, dict) else {
+        "qualification_scope": "C0_SW",
+        "assessment_status": "NOT_EVALUABLE",
+        "software_qualification_eligible": False,
+        "blocking_reasons": ["SOFTWARE_ASSESSMENT_MISSING"],
+    }
+    report["integrated_flight_qualification"] = {
+        "qualification_scope": "C0_IFP",
+        "assessment_status": integrated_assessment.get("assessment_status"),
+        "integrated_flight_qualification_eligible": (
+            integrated_assessment.get("integrated_flight_qualification_eligible") is True),
+        "blocking_reasons": list(integrated_assessment.get("blocking_reasons", [])),
+    }
+    evidence_status = integrated_assessment.get("evidence_status")
+    report["single_session_evidence_completeness"] = {
+        "assessment_status": evidence_status or "INCOMPLETE",
+        "complete": evidence_status == "COMPLETE",
+        "blocking_reasons": list(
+            integrated_assessment.get("completeness", {}).get("reasons", [])),
+    }
+    report["multi_run_qualification"] = {
+        "assessment_status": "NOT_EVALUABLE",
+        "eligible": False,
+        "blocking_reasons": ["MULTI_RUN_AGGREGATION_NOT_PERFORMED"],
+    }
+    report["software_qualification_eligible"] = bool(
+        isinstance(software_assessment, dict) and
+        software_assessment.get("software_qualification_eligible") is True)
+    report["integrated_flight_qualification_eligible"] = (
+        evaluator.get("integrated_flight_qualification_eligible") is True)
     # Timeline serialization is deliberately weaker than qualification. The
     # repeated PASS/infrastructure-valid speed/seed matrix is not aggregated
     # by this single-session report, so never infer eligibility from buckets.

@@ -1,0 +1,22 @@
+{
+  "applied": true,
+  "command": [
+    "python3",
+    "tools/runtime/run_state_transport_cohort.py",
+    "--count",
+    "1",
+    "--label",
+    "qpst-core-pause",
+    "--gazebo-native-diagnostic",
+    "--output",
+    "/home/letandat/Dev/uav-navigation-product-stability-20260924/.artifacts/runtime/qpst-core-pause-index.json"
+  ],
+  "core_pid": 81674,
+  "pause_duration_ms": 350.149941,
+  "pause_end_steady_ns": 4418697548781,
+  "pause_start_steady_ns": 4418347398840,
+  "pause_start_wall_ns": 1790262699150037550,
+  "runner_exit_code": 0,
+  "session": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T151057-79276",
+  "trigger_request_id": 2
+}

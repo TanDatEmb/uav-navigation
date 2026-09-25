@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <optional>
 
-#include <navigation_execution/committed_bundle_store.hpp>
+#include <navigation_execution/execution_authority.hpp>
 
 namespace navigation_execution {
 
@@ -37,7 +37,7 @@ struct SampleResult {
 // execution timeline is the sole activation owner.
 class CommandSampler final {
  public:
-  explicit CommandSampler(const CommittedBundleStore& store) : store_(store) {}
+  explicit CommandSampler(const ExecutionAuthority& store) : store_(store) {}
 
   [[nodiscard]] SampleResult sample(
       std::int64_t stamp_ns,
@@ -108,7 +108,7 @@ class CommandSampler final {
     }
   }
 
-  const CommittedBundleStore& store_;
+  const ExecutionAuthority& store_;
 };
 
 }  // namespace navigation_execution

@@ -302,6 +302,10 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.propagated_odometry_maximum_correction_age_s =
       node.declare_parameter<double>(
           "propagated_odometry.maximum_correction_age_s", 0.50);
+  // Explicit diagnostic-only override must be declared before the strict
+  // unknown-parameter audit. It is consumed by the publisher, not the
+  // estimator profile or any health/admission decision.
+  node.declare_parameter<bool>("diagnostics.state_transport_trace_enabled", false);
   const auto& overrides =
       node.get_node_parameters_interface()->get_parameter_overrides();
   for (const auto& [name, unused_value] : overrides) {

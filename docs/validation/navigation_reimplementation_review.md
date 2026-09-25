@@ -216,8 +216,9 @@ invalidation, CIRI budget, A* workspace/frontier, route-reference coupling,
 zero-length CIRI seed, off-tube certificate false-reject, main-only known-free
 false-reject, propagated enable switch và SITL preflight. Mỗi thay đổi
 safety/runtime tương ứng đã được ghi trong
-`docs/architecture/runtime_safety_decision_ledger.md` với owner, impact,
-evidence, removal condition và command.
+`docs/safety/runtime_safety_current.md` với owner, impact, evidence, removal
+condition và command; tra cứu lịch sử có mục tiêu qua
+`docs/safety/runtime_safety_index.md`.
 
 Không được đóng đánh giá khi còn một mục P0/P1 chỉ có unit evidence, chưa có
 artifact provenance hoặc chưa truy vết được lỗi về source/test/scenario. Không

@@ -65,12 +65,14 @@ PRODUCT_TEST_PACKAGES: tuple[str, ...] = (
     "navigation_contracts",
     "rog_map_vendor",
     "navigation_mapping",
+    "navigation_mission",
     "navigation_execution",
     "navigation_runtime",
     "navigation_planning",
     "navigation_planning_backend",
     "px4_navigation_external_mode",
     "px4_odometry_bridge",
+    "uav_description",
     "uav_simulation",
 )
 # `make build` is a product build, not a workspace-wide discovery build. The
@@ -220,6 +222,12 @@ def _main_unlocked() -> int:
             PARALLEL_WORKERS,
             "--executor",
             "sequential",
+            # Re-run CMake for every package so imported targets from the ROS
+            # underlay cannot retain absolute paths to libraries that were
+            # replaced by a package upgrade (for example Fast-CDR 2.2.7 ->
+            # 2.2.8).  Reusing the generated build graph in that situation
+            # fails before the linker is invoked.
+            "--cmake-force-configure",
             "--cmake-args",
             f"-DCMAKE_BUILD_TYPE={spec['build_type']}",
         ]

@@ -8,6 +8,8 @@ RUNTIME = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME))
 
 from evaluation import (
+    SourceTimestampPolicy,
+    _source_time_status,
     build_execution_segments,
     build_evidence_contract,
     evaluate_motion_quality,
@@ -15,6 +17,7 @@ from evaluation import (
     evaluate_timing,
     load_evaluation_inputs,
     reduce_lifecycle,
+    reduce_world_transactions,
 )
 
 
@@ -106,6 +109,8 @@ def inputs(commands, truth_rows, **scenario_overrides):
             "min_coverage_ratio": 0.75,
             "max_uncovered_interval_s": 0.30,
             "max_pairing_gap_s": 1.0,
+            "version": "synthetic-v1",
+            "provenance": "synthetic_test_policy",
         },
         "tracking_acceptance_policy": {
             "position_error_p95_max_m": 0.10,
@@ -113,6 +118,7 @@ def inputs(commands, truth_rows, **scenario_overrides):
             "velocity_error_p95_max_mps": 0.20,
             "velocity_error_max_mps": 0.35,
             "provenance": "synthetic_test_policy",
+            "version": "synthetic-v1",
         },
         "evaluation_window": {
             "start_ns": min((item["source_stamp_ns"] for item in commands), default=1_000_000_000),
@@ -148,6 +154,201 @@ def complete_writer_stats(categories):
 
 
 class EvaluationTest(unittest.TestCase):
+    def test_world_transaction_reducer_uses_exact_identity_and_writer_accounting(self):
+        event = {
+            "producer_runtime_instance_id": "runtime-a",
+            "producer_event_sequence": "2",
+            "event_kind": "WORLD_COMMAND_SUSPENDED",
+            "disposition": "SUSPENDED_SOURCE_STALE",
+            "transaction_key": "8:3:4:12:900",
+            "prior_world_localization_epoch": "3",
+            "prior_world_generation": "4",
+            "prior_world_revision": "11",
+            "prior_world_source_stamp_ns": "800",
+            "next_world_localization_epoch": "3",
+            "next_world_generation": "4",
+            "next_world_revision": "12",
+            "next_world_source_stamp_ns": "900",
+            "before_timeline_version": "8",
+            "after_timeline_version": "9",
+            "before_active_generation": "7",
+            "before_active_goal_epoch": "9",
+            "before_active_request_id": "11",
+            "after_active_generation": "7",
+            "after_active_goal_epoch": "9",
+            "after_active_request_id": "11",
+            "before_pending_generation": "0",
+            "after_pending_generation": "0",
+        }
+        writer = {
+            "records_by_category": {
+                "world_transaction": {
+                    "submitted_records": 1, "accepted_records": 1,
+                    "written_records": 1, "dropped_records": 0,
+                },
+                "world_transaction_producer_count": {
+                    "submitted_records": 1, "accepted_records": 1,
+                    "written_records": 1, "dropped_records": 0,
+                },
+            },
+            "serialization_error_count": 0,
+            "write_error_count": 0,
+        }
+        reduced = reduce_world_transactions(
+            [event], [{"producer_runtime_instance_id": "runtime-a",
+                       "events_produced": 2}], writer, required=True,
+            expected_event_kinds=["WORLD_COMMAND_SUSPENDED"],
+            expected_transaction_count=1,
+        )
+        self.assertEqual(reduced["status"], "RESOLVED")
+        self.assertEqual(reduced["required_world_transactions"], 1)
+        self.assertEqual(reduced["required_world_events_written"], 1)
+
+    def test_world_transaction_reducer_rejects_conflicting_sequence_and_loss(self):
+        base = {
+            "producer_runtime_instance_id": "runtime-a",
+            "producer_event_sequence": "1",
+            "event_kind": "WORLD_PUBLICATION_COMMITTED",
+            "disposition": "COMMITTED",
+            "transaction_key": "8:3:4:12:900",
+            "next_world_localization_epoch": "3",
+            "next_world_generation": "4",
+            "next_world_revision": "12",
+            "next_world_source_stamp_ns": "900",
+            "before_timeline_version": "8",
+            "after_timeline_version": "9",
+            "before_active_generation": "0",
+            "after_active_generation": "0",
+            "before_pending_generation": "0",
+            "after_pending_generation": "0",
+        }
+        conflicting = {**base, "disposition": "ACTIVE_INVALIDATED"}
+        writer = {
+            "records_by_category": {"world_transaction": {
+                "submitted_records": 2, "accepted_records": 1,
+                "written_records": 1, "dropped_records": 1,
+            }},
+            "serialization_error_count": 0,
+            "write_error_count": 0,
+        }
+        reduced = reduce_world_transactions(
+            [base, conflicting], [{"producer_runtime_instance_id": "runtime-a",
+                                  "events_produced": 1}], writer,
+            required=True,
+            expected_event_kinds=["WORLD_PUBLICATION_COMMITTED"],
+            expected_transaction_count=1,
+        )
+        self.assertEqual(reduced["status"], "CONFLICTING")
+        self.assertEqual(reduced["required_world_conflicts"], 1)
+        self.assertGreater(reduced["required_world_unresolved"], 0)
+
+    def test_session_world_requirements_override_nonempty_report_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)
+            (session / "scenario_config.yaml").write_text(
+                "scenario:\n"
+                "  world_evidence_required: true\n"
+                "  required_world_event_kinds: [WORLD_COMMAND_SUSPENDED]\n"
+                "  required_world_transactions: 1\n",
+                encoding="utf-8",
+            )
+            (session / "scenario.json").write_text("{}\n", encoding="utf-8")
+            (session / "metadata.json").write_text("{}\n", encoding="utf-8")
+            (session / "monitor.json").write_text("{}\n", encoding="utf-8")
+            (session / "scenario.jsonl").write_text("", encoding="utf-8")
+            (session / "samples.jsonl").write_text("", encoding="utf-8")
+
+            loaded = load_evaluation_inputs(session, {
+                "scenario": {"map_profile": "long_featured"},
+                "evaluation": {"tracking_coverage_policy": {"version": "fixture"}},
+            })
+
+        self.assertTrue(loaded["world_evidence_required"])
+        self.assertEqual(
+            loaded["world_transaction_reduction"]["required_world_transactions"], 1
+        )
+        self.assertGreater(
+            loaded["world_transaction_reduction"]["required_world_unresolved"], 0
+        )
+        self.assertEqual(loaded["config"]["scenario"]["map_profile"], "long_featured")
+        self.assertEqual(
+            loaded["config"]["evaluation"]["tracking_coverage_policy"]["version"],
+            "fixture",
+        )
+
+    def test_world_transaction_reducer_rejects_sequence_holes_and_missing_count_writer(self):
+        base = {
+            "producer_runtime_instance_id": "runtime-a",
+            "event_kind": "WORLD_PUBLICATION_COMMITTED",
+            "disposition": "COMMITTED",
+            "transaction_key": "8:3:4:12:900",
+            "next_world_localization_epoch": "3",
+            "next_world_generation": "4",
+            "next_world_revision": "12",
+            "next_world_source_stamp_ns": "900",
+            "before_timeline_version": "8",
+            "after_timeline_version": "9",
+            "before_active_generation": "0",
+            "after_active_generation": "0",
+            "before_pending_generation": "0",
+            "after_pending_generation": "0",
+        }
+        events = [
+            {**base, "producer_event_sequence": "4"},
+            {**base, "producer_event_sequence": "6",
+             "transaction_key": "9:3:4:13:901",
+             "before_timeline_version": "9",
+             "next_world_revision": "13",
+             "next_world_source_stamp_ns": "901"},
+        ]
+        categories = {
+            "world_transaction": {
+                "submitted_records": 2, "accepted_records": 2,
+                "written_records": 2, "dropped_records": 0,
+            },
+        }
+        writer = {
+            "records_by_category": categories,
+            "serialization_error_count": 0,
+            "write_error_count": 0,
+        }
+        reduced = reduce_world_transactions(
+            events, [{"producer_runtime_instance_id": "runtime-a",
+                      "events_produced": 7}], writer, required=True,
+            expected_event_kinds=["WORLD_PUBLICATION_COMMITTED"],
+            expected_transaction_count=2,
+        )
+        self.assertEqual(reduced["status"], "INCOMPLETE")
+        reasons = {item["reason"] for item in reduced["unresolved"]}
+        self.assertIn("WORLD_PRODUCER_SEQUENCE_GAP", reasons)
+        self.assertIn("WORLD_EVENT_TAIL_MISSING", reasons)
+        self.assertIn("WORLD_WRITER_CATEGORY_ACCOUNTING_MISSING", reasons)
+
+    def test_source_timestamp_policy_distinguishes_duplicate_and_regression(self):
+        rows = [truth(stamp, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+                for stamp in (1_000_000_000, 1_000_000_000)]
+        self.assertIn("SOURCE_TIMESTAMP_DUPLICATE", _source_time_status(
+            rows, policy=SourceTimestampPolicy.STRICTLY_INCREASING)[1])
+        self.assertEqual(_source_time_status(
+            rows, policy=SourceTimestampPolicy.NON_DECREASING), (True, []))
+        with self.assertRaises(ValueError):
+            _source_time_status(
+                rows, policy=SourceTimestampPolicy.DUPLICATES_ALLOWED_FOR_HEARTBEAT)
+        rows[-1]["source_stamp_ns"] -= 1
+        self.assertIn("SOURCE_TIMESTAMP_REGRESSION", _source_time_status(
+            rows, policy=SourceTimestampPolicy.NON_DECREASING)[1])
+
+    def test_evaluation_schema_records_stream_timestamp_policy(self):
+        result = evaluate_session(inputs(
+            [pva(1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))],
+            [truth(1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))],
+        ))
+        self.assertEqual(result["schema_version"], 2)
+        self.assertEqual(result["source_timestamp_policies"]["navigation_command"],
+                         "DUPLICATES_ALLOWED_FOR_HEARTBEAT")
+        self.assertEqual(result["source_timestamp_policies"]["ground_truth_odometry"],
+                         "STRICTLY_INCREASING")
+
     @staticmethod
     def _lifecycle(*, request=1, bundle=4, cycle=9, sample=11, disposition=None):
         common = {
@@ -377,6 +578,51 @@ class EvaluationTest(unittest.TestCase):
             result["dimensions"]["tracking"]["reasons"],
         )
 
+    def test_identical_command_heartbeat_same_source_tick_is_counted_once(self):
+        first = pva(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+        repeated = dict(first, sample_id=first["sample_id"] + 1)
+        last = pva(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+        result = evaluate_session(inputs([first, repeated, last], [
+            truth(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            truth(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        ]))
+        self.assertEqual(result["tracking_reference_accounting"], {
+            "raw_command_count": 3,
+            "canonical_source_tick_count": 2,
+            "exact_heartbeat_collapse_count": 1,
+        })
+        self.assertNotIn("SOURCE_TIMESTAMP_DUPLICATE",
+                         result["dimensions"]["tracking"]["reasons"])
+
+    def test_conflicting_command_same_source_tick_remains_not_evaluable(self):
+        first = pva(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+        conflicting = dict(first, sample_id=first["sample_id"] + 1,
+                           position=[0.5, 0.0, 0.0])
+        last = pva(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+        result = evaluate_session(inputs([first, conflicting, last], [
+            truth(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            truth(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        ]))
+        self.assertIn("SOURCE_TIMESTAMP_DUPLICATE_CONFLICT",
+                      result["dimensions"]["tracking"]["reasons"])
+        self.assertEqual(result["tracking_reference_accounting"]["exact_heartbeat_collapse_count"], 0)
+
+    def test_same_source_tick_new_world_certificate_is_not_a_heartbeat(self):
+        first = dict(pva(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+                     world_generation=2, world_revision=194)
+        changed = dict(first, sample_id=first["sample_id"] + 1,
+                       world_revision=195)
+        last = dict(pva(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+                    world_generation=2, world_revision=195)
+        result = evaluate_session(inputs([first, changed, last], [
+            truth(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            truth(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        ]))
+        self.assertIn("SOURCE_TIMESTAMP_DUPLICATE_CONFLICT",
+                      result["dimensions"]["tracking"]["reasons"])
+        self.assertEqual(result["tracking_reference_accounting"][
+            "exact_heartbeat_collapse_count"], 0)
+
     def test_tracking_without_acceptance_policy_is_not_evaluable(self):
         commands = [
             pva(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
@@ -394,6 +640,23 @@ class EvaluationTest(unittest.TestCase):
         self.assertIn(
             "TRACKING_ACCEPTANCE_POLICY_UNAVAILABLE", result["blocking_reasons"]
         )
+
+    def test_unversioned_tracking_policies_are_not_qualification_authority(self):
+        data = inputs(
+            [pva(1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+             pva(2_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))],
+            [truth(1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+             truth(2_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))],
+        )
+        data["tracking_coverage_policy"].pop("version")
+        coverage = evaluate_session(data)
+        self.assertIn("TRACKING_COVERAGE_POLICY_VERSION_MISSING",
+                      coverage["blocking_reasons"])
+        data["tracking_coverage_policy"]["version"] = "synthetic-v1"
+        data["tracking_acceptance_policy"].pop("version")
+        acceptance = evaluate_session(data)
+        self.assertIn("TRACKING_ACCEPTANCE_POLICY_VERSION_MISSING",
+                      acceptance["blocking_reasons"])
 
     def test_requested_speed_outside_c0_is_ineligible(self):
         result = evaluate_session(inputs([], [], requested_cruise_speed_mps=8.0))
@@ -878,6 +1141,16 @@ class EvaluationTest(unittest.TestCase):
         reduced = reduce_lifecycle(events)
         self.assertEqual(reduced["status"], "INCOMPLETE")
         self.assertIn("LIFECYCLE_PHASE_INCOMPLETE:request", reduced["reasons"])
+        self.assertEqual(reduced["unbound_events"][0]["reason"],
+                         "REQUEST_CYCLE_UNAVAILABLE")
+
+    def test_orphan_activation_remains_a_qualification_gap(self):
+        event = dict(self._lifecycle()[3], bundle_owner_cycle_id=None,
+                     bundle_generation=99)
+        reduced = reduce_lifecycle([event])
+        self.assertEqual(reduced["status"], "INCOMPLETE")
+        self.assertIn("ACTIVATION_OWNER_UNRESOLVED", reduced["reasons"])
+        self.assertEqual(reduced["unbound_events"][0]["bundle_generation"], 99)
 
     def test_incomplete_transaction_is_not_hidden_by_a_valid_transaction(self):
         valid = self._lifecycle(request=1, bundle=4, cycle=9, sample=11)
@@ -886,6 +1159,13 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(reduced["valid_transaction_count"], 1)
         self.assertEqual(reduced["status"], "INCOMPLETE")
         self.assertTrue(reduced["unresolved"])
+
+    def test_request_only_missing_bundle_is_not_a_conflicting_bundle(self):
+        reduced = reduce_lifecycle(self._lifecycle()[:1])
+        self.assertIn("BUNDLE_IDENTITY_MISSING", reduced["reasons"])
+        self.assertNotIn("BUNDLE_IDENTITY_CONFLICT", reduced["reasons"])
+        self.assertEqual(reduced["transactions"][0]["evidence_outcome"],
+                         "MISSING_EVIDENCE")
 
     def test_multiple_adapter_updates_keep_each_trace_sequence(self):
         events = self._lifecycle(sample=11)
@@ -954,7 +1234,19 @@ class EvaluationTest(unittest.TestCase):
         events[0]["disposition"] = "PUBLISHED"
         reduced = reduce_lifecycle(events)
         self.assertEqual(reduced["transactions"][0]["status"], "VALID_REJECT")
+        self.assertEqual(reduced["transactions"][0]["evidence_outcome"],
+                         "INTENTIONALLY_ABSENT")
         self.assertEqual(reduced["valid_transaction_count"], 0)
+
+    def test_superseded_requires_explicit_producer_disposition(self):
+        events = self._lifecycle()
+        events[0]["disposition"] = "SUPERSEDED"
+        reduced = reduce_lifecycle(events[:1])
+        self.assertEqual(reduced["transactions"][0]["evidence_outcome"],
+                         "SUPERSEDED")
+        incomplete = reduce_lifecycle(self._lifecycle()[:-1])
+        self.assertEqual(incomplete["transactions"][0]["evidence_outcome"],
+                         "MISSING_EVIDENCE")
 
     def test_conflicting_dispositions_are_not_resolved_by_last_value(self):
         events = self._lifecycle()
@@ -962,6 +1254,8 @@ class EvaluationTest(unittest.TestCase):
         reduced = reduce_lifecycle(events + [duplicate])
         self.assertEqual(reduced["status"], "CONFLICTING")
         self.assertIn("CONFLICTING_EVIDENCE", reduced["reasons"])
+        self.assertEqual(reduced["transactions"][0]["evidence_outcome"],
+                         "CONFLICTING_EVIDENCE")
 
     def test_duplicate_authorization_world_conflict_is_order_independent(self):
         events = self._lifecycle()

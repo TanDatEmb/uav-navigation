@@ -15,6 +15,7 @@ import json
 import math
 from pathlib import Path
 from typing import Any
+from command_diagnostics import join_execution_diagnostics
 
 
 FIELDS = [
@@ -226,6 +227,7 @@ def attach_trace_context(rows: list[dict[str, Any]], trace_rows: list[dict[str, 
 def analyze(root: Path) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
     sample_rows = read_jsonl(root / "samples.jsonl")
     scenario_rows = read_jsonl(root / "scenario.jsonl")
+    join_execution_diagnostics(scenario_rows)
     trace_rows = traces(sample_rows)
     command_rows = commands(scenario_rows)
     # One command record is emitted for every transport sample, while the

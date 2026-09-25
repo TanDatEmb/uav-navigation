@@ -2,6 +2,9 @@ std_msgs/Header header
 
 uint64 localization_epoch
 uint64 goal_epoch
+# PX4 External Mode activation that this Core command is authorized for.
+# A prior activation's still-live command cannot be replayed after reentry.
+uint64 mode_activation_id
 string mission_id
 uint32 waypoint_index
 uint64 request_id
@@ -35,8 +38,6 @@ uint8 STATUS_REJECTED=4
 uint8 STATUS_HANDOVER=5
 uint8 status
 
-uint16 reason_code
-
 geometry_msgs/Point position
 geometry_msgs/Vector3 velocity
 geometry_msgs/Vector3 acceleration
@@ -46,69 +47,14 @@ float64 yaw
 float64 yaw_rate
 float64 trajectory_time_s
 
-# Diagnostic-only execution evidence. These fields do not participate in
-# command admission or PX4 control; they preserve the sampled polynomial role
-# and recovery context before the transport-facing role is classified.
-uint8 ANALYTIC_ROLE_UNKNOWN=255
-uint8 analytic_sample_role
-bool backup_available
-float64 backup_start_time_s
-float64 time_to_backup_start_s
-bool safety_suffix_active
-uint8 execution_recovery_state
-float64 anchor_error_m
-float64 projected_anchor_error_m
-float64 retained_tracking_limit_m
-float64 relative_anchor_speed_mps
-bool committed_suffix_usable
-bool sampled_path_clear
-bool tracking_certificate_exceeded
-bool projected_tracking_certificate_exceeded
+# These two fields are current velocity-only emergency authorization inputs.
+# They remain on the control wire even though the other execution trace fields
+# moved to NavigationExecutionDiagnostics.
 uint8 EMERGENCY_AUTHORIZATION_NONE=0
 uint8 EMERGENCY_AUTHORIZATION_ACTUAL_ANCHOR_CERTIFICATE_EXCEEDED=1
 uint8 EMERGENCY_AUTHORIZATION_PROJECTED_MAIN_ONLY_CERTIFICATE_EXCEEDED=2
 uint8 EMERGENCY_AUTHORIZATION_OTHER_INVALID=3
+# Independent brake attempt, not an actual/projected tracking violation witness.
+uint8 EMERGENCY_AUTHORIZATION_INDETERMINATE_PRE_START_TRACKING=4
 uint8 emergency_authorization_reason
-uint64 causal_planning_cycle_id
-uint64 causal_timestamp_ns
 uint8 emergency_candidate_commit_result
-
-# Producer-owned witness set only at the final execution-store publication
-# boundary. A receiver-side shape/freshness check must not synthesize this
-# decision when the field is unspecified.
-uint8 EXECUTION_AUTHORIZATION_UNSPECIFIED=0
-uint8 EXECUTION_AUTHORIZATION_GRANTED=1
-uint8 EXECUTION_AUTHORIZATION_REJECTED=2
-uint8 execution_authorization
-uint64 execution_authorization_steady_ns
-
-# Temporal-alignment evidence. These fields are diagnostic-only and are not
-# consumed by command admission, recovery, or PX4 control.
-uint64 evaluation_now_ns
-uint64 execution_state_source_stamp_ns
-uint64 execution_state_receive_stamp_ns
-float64 execution_state_source_age_ms
-float64 execution_state_receive_age_ms
-uint64 committed_bundle_start_stamp_ns
-geometry_msgs/Point measured_position_at_state_source
-geometry_msgs/Vector3 measured_velocity_at_state_source
-geometry_msgs/Point committed_command_position_at_now
-geometry_msgs/Vector3 committed_command_velocity_at_now
-geometry_msgs/Point committed_command_position_at_state_source
-geometry_msgs/Vector3 committed_command_velocity_at_state_source
-float64 anchor_error_raw_m
-float64 anchor_error_time_aligned_m
-float64 command_motion_over_state_age_m
-float64 velocity_residual_time_aligned_mps
-float64 retained_elapsed_s
-float64 committed_bundle_duration_s
-float64 committed_safety_transition_time_s
-bool retained_validate_without_new_commit
-bool retained_fresh_vehicle_state
-bool retained_committed_command_available
-bool retained_command_anchor_valid
-bool current_vehicle_state_known_free
-bool retained_safety_trajectory_available
-bool retained_terminal_stop
-int8 retained_committed_role
-uint8 retained_recovery_state_before

@@ -11,6 +11,7 @@
 #include <data_structure/exp_traj.h>
 #include <data_structure/backup_traj.h>
 #include <data_structure/base/trajectory.h>
+#include <navigation_common/time.hpp>
 #include <navigation_world_model/world_model_view.hpp>
 #include <utils/geometry/polynomial_state_roundoff.hpp>
 #include <algorithm>
@@ -165,6 +166,22 @@ namespace navigation_planning_backend {
         std::vector<CandidateRoleInterval> role_intervals_{};
         CommandCertificate certificate_{};
         CommitDiagnostics commit_diagnostics_{};
+
+        // Match the checked nanosecond START exported to execution. Independently
+        // rounded absolute seconds may differ for the same clock tick. Metadata
+        // must describe the positional polynomial we actually store; it cannot
+        // conceal an older origin within the legacy structural tolerance.
+        static std::optional<navigation_common::TimestampNs> candidateStartStampNs(
+                const CandidateCommandBundle& candidate) noexcept {
+            const auto declared_start = navigation_common::secondsToNanoseconds(
+                candidate.start_wall_time);
+            const auto position_start = navigation_common::secondsToNanoseconds(
+                candidate.position.start_WT);
+            if (!declared_start || !position_start || *declared_start != *position_start) {
+                return std::nullopt;
+            }
+            return position_start;
+        }
 
         static bool trajectoryFinite(const Trajectory &trajectory) {
             if (trajectory.empty() || !std::isfinite(trajectory.start_WT) ||
@@ -361,7 +378,8 @@ namespace navigation_planning_backend {
         bool commitCandidate(CandidateCommandBundle&& candidate,
                              const CommandCertificate& certificate,
                              const std::uint64_t requested_generation = 0U) {
-            if (!trajectoryFinite(candidate.position) ||
+            const auto candidate_start_ns = candidateStartStampNs(candidate);
+            if (!candidate_start_ns || !trajectoryFinite(candidate.position) ||
                 !trajectoryFinite(candidate.yaw) ||
                 std::abs(candidate.position.start_WT - candidate.yaw.start_WT) >
                     1.0e-6 || candidate.roles.empty()) {
@@ -410,8 +428,11 @@ namespace navigation_planning_backend {
             // command trajectory time jump forward at the generation switch.
             // Reject transactionally; never rebase historical polynomials or
             // mutate the current bundle/history to conceal the regression.
-            if (!flag_empty_ && candidate.start_wall_time < start_WT_) {
-                return false;
+            if (!flag_empty_) {
+                const auto previous_start_ns = navigation_common::secondsToNanoseconds(start_WT_);
+                if (!previous_start_ns || *candidate_start_ns < *previous_start_ns) {
+                    return false;
+                }
             }
             // PVAJ/yaw handoff admission belongs to the execution boundary,
             // which compares the candidate against the exact immutable bundle
@@ -509,8 +530,12 @@ namespace navigation_planning_backend {
 
         [[nodiscard]] bool canCommitCandidate(
                 const CandidateCommandBundle& candidate) const {
+            const auto candidate_start_ns = candidateStartStampNs(candidate);
+            if (!candidate_start_ns) return false;
             LOCK_G
-            return flag_empty_ || candidate.start_wall_time >= start_WT_;
+            const auto previous_start_ns = navigation_common::secondsToNanoseconds(start_WT_);
+            return flag_empty_ ||
+                (previous_start_ns && *candidate_start_ns >= *previous_start_ns);
         }
 
         [[nodiscard]] std::uint64_t nextGeneration() const {
