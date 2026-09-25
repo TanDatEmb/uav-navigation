@@ -6,11 +6,11 @@ parity and the source review remain separate gates.
 """
 
 from pathlib import Path
+import argparse
 import subprocess
 import sys
 
 
-BASE = "0b477638d21ce60cdb42ed85fb7c2d568bf500ed"
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_PRODUCT: set[str] = set()
 
@@ -19,8 +19,31 @@ def git(*args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=ROOT, text=True)
 
 
+def validate_base(base: str) -> bool:
+    available = subprocess.run(
+        ["git", "cat-file", "-e", f"{base}^{{commit}}"],
+        cwd=ROOT, text=True, capture_output=True, check=False,
+    )
+    if available.returncode != 0:
+        print(f"SCOPE_BASE_UNAVAILABLE: {base}")
+        return False
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base, "HEAD"],
+        cwd=ROOT, text=True, capture_output=True, check=False,
+    )
+    if ancestor.returncode != 0:
+        print(f"SCOPE_BASE_INVALID: {base} is not an ancestor of HEAD")
+        return False
+    return True
+
+
 def main() -> int:
-    changed = set(git("diff", "--name-only", BASE).splitlines())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", required=True, help="explicit reachable pre-merge baseline commit")
+    args = parser.parse_args()
+    if not validate_base(args.base):
+        return 2
+    changed = set(git("diff", "--name-only", args.base).splitlines())
     changed.update(git("ls-files", "--others", "--exclude-standard").splitlines())
     unexpected = sorted(
         path for path in changed if path.startswith("src/") and

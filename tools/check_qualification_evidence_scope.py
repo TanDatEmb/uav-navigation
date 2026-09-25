@@ -6,14 +6,11 @@ source at the entry SHA must remain byte-identical, including uncommitted work.
 """
 
 from pathlib import Path
+import argparse
 import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-# The pre-main integration campaign freezes the already-approved architecture
-# at the incoming World milestone.  Historical evidence-cut commits predate
-# that architecture and are not a valid scope baseline here.
-BASE = "0b477638d21ce60cdb42ed85fb7c2d568bf500ed"
 PRODUCT_PATHS = ("src",)
 
 
@@ -25,11 +22,38 @@ def changed_files(*arguments: str) -> list[str]:
     return [line for line in result.stdout.splitlines() if line]
 
 
+def validate_base(base: str) -> bool:
+    available = subprocess.run(
+        ["git", "cat-file", "-e", f"{base}^{{commit}}"],
+        cwd=ROOT, text=True, capture_output=True, check=False,
+    )
+    if available.returncode != 0:
+        print(f"SCOPE_BASE_UNAVAILABLE: {base}")
+        return False
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base, "HEAD"],
+        cwd=ROOT, text=True, capture_output=True, check=False,
+    )
+    if ancestor.returncode != 0:
+        print(f"SCOPE_BASE_INVALID: {base} is not an ancestor of HEAD")
+        return False
+    return True
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", required=True, help="explicit reachable pre-merge baseline commit")
+    args = parser.parse_args()
+    if not validate_base(args.base):
+        return 2
     changed = sorted(set(
-        changed_files(BASE, "HEAD")
+        changed_files(args.base, "HEAD")
         + changed_files()
         + changed_files("--cached")
+        + subprocess.check_output(
+            ["git", "ls-files", "--others", "--exclude-standard", "--", *PRODUCT_PATHS],
+            cwd=ROOT, text=True,
+        ).splitlines()
     ))
     if changed:
         print("EVIDENCE_SCOPE_VIOLATION: product source changed")

@@ -13,6 +13,21 @@ ROOT = Path(__file__).resolve().parents[2]
 PYTHON = sys.executable
 
 
+def static_guard_names() -> tuple[str, ...]:
+    """Permanent semantic guards; branch-delta checks are pre-merge evidence only."""
+    return (
+        "check_mission_authority_cut.py",
+        "check_execution_authority_cut.py",
+        "check_desired_intent_cut.py",
+        "check_failclosed_ownership_fencing.py",
+        "check_exact_optimization_injection.py",
+        "check_world_evidence_non_authority.py",
+        "check_navigation_command_contract.py",
+        "check_runtime_config_truth.py",
+        "check_state_transport_trace_scope.py",
+    )
+
+
 def run(label: str, command: list[str], *, shell: bool = False) -> bool:
     print(f"\n=== {label} ===", flush=True)
     result = subprocess.run(
@@ -79,19 +94,7 @@ def main() -> int:
             False,
         ),
     ]
-    checks = [
-        "check_mission_authority_cut.py",
-        "check_execution_authority_cut.py",
-        "check_desired_intent_cut.py",
-        "check_failclosed_ownership_fencing.py",
-        "check_exact_optimization_injection.py",
-        "check_world_evidence_non_authority.py",
-        "check_navigation_command_contract.py",
-        "check_qualification_evidence_scope.py",
-        "check_runtime_config_truth.py",
-        "check_software_qualification_scope.py",
-        "check_state_transport_trace_scope.py",
-    ]
+    checks = static_guard_names()
     for name in checks:
         stages.append((f"Static guard {name}", [PYTHON, f"tools/{name}"], False))
     stages.extend(
