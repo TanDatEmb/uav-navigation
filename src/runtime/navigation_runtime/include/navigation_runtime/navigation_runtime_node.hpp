@@ -303,6 +303,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   void schedulePlanningCycle();
   void scheduleHeadingRebind(const PlanningKey& key);
   void consumeHeadingRebind(std::int64_t now_ns);
+  [[nodiscard]] static navigation_planning::PlanningHistory makePlanningHistory(
+      const navigation_execution::ExecutionAuthoritySnapshot& execution,
+      const navigation_planning::KinematicState& measured_state);
 
   [[nodiscard]] bool queueExecutionTimelineActivation(
       std::uint64_t generation) noexcept;

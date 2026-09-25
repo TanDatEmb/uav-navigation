@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 #include <utility>
 
@@ -211,6 +212,33 @@ class NavigationRuntimeTerminalMonitorTestPeer {
   static auto key(NavigationRuntimeNode& node) { return node.currentPlanningKey(); }
   static auto timeline(const NavigationRuntimeNode& node) {
     return node.execution_authority_.snapshot();
+  }
+  static void populateRequestHistory(
+      NavigationRuntimeNode& node,
+      navigation_planning::PlanningRequest& request,
+      const navigation_execution::ExecutionAuthoritySnapshot& execution,
+      const navigation_planning::KinematicState& measured_state) {
+    request.history = NavigationRuntimeNode::makePlanningHistory(
+        execution, measured_state);
+  }
+  static bool publishMeasuredState(
+      NavigationRuntimeNode& node,
+      navigation_planning::KinematicState state) {
+    return node.execution_state_store_.publish(std::move(state));
+  }
+  static auto makeRealTerminalRequest(
+      NavigationRuntimeNode& node,
+      const navigation_contracts::msg::NavigationGoal& goal,
+      const navigation_world_model::WorldModelViewPtr& world,
+      const std::int64_t stamp_ns,
+      const navigation_execution::ExecutionAuthoritySnapshot& execution,
+      const navigation_planning::KinematicState& measured_state) {
+    auto request = realTerminalRequest(node, goal, world, stamp_ns);
+    request.key.committed_bundle_generation = execution.activeGeneration();
+    request.history = NavigationRuntimeNode::makePlanningHistory(
+        execution, measured_state);
+    request.start_state = measured_state;
+    return request;
   }
   static auto reserveFutureAnchor(NavigationRuntimeNode& node, std::int64_t stamp_ns) {
     return node.execution_authority_.reserveAnchor(stamp_ns, stamp_ns + 400'000'000LL);
@@ -1689,6 +1717,130 @@ TEST_F(NavigationRuntimeTerminalMonitorStrict, EmergencyExecutionCutoverPrecedes
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).active, refreshed);
   EXPECT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).commandAvailable());
   EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorStrict,
+       RuntimeRequestHistoryCapturesExactAdmittedEmergencyPredecessor) {
+  ASSERT_NO_FATAL_FAILURE(installReal({}, Eigen::Vector3d{3.0, 0.0, 0.0}));
+  const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+  ASSERT_TRUE(key);
+  NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
+
+  const auto execution = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  ASSERT_TRUE(execution.active);
+  ASSERT_EQ(execution.active->kind,
+            navigation_planning::CandidateBundleKind::kEmergencyBrake);
+  ASSERT_EQ(execution.active->role,
+            navigation_planning::CandidateRole::kEmergency);
+  ASSERT_TRUE(execution.commandAvailable());
+  const auto endpoint = execution.active->sampleAtDeclaredEnd();
+  ASSERT_TRUE(endpoint);
+  ASSERT_TRUE(endpoint->finished);
+  ASSERT_TRUE(endpoint->finite());
+  const auto measured = NavigationRuntimeTerminalMonitorTestPeer::stateLease(*node_);
+  ASSERT_TRUE(measured);
+
+  navigation_planning::PlanningRequest request;
+  NavigationRuntimeTerminalMonitorTestPeer::populateRequestHistory(
+      *node_, request, execution, measured->state);
+  ASSERT_TRUE(request.history.valid());
+  ASSERT_TRUE(request.history.predecessor);
+  const auto& evidence = *request.history.predecessor;
+  EXPECT_EQ(evidence.bundle_generation, execution.active->bundle_generation);
+  EXPECT_EQ(evidence.localization_epoch, execution.active->localization_epoch);
+  EXPECT_EQ(evidence.goal_epoch, execution.active->goal_epoch);
+  EXPECT_EQ(evidence.request_id, execution.active->request_id);
+  EXPECT_EQ(evidence.kind, execution.active->kind);
+  EXPECT_EQ(evidence.role, execution.active->role);
+  ASSERT_TRUE(evidence.declared_endpoint_position_world);
+  EXPECT_TRUE(evidence.declared_endpoint_position_world->isApprox(
+      endpoint->position_world, 1.0e-12));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorStrict,
+       AdmittedEmergencyWitnessAuthorizesRealStopCorrectionRequest) {
+  ASSERT_NO_FATAL_FAILURE(installReal({}, Eigen::Vector3d{2.6, 0.0, 0.0}));
+  const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+  ASSERT_TRUE(key);
+  NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
+  auto execution = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  ASSERT_TRUE(execution.active);
+  ASSERT_EQ(execution.active->kind,
+            navigation_planning::CandidateBundleKind::kEmergencyBrake);
+  auto emergency_endpoint = execution.active->sampleAtDeclaredEnd();
+  ASSERT_TRUE(emergency_endpoint);
+  ASSERT_TRUE(emergency_endpoint->finished);
+  ASSERT_TRUE(emergency_endpoint->finite());
+  ASSERT_GT((emergency_endpoint->position_world - Eigen::Vector3d{3.5, 0.0, 3.0}).norm(),
+            schedulerGoal().acceptance_radius_m)
+      << "FIXTURE_BLOCKED: emergency did not overshoot STOP acceptance";
+
+  const auto terminal_stamp_ns = execution.active->declared_end_ns;
+  setTime(terminal_stamp_ns);
+  auto world = std::make_shared<SchedulerIdentityWorld>(terminal_stamp_ns, 3U);
+  ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::refreshWorld(
+      *node_, world, terminal_stamp_ns));
+  execution = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  ASSERT_TRUE(execution.active);
+  ASSERT_EQ(execution.active->bundle_generation,
+            NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).activeGeneration());
+
+  navigation_planning::KinematicState measured;
+  measured.position_world = emergency_endpoint->position_world;
+  measured.source_stamp_ns = terminal_stamp_ns;
+  measured.receive_stamp_ns = navigation_common::steadyClockNowNanoseconds();
+  measured.localization_epoch = execution.active->localization_epoch;
+  measured.world_frame_id = "lio_odom";
+  measured.body_frame_id = "base_link";
+  ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishMeasuredState(
+      *node_, measured));
+
+  const auto goal = schedulerGoal();
+  auto request = NavigationRuntimeTerminalMonitorTestPeer::makeRealTerminalRequest(
+      *node_, goal, world, terminal_stamp_ns, execution, measured);
+  ASSERT_TRUE(request.valid());
+  ASSERT_TRUE(request.history.predecessor);
+  EXPECT_EQ(request.history.predecessor->bundle_generation,
+            execution.active->bundle_generation);
+  EXPECT_EQ(request.history.predecessor->kind,
+            navigation_planning::CandidateBundleKind::kEmergencyBrake);
+  ::testing::Test::RecordProperty("predecessor_bundle_generation",
+                                  std::to_string(request.history.predecessor->bundle_generation));
+  ::testing::Test::RecordProperty("predecessor_localization_epoch",
+                                  std::to_string(request.history.predecessor->localization_epoch));
+  ::testing::Test::RecordProperty("predecessor_goal_epoch",
+                                  std::to_string(request.history.predecessor->goal_epoch));
+  ::testing::Test::RecordProperty("predecessor_request_id",
+                                  std::to_string(request.history.predecessor->request_id));
+  ::testing::Test::RecordProperty("predecessor_kind",
+                                  std::to_string(static_cast<int>(request.history.predecessor->kind)));
+  ::testing::Test::RecordProperty("predecessor_role",
+                                  std::to_string(static_cast<int>(request.history.predecessor->role)));
+  ::testing::Test::RecordProperty("predecessor_endpoint_x",
+      std::to_string(request.history.predecessor->declared_endpoint_position_world->x()));
+  ::testing::Test::RecordProperty("predecessor_endpoint_y",
+      std::to_string(request.history.predecessor->declared_endpoint_position_world->y()));
+  ::testing::Test::RecordProperty("predecessor_endpoint_z",
+      std::to_string(request.history.predecessor->declared_endpoint_position_world->z()));
+  ::testing::Test::RecordProperty("successor_request_id", std::to_string(request.key.request_id));
+  ::testing::Test::RecordProperty("request_world_generation",
+      std::to_string(request.key.pinned_world_generation));
+  ::testing::Test::RecordProperty("request_world_revision",
+      std::to_string(request.key.pinned_world_revision));
+  const auto outcome = NavigationRuntimeTerminalMonitorTestPeer::planRequest(
+      *node_, request);
+  ASSERT_TRUE(outcome.candidate)
+      << "FIXTURE_BLOCKED: real planner rejected request-owned emergency correction: "
+      << static_cast<int>(outcome.failure_stage) << ":"
+      << static_cast<int>(outcome.failure_reason);
+  ASSERT_TRUE(outcome.candidate->terminal_stop);
+  const auto corrected_endpoint = outcome.candidate->sampleAtDeclaredEnd();
+  ASSERT_TRUE(corrected_endpoint);
+  const Eigen::Vector3d target{goal.target.x, goal.target.y, goal.target.z};
+  EXPECT_LE((corrected_endpoint->position_world - target).norm(),
+            goal.acceptance_radius_m + 1.0e-6);
+  ::testing::Test::RecordProperty("corrected_endpoint_error_m",
+      std::to_string((corrected_endpoint->position_world - target).norm()));
 }
 
 TEST_F(NavigationRuntimeTerminalMonitorStrict, AdmissionAtOriginalMainEndPreservesItsExecution) {

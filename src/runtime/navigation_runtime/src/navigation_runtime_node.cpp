@@ -3513,6 +3513,37 @@ std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
   return key;
 }
 
+navigation_planning::PlanningHistory NavigationRuntimeNode::makePlanningHistory(
+    const navigation_execution::ExecutionAuthoritySnapshot& execution,
+    const navigation_planning::KinematicState& measured_state) {
+  navigation_planning::PlanningHistory history;
+  const auto& predecessor_bundle = execution.active;
+  history.previous_bundle_generation = predecessor_bundle
+      ? predecessor_bundle->bundle_generation : 0U;
+  // PlanningHistory describes a prior executable bundle, not the measured
+  // start state. Keep it empty for an initial stopped-state request.
+  history.previous_velocity_world = predecessor_bundle
+      ? measured_state.velocity_world : Eigen::Vector3d::Zero();
+  if (!predecessor_bundle) return history;
+
+  navigation_planning::PlanningPredecessorEvidence predecessor;
+  predecessor.bundle_generation = predecessor_bundle->bundle_generation;
+  predecessor.localization_epoch = predecessor_bundle->localization_epoch;
+  predecessor.goal_epoch = predecessor_bundle->goal_epoch;
+  predecessor.request_id = predecessor_bundle->request_id;
+  predecessor.kind = predecessor_bundle->kind;
+  predecessor.role = predecessor_bundle->role;
+  if (predecessor_bundle->kind ==
+      navigation_planning::CandidateBundleKind::kEmergencyBrake) {
+    const auto endpoint = predecessor_bundle->sampleAtDeclaredEnd();
+    if (endpoint && endpoint->finished && endpoint->finite()) {
+      predecessor.declared_endpoint_position_world = endpoint->position_world;
+    }
+  }
+  history.predecessor = std::move(predecessor);
+  return history;
+}
+
 void NavigationRuntimeNode::schedulePlanningCycle() {
   const auto callback_start = std::chrono::steady_clock::now();
   const auto callback_start_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -5396,32 +5427,11 @@ void NavigationRuntimeNode::runCycle(
   same_identity_renewal_facts.current_body_support_present =
       planning_request.current_body_support != nullptr;
   same_identity_renewal_facts.terminal_hold_pending = false;
-  planning_request.history.previous_bundle_generation =
-      transition_bundle ? transition_bundle->bundle_generation : 0U;
-  // PlanningHistory describes a prior executable bundle, not the measured
-  // start state. Keep it empty for the initial stopped-state request; putting
-  // the current velocity beside generation zero makes the request appear to
-  // reference a non-existent prior command and fails the typed contract.
-  planning_request.history.previous_velocity_world = transition_bundle
-      ? execution_state.velocity_world
-      : Eigen::Vector3d::Zero();
-  if (transition_bundle) {
-    navigation_planning::PlanningPredecessorEvidence predecessor;
-    predecessor.bundle_generation = transition_bundle->bundle_generation;
-    predecessor.localization_epoch = transition_bundle->localization_epoch;
-    predecessor.goal_epoch = transition_bundle->goal_epoch;
-    predecessor.request_id = transition_bundle->request_id;
-    predecessor.kind = transition_bundle->kind;
-    predecessor.role = transition_bundle->role;
-    if (transition_bundle->kind ==
-        navigation_planning::CandidateBundleKind::kEmergencyBrake) {
-      const auto endpoint = transition_bundle->sampleAtDeclaredEnd();
-      if (endpoint && endpoint->finished && endpoint->finite()) {
-        predecessor.declared_endpoint_position_world = endpoint->position_world;
-      }
-    }
-    planning_request.history.predecessor = std::move(predecessor);
-  }
+  // The request witness must come from the same coherent ExecutionAuthority
+  // snapshot that was checked against the scheduled predecessor generation
+  // above. `transition_bundle` was captured earlier for scheduling/retention
+  // decisions and may have been superseded or recertified since then.
+  planning_request.history = makePlanningHistory(request_timeline, execution_state);
   planning_request.route_snapshot = *route_snapshot;
   planning_request.world = pinned_world.view;
   planning_request.dynamics = mission_dynamic_limits_;

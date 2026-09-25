@@ -6,6 +6,7 @@
 #include <planner_core/route_yaw_reference.hpp>
 #include <planner_core/route_backbone.hpp>
 #include <planner_core/planner_result.hpp>
+#include <planner_core/route_regression_certificate.hpp>
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/config.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
@@ -2939,6 +2940,107 @@ TEST(PlannerFacade, EmergencyBrakeDoesNotAdvertiseNominalPassThroughBoundary) {
   EXPECT_EQ(candidate->role, navigation_planning::CandidateRole::kEmergency);
   EXPECT_FALSE(candidate->route_boundary_event.has_value());
   EXPECT_FALSE(candidate->route_boundary_constraint.has_value());
+}
+
+TEST(PlannerFacade, EmergencyCorrectionAuthorizationUsesOnlyRequestPredecessorEvidence) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  auto request = plannerBodySupportRequest(world, nullptr);
+  request.key.committed_bundle_generation = 77U;
+  request.history.previous_bundle_generation = 77U;
+  request.history.predecessor = navigation_planning::PlanningPredecessorEvidence{
+      77U, 1U, 8U, 13U,
+      navigation_planning::CandidateBundleKind::kEmergencyBrake,
+      navigation_planning::CandidateRole::kEmergency,
+      Eigen::Vector3d{0.7, 0.0, 2.0}};
+  ASSERT_TRUE(request.history.valid());
+
+  navigation_mission::MissionWaypoint stop;
+  stop.position_enu = Eigen::Vector3d{0.0, 0.0, 2.0};
+  stop.acceptance_radius_m = 0.5;
+  stop.behavior = navigation_mission::MissionWaypoint::Behavior::Stop;
+  const Eigen::Vector3d candidate_start{0.72, 0.0, 2.0};
+  const Eigen::Vector3d candidate_end{0.4, 0.0, 2.0};
+
+  // The predecessor is from a different execution request than this STOP
+  // candidate. This is expected on recovery: the request key identifies the
+  // desired solve, while the witness identifies its exact predecessor.
+  const auto allowed = navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25);
+  EXPECT_TRUE(allowed.allowed);
+  EXPECT_DOUBLE_EQ(allowed.predecessor_endpoint_distance_m, 0.7);
+  EXPECT_DOUBLE_EQ(allowed.candidate_start_distance_m, 0.72);
+
+  // A mutable backend cache could later describe an emergency E2. That cache
+  // is intentionally absent from this authorization API, so E2 cannot turn
+  // an ordinary request-owned E1 into an emergency correction.
+  auto ordinary_request = request;
+  ordinary_request.history.predecessor->kind =
+      navigation_planning::CandidateBundleKind::kTerminalStop;
+  ordinary_request.history.predecessor->role =
+      navigation_planning::CandidateRole::kMain;
+  ordinary_request.history.predecessor->declared_endpoint_position_world.reset();
+  ASSERT_TRUE(ordinary_request.history.valid());
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      ordinary_request, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+
+  // Conversely, once this request captured emergency E1, later replacement
+  // of a warm-start cache by ordinary E2 cannot revoke E1's request-local
+  // evidence. The actual planner calls this same predicate in authorizeAndStage.
+  EXPECT_TRUE(navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch + 1U, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch, request.key.goal_epoch + 1U,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id + 1U, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.0).allowed);
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      request, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start,
+      Eigen::Vector3d{0.51, 0.0, 2.0}, true, false, 0.25).allowed);
+
+  auto wrong_generation = request;
+  wrong_generation.key.committed_bundle_generation += 1U;
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      wrong_generation, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+  auto wrong_predecessor_epoch = request;
+  wrong_predecessor_epoch.history.predecessor->localization_epoch += 1U;
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      wrong_predecessor_epoch, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+  auto missing_endpoint = request;
+  missing_endpoint.history.predecessor->declared_endpoint_position_world.reset();
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      missing_endpoint, request.key.localization_epoch, request.key.goal_epoch,
+      request.key.request_id, stop, candidate_start, candidate_end,
+      true, false, 0.25).allowed);
+  auto wrong_predecessor_role = request;
+  wrong_predecessor_role.history.predecessor->role =
+      navigation_planning::CandidateRole::kMain;
+  EXPECT_FALSE(navigation_planning_backend::authorizeEmergencyCorrection(
+      wrong_predecessor_role, request.key.localization_epoch,
+      request.key.goal_epoch, request.key.request_id, stop, candidate_start,
+      candidate_end, true, false, 0.25).allowed);
 }
 
 void expectEmergencyBrakeUnknownPolicy(

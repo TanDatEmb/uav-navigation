@@ -734,40 +734,17 @@ double mainGuideSupport(
                 // fold gate is bypassed only for this bounded STOP correction;
                 // world, dynamic, yaw, anchor, and handoff certificates still
                 // authorize the candidate independently.
-                const bool request_identity_matches = request_context &&
-                    request_context->key.localization_epoch ==
-                        command_identity.localization_epoch &&
-                    request_context->key.goal_epoch == command_identity.goal_epoch &&
-                    request_context->key.request_id == command_identity.request_id;
-                const auto previous_endpoint = request_identity_matches
-                    ? request_context->history.emergencyEndpointFor(
-                          request_context->key.committed_bundle_generation,
-                          request_context->key.localization_epoch)
-                    : std::nullopt;
-                const bool previous_was_emergency = previous_endpoint.has_value();
-                const double emergency_endpoint_distance =
-                    previous_endpoint && previous_endpoint->allFinite()
-                        ? (*previous_endpoint - active_waypoint.position_enu).norm()
-                        : std::numeric_limits<double>::quiet_NaN();
+                const auto emergency_correction = request_context
+                    ? authorizeEmergencyCorrection(
+                          *request_context, command_identity.localization_epoch,
+                          command_identity.goal_epoch, command_identity.request_id,
+                          active_waypoint, candidate_start, candidate_end,
+                          candidate.terminal_stop,
+                          candidate.backup_suffix_available,
+                          cfg_.tracking_error_budget_m)
+                    : EmergencyCorrectionAuthorization{};
                 const bool emergency_bounded_correction =
-                    previous_was_emergency && candidate_start.allFinite() &&
-                    candidate_end.allFinite() &&
-                    ((active_waypoint.behavior ==
-                          navigation_mission::MissionWaypoint::Behavior::Stop &&
-                      candidate.terminal_stop) ||
-                     (active_waypoint.behavior ==
-                          navigation_mission::MissionWaypoint::Behavior::PassThrough &&
-                      !candidate.terminal_stop &&
-                      candidate.backup_suffix_available)) &&
-                    std::isfinite(emergency_endpoint_distance) &&
-                    std::isfinite(cfg_.tracking_error_budget_m) &&
-                    cfg_.tracking_error_budget_m >= 0.0 &&
-                    std::isfinite(recovery_radius) && recovery_radius > 0.0 &&
-                    emergency_endpoint_distance <= recovery_radius + 1.0e-9 &&
-                    (candidate_start - active_waypoint.position_enu).norm() <=
-                        recovery_radius + 1.0e-9 &&
-                    (candidate_end - active_waypoint.position_enu).norm() <=
-                        active_waypoint.acceptance_radius_m + 1.0e-9;
+                    emergency_correction.allowed;
                 bounded_terminal_stop_recovery =
                     candidate_is_bounded_correction || emergency_bounded_correction;
                 if (emergency_bounded_correction && !candidate_is_bounded_correction) {
@@ -775,8 +752,8 @@ double mainGuideSupport(
                         " -- [planner] allowing bounded waypoint correction after "
                         "certified emergency endpoint distance={} start_distance={} "
                         "acceptance_radius={}",
-                        emergency_endpoint_distance,
-                        (candidate_start - active_waypoint.position_enu).norm(),
+                        emergency_correction.predecessor_endpoint_distance_m,
+                        emergency_correction.candidate_start_distance_m,
                         active_waypoint.acceptance_radius_m);
                 }
             }
