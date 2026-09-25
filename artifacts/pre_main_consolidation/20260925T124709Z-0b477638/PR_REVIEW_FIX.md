@@ -14,4 +14,4 @@ P1 `Use a reachable baseline for the scope guards` identified that both branch-s
 
 ## Current review status
 
-The fix is implemented locally; the existing P1 thread is not marked resolved. Resolution requires the repair to be pushed and verified, followed by a new review of the current PR head. No merge has been performed.
+The fix was pushed and verified. The existing P1 thread was replied to and resolved after the exact-head local gate passed and Codex re-reviewed PR head `872c708b0e188466e6a7450f1e8ec13f6727cf40` without major findings. GitHub-hosted CI jobs did not start due the account billing lock; this remains an infrastructure block. No merge has been performed.
