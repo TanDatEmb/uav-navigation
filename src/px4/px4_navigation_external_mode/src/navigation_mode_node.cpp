@@ -42,6 +42,7 @@ namespace {
 
 constexpr char kModeName[] = "Avoidance Mission";
 constexpr char kTrajectoryFailureReason[] = "navigation trajectory unavailable or stale";
+constexpr std::int64_t kHoldRetryPeriodNs = 250'000'000LL;
 
 bool floatRepresentable(const double value) {
   return std::isfinite(value) &&
@@ -2608,19 +2609,26 @@ void NavigationModeExecutor::onVehicleStatus(
   if (px4_hold_confirmed_) {
     hold_handover_pending_ = false;
     hold_handover_in_flight_ = false;
+    hold_handover_complete_navigation_failure_ = false;
+    hold_handover_next_retry_steady_ns_ = 0;
   }
 }
 
 void NavigationModeExecutor::checkHoldHandover() {
   const auto now_steady_ns = navigation_common::steadyClockNowNanoseconds();
-  if (hold_handover_pending_ && !px4_hold_confirmed_) {
-    if (!hold_handover_in_flight_ && now_steady_ns >= hold_handover_next_retry_steady_ns_) {
-      schedulePx4Hold(hold_handover_complete_navigation_failure_);
-    }
+  if (handover::retryDue(now_steady_ns, hold_handover_next_retry_steady_ns_,
+                         hold_handover_pending_, px4_hold_confirmed_)) {
+    // A successful mode command can leave scheduleMode() waiting indefinitely
+    // for ModeCompleted while VehicleStatus still does not show AUTO_LOITER.
+    // Retire its token before scheduleMode cancels/replaces that request.
+    hold_handover_in_flight_ = false;
+    schedulePx4Hold(hold_handover_complete_navigation_failure_);
   }
 }
 
 void NavigationModeExecutor::onActivate() {
+  ++handover_activation_generation_;
+  if (handover_activation_generation_ == 0U) ++handover_activation_generation_;
   px4_hold_confirmed_ = false;
   hold_handover_pending_ = false;
   hold_handover_in_flight_ = false;
@@ -2628,12 +2636,20 @@ void NavigationModeExecutor::onActivate() {
   hold_handover_attempts_ = 0U;
   hold_handover_next_retry_steady_ns_ = 0;
   RCLCPP_INFO(node_.get_logger(), "Avoidance Mission executor activated");
-  scheduleMode(ownedMode().id(), [this](px4_ros2::Result result) {
-    onOwnedModeCompleted(result);
+  const auto activation_generation = handover_activation_generation_;
+  scheduleMode(ownedMode().id(), [this, activation_generation](px4_ros2::Result result) {
+    onOwnedModeCompleted(result, activation_generation);
   });
 }
 
-void NavigationModeExecutor::onOwnedModeCompleted(px4_ros2::Result result) {
+void NavigationModeExecutor::onOwnedModeCompleted(
+    px4_ros2::Result result, const std::uint64_t activation_generation) {
+  if (activation_generation == 0U ||
+      activation_generation != handover_activation_generation_) {
+    RCLCPP_DEBUG(node_.get_logger(),
+                 "Ignoring superseded navigation-mode completion callback");
+    return;
+  }
   if (result == px4_ros2::Result::Deactivated) {
     RCLCPP_DEBUG(node_.get_logger(), "Owned navigation mode was deactivated by mode handover");
     return;
@@ -2655,37 +2671,73 @@ void NavigationModeExecutor::schedulePx4Hold(bool complete_navigation_failure) {
   if (px4_hold_confirmed_ || hold_handover_in_flight_) return;
   hold_handover_in_flight_ = true;
   ++hold_handover_attempts_;
+  if (hold_handover_attempts_ == 0U) ++hold_handover_attempts_;
+  const handover::AttemptToken token{handover_activation_generation_,
+                                     hold_handover_attempts_};
+  const bool request_completes_navigation_failure =
+      hold_handover_complete_navigation_failure_;
+  hold_handover_next_retry_steady_ns_ =
+      navigation_common::steadyClockNowNanoseconds() + kHoldRetryPeriodNs;
   scheduleMode(px4_ros2::ModeBase::kModeIDLoiter,
-               [this](px4_ros2::Result hold_result) {
-    onPx4HoldHandoverCompleted(hold_result, hold_handover_complete_navigation_failure_);
+               [this, token, request_completes_navigation_failure](
+                   px4_ros2::Result hold_result) {
+    onPx4HoldHandoverCompleted(hold_result,
+                               request_completes_navigation_failure, token);
   });
 }
 
 void NavigationModeExecutor::onPx4HoldHandoverCompleted(
-    px4_ros2::Result result, bool complete_navigation_failure) {
-  if (result == px4_ros2::Result::Success || result == px4_ros2::Result::Deactivated) {
-    hold_handover_in_flight_ = false;
-    hold_handover_pending_ = false;
-    RCLCPP_INFO(node_.get_logger(), "PX4 Hold handover completed with result=%s",
-                px4_ros2::resultToString(result));
+    px4_ros2::Result result, const bool complete_navigation_failure,
+    const handover::AttemptToken token) {
+  const handover::AttemptToken current{handover_activation_generation_,
+                                       hold_handover_attempts_};
+  const auto callback_result = result == px4_ros2::Result::Success
+      ? handover::CallbackResult::kSuccess
+      : result == px4_ros2::Result::Deactivated
+      ? handover::CallbackResult::kDeactivated
+      : handover::CallbackResult::kFailure;
+  const auto disposition = handover::assessCallback(
+      token, current, hold_handover_pending_, hold_handover_in_flight_,
+      px4_hold_confirmed_, callback_result);
+  if (disposition == handover::CallbackDisposition::kSuperseded) {
+    RCLCPP_DEBUG(node_.get_logger(),
+                 "Ignoring superseded PX4 Hold callback activation=%llu attempt=%u",
+                 static_cast<unsigned long long>(token.activation_generation),
+                 token.attempt);
     return;
   }
+  if (disposition == handover::CallbackDisposition::kAlreadyConfirmed) return;
 
   hold_handover_in_flight_ = false;
   hold_handover_pending_ = true;
   hold_handover_complete_navigation_failure_ =
       hold_handover_complete_navigation_failure_ || complete_navigation_failure;
-  constexpr std::int64_t kHoldRetryPeriodNs = 250'000'000LL;
   hold_handover_next_retry_steady_ns_ =
       navigation_common::steadyClockNowNanoseconds() + kHoldRetryPeriodNs;
-  RCLCPP_ERROR_THROTTLE(
-      node_.get_logger(), *node_.get_clock(), 5000,
-      "PX4 Hold handover attempt=%u failed with result=%s; keeping the explicit "
-      "stationary safety stream and retrying until AUTO_LOITER is confirmed",
-      hold_handover_attempts_, px4_ros2::resultToString(result));
+  if (result == px4_ros2::Result::Success) {
+    RCLCPP_WARN_THROTTLE(
+        node_.get_logger(), *node_.get_clock(), 5000,
+        "PX4 Hold mode-completion callback succeeded for attempt=%u; awaiting VehicleStatus "
+        "AUTO_LOITER before confirming authority handover",
+        hold_handover_attempts_);
+  } else if (result == px4_ros2::Result::Deactivated) {
+    RCLCPP_WARN_THROTTLE(
+        node_.get_logger(), *node_.get_clock(), 5000,
+        "PX4 Hold schedule callback was deactivated at attempt=%u; awaiting "
+        "VehicleStatus AUTO_LOITER or retry deadline",
+        hold_handover_attempts_);
+  } else {
+    RCLCPP_ERROR_THROTTLE(
+        node_.get_logger(), *node_.get_clock(), 5000,
+        "PX4 Hold handover attempt=%u failed with result=%s; keeping the explicit "
+        "stationary safety stream and awaiting retry",
+        hold_handover_attempts_, px4_ros2::resultToString(result));
+  }
 }
 
 void NavigationModeExecutor::onDeactivate(DeactivateReason reason) {
+  ++handover_activation_generation_;
+  if (handover_activation_generation_ == 0U) ++handover_activation_generation_;
   px4_hold_confirmed_ = false;
   hold_handover_pending_ = false;
   hold_handover_in_flight_ = false;

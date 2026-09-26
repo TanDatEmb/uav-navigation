@@ -123,6 +123,9 @@ class NavigationModeProgressionTest : public ::testing::Test {
     mode_->navigation_command_.reset();
     mode_->mode_activation_id_ = 2U;
   }
+  void deactivateForTest() {
+    mode_->onDeactivate();
+  }
 
   std::shared_ptr<rclcpp::Node> node_;
   std::unique_ptr<NavigationMode> mode_;
@@ -205,6 +208,22 @@ TEST_F(NavigationModeProgressionTest, OldActivationCommandCannotReplayAfterModeR
   const auto current = command(3U, 0U, 2U);
   admit(current);
   EXPECT_EQ(acceptedSample(), current->sample_id);
+}
+
+TEST_F(NavigationModeProgressionTest, DownstreamDeactivationCannotReclaimOldCommand) {
+  const auto first = command(2U, 0U, 1U);
+  admit(first);
+  ASSERT_EQ(acceptedSample(), first->sample_id);
+  deactivateForTest();
+  setNow(now_ns_ + 20'000'000);
+  health();
+  odometry();
+  const auto delayed = std::make_shared<Command>(*first);
+  delayed->sample_id = ++sample_;
+  delayed->header.stamp = stamp(now_ns_);
+  delayed->valid_until = stamp(now_ns_ + 100'000'000);
+  admit(delayed);
+  EXPECT_EQ(acceptedSample(), 0U);
 }
 
 TEST_F(NavigationModeProgressionTest, StaleCompletionReceiptCannotCompleteNewActivation) {

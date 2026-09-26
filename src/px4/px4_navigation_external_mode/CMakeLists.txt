@@ -77,6 +77,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_navigation_mode_progression test/test_navigation_mode_progression.cpp)
   target_link_libraries(test_navigation_mode_progression ${PROJECT_NAME}_adapter)
   ament_target_dependencies(test_navigation_mode_progression px4_ros2_cpp rclcpp)
+  ament_add_gtest(test_px4_authority_handover test/test_px4_authority_handover.cpp)
+  target_include_directories(test_px4_authority_handover PRIVATE include)
   ament_add_gtest(test_navigation_command test/test_navigation_command.cpp)
   target_include_directories(test_navigation_command PRIVATE
     include ${navigation_contracts_INCLUDE_DIRS})

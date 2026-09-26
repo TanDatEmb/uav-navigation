@@ -36,6 +36,7 @@
 
 #include "px4_navigation_external_mode/px4_input_trace.hpp"
 #include "px4_navigation_external_mode/px4_tracking_adapter.hpp"
+#include "px4_navigation_external_mode/px4_authority_handover.hpp"
 #include <navigation_common/bounded_spsc_queue.hpp>
 
 #include "px4_navigation_external_mode/velocity_only_continuity.hpp"
@@ -289,10 +290,12 @@ class NavigationModeExecutor final : public px4_ros2::ModeExecutorBase {
   void onFailsafeDeferred() override;
 
  private:
-  void onOwnedModeCompleted(px4_ros2::Result result);
+  void onOwnedModeCompleted(px4_ros2::Result result,
+                            std::uint64_t activation_generation);
   void schedulePx4Hold(bool complete_navigation_failure);
   void onPx4HoldHandoverCompleted(px4_ros2::Result result,
-                                  bool complete_navigation_failure);
+                                  bool complete_navigation_failure,
+                                  handover::AttemptToken token);
   void onVehicleStatus(const px4_msgs::msg::VehicleStatus::UniquePtr& message);
   void checkHoldHandover();
 
@@ -305,6 +308,7 @@ class NavigationModeExecutor final : public px4_ros2::ModeExecutorBase {
   bool hold_handover_in_flight_{false};
   bool hold_handover_complete_navigation_failure_{false};
   std::uint32_t hold_handover_attempts_{0U};
+  std::uint64_t handover_activation_generation_{0U};
   std::int64_t hold_handover_next_retry_steady_ns_{0};
 };
 
