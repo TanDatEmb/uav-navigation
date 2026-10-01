@@ -22,7 +22,7 @@ inline bool missionCommandIdentityMatches(
          command.request_id == last_completed_request_id;
 }
 
-// A pass-through transition can advance MissionController before the planner
+// A pass-through transition can advance MissionProgress before the planner
 // has reached a certified stop/retarget boundary. During that bounded window
 // the previous BACKUP command remains the physical owner of the vehicle. It
 // may refresh the External Mode command lease, but it must never be accepted
@@ -44,7 +44,7 @@ inline bool priorSafetySuffixCommandIdentityMatches(
           command.status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED);
 }
 
-// MissionController publishes the next pass-through goal as soon as the
+// MissionProgress publishes the next pass-through goal as soon as the
 // previous checkpoint is accepted.  The planner successor is intentionally a
 // later execution-timeline activation, so one unfinished command from the
 // immediately previous pass-through checkpoint must remain admissible in the

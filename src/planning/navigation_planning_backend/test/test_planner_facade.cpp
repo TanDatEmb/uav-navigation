@@ -2207,7 +2207,7 @@ void probeProductPassRenewal(const bool backup_allow_unknown,
     ASSERT_TRUE(future.has_value());
     ASSERT_EQ(future->role, navigation_planning::CandidateRole::kMain);
     // Stop this same-identity construction probe once ideal measured motion
-    // reaches the ball. Only MissionController may advance the real route.
+    // reaches the ball. Only MissionProgress may advance the real route.
     if ((measured->position_world - mission.waypoints[1].position_enu).norm() <= 0.9) break;
     auto request = initial_request;
     request.key.start_mode = navigation_planning::PlanningStartMode::kCommittedFutureState;

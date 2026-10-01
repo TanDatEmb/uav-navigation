@@ -19,7 +19,6 @@ CRITICAL_ARTIFACTS = (
     "navigation_runtime/lib/libnavigation_runtime_core.a",
     "navigation_planning_backend/lib/libnavigation_planning_backend.a",
     "px4_navigation_external_mode/lib/px4_navigation_external_mode/px4_navigation_external_mode_node",
-    "px4_navigation_external_mode/lib/libpx4_navigation_external_mode_contract.a",
     "px4_odometry_bridge/lib/px4_odometry_bridge/px4_odometry_bridge_node",
     "px4_odometry_bridge/lib/px4_odometry_bridge/px4_odometry_bridge_external_node",
 )

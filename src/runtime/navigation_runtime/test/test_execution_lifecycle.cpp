@@ -2,6 +2,11 @@
 
 #include "execution_authority_lifecycle_fixture.hpp"
 
+namespace navigation_runtime {
+using navigation_execution::ExecutionPhase;
+using navigation_execution::executionPhaseTelemetryCodeV1;
+}  // namespace navigation_runtime
+
 namespace {
 
 navigation_planning::CandidateBundle bundle(
@@ -35,7 +40,7 @@ TEST(ExecutionLifecycle, KeepsOneAuthoritativeLifecycleSnapshot) {
   EXPECT_EQ(initial.admissionRequestId(), 0U);
   EXPECT_EQ(initial.lifecycle.phase, navigation_runtime::ExecutionPhase::kInitialHold);
   EXPECT_EQ(initial.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kInitialHold);
+            navigation_execution::ExecutionRecoveryState::kInitialHold);
   EXPECT_FALSE(initial.commandAvailable());
 
   authority.commandCommitted(bundle(
@@ -44,7 +49,7 @@ TEST(ExecutionLifecycle, KeepsOneAuthoritativeLifecycleSnapshot) {
   auto tracking = authority.snapshot();
   EXPECT_EQ(tracking.lifecycle.phase, navigation_runtime::ExecutionPhase::kTrackingMain);
   EXPECT_EQ(tracking.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kTrackMain);
+            navigation_execution::ExecutionRecoveryState::kTrackMain);
   EXPECT_TRUE(tracking.commandAvailable());
   EXPECT_EQ(tracking.activeGeneration(), 20U);
 
@@ -58,17 +63,17 @@ TEST(ExecutionLifecycle, KeepsOneAuthoritativeLifecycleSnapshot) {
   EXPECT_EQ(backup.lifecycle.phase,
             navigation_runtime::ExecutionPhase::kTrackingBackup);
   EXPECT_EQ(backup.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kTrackBackup);
+            navigation_execution::ExecutionRecoveryState::kTrackBackup);
   EXPECT_TRUE(backup.safetySuffixActive());
   EXPECT_TRUE(authority.stoppedHold(active_main));
   EXPECT_TRUE(authority.applyRecoveryEvent(
-      navigation_runtime::ExecutionRecoveryEvent::kCertifiedStopObserved,
+      navigation_execution::ExecutionRecoveryEvent::kCertifiedStopObserved,
       active_main));
   const auto stopped = authority.snapshot();
   EXPECT_EQ(stopped.lifecycle.phase,
             navigation_runtime::ExecutionPhase::kStoppedHold);
   EXPECT_EQ(stopped.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kStoppedRecovery);
+            navigation_execution::ExecutionRecoveryState::kStoppedRecovery);
 }
 
 TEST(ExecutionLifecycle, SampledSafetyRoleCannotRewriteAnotherGeneration) {
@@ -85,7 +90,7 @@ TEST(ExecutionLifecycle, SampledSafetyRoleCannotRewriteAnotherGeneration) {
   EXPECT_EQ(state.lifecycle.phase,
             navigation_runtime::ExecutionPhase::kTrackingMain);
   EXPECT_EQ(state.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kTrackMain);
+            navigation_execution::ExecutionRecoveryState::kTrackMain);
   EXPECT_FALSE(state.safetySuffixActive());
 }
 
@@ -115,7 +120,7 @@ TEST(ExecutionLifecycle, LateRetainedRoleFromAStaleCandidateCannotRewriteSuccess
             navigation_runtime::ExecutionPhase::kTrackingBackup);
   EXPECT_FALSE(state.restartFromRest());
   EXPECT_EQ(state.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kTrackBackup);
+            navigation_execution::ExecutionRecoveryState::kTrackBackup);
 }
 
 TEST(ExecutionLifecycle, HotRetargetKeepsActiveBackupUntilSuccessorCommits) {
@@ -142,7 +147,7 @@ TEST(ExecutionLifecycle, HotRetargetKeepsActiveBackupUntilSuccessorCommits) {
   EXPECT_TRUE(authority.observeSampledSafetyRole(
       candidate_a, navigation_planning::CandidateRole::kBackup));
   EXPECT_TRUE(authority.applyRecoveryEvent(
-      navigation_runtime::ExecutionRecoveryEvent::kCertifiedStopObserved,
+      navigation_execution::ExecutionRecoveryEvent::kCertifiedStopObserved,
       candidate_a));
 
   const auto candidate_b = bundle(
@@ -173,7 +178,7 @@ TEST(ExecutionLifecycle, CommitUpdatesLifecycleAndRecoveryInOneSnapshot) {
   EXPECT_EQ(state.lifecycle.phase,
             navigation_runtime::ExecutionPhase::kTrackingMain);
   EXPECT_EQ(state.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kTrackMain);
+            navigation_execution::ExecutionRecoveryState::kTrackMain);
 
   auto emergency = bundle(
       navigation_planning::CandidateBundleKind::kEmergencyBrake, 5U);
@@ -183,7 +188,7 @@ TEST(ExecutionLifecycle, CommitUpdatesLifecycleAndRecoveryInOneSnapshot) {
   EXPECT_EQ(state.lifecycle.phase,
             navigation_runtime::ExecutionPhase::kTrackingBackup);
   EXPECT_EQ(state.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kEmergencyBrake);
+            navigation_execution::ExecutionRecoveryState::kEmergencyBrake);
 }
 
 TEST(ExecutionLifecycle, UsesContiguousInternalPhasesAndVersionedTelemetryConversion) {
@@ -212,7 +217,7 @@ TEST(ExecutionLifecycle, FailClosedClearsCommandExposure) {
   const auto state = authority.snapshot();
   EXPECT_EQ(state.lifecycle.phase, navigation_runtime::ExecutionPhase::kPx4Hold);
   EXPECT_EQ(state.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kPx4Hold);
+            navigation_execution::ExecutionRecoveryState::kPx4Hold);
   EXPECT_FALSE(state.commandAvailable());
   EXPECT_TRUE(state.failed());
 }
@@ -240,7 +245,7 @@ TEST(ExecutionLifecycle, ObservationsCannotResurrectFailClosedExecution) {
   EXPECT_FALSE(state.restartFromRest());
   EXPECT_EQ(state.activeGeneration(), 0U);
   EXPECT_EQ(state.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kPx4Hold);
+            navigation_execution::ExecutionRecoveryState::kPx4Hold);
 }
 
 TEST(ExecutionLifecycle, StoppedHoldPreservesMeasuredRestartRequest) {
@@ -275,7 +280,7 @@ TEST(ExecutionLifecycle, LateCommitCannotRollbackSameRequestGeneration) {
   EXPECT_EQ(state.lifecycle.phase, navigation_runtime::ExecutionPhase::kTrackingBackup);
   EXPECT_TRUE(state.safetySuffixActive());
   EXPECT_EQ(state.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kTrackBackup);
+            navigation_execution::ExecutionRecoveryState::kTrackBackup);
 }
 
 TEST(ExecutionLifecycle, SameGenerationForeignIdentityCannotMutateOwner) {
@@ -292,13 +297,13 @@ TEST(ExecutionLifecycle, SameGenerationForeignIdentityCannotMutateOwner) {
       foreign, navigation_planning::CandidateRole::kBackup));
   EXPECT_FALSE(authority.preserveSafetySuffix(foreign));
   EXPECT_FALSE(authority.applyRecoveryEvent(
-      navigation_runtime::ExecutionRecoveryEvent::kEmergencyCommitted,
+      navigation_execution::ExecutionRecoveryEvent::kEmergencyCommitted,
       foreign));
   const auto after = authority.snapshot();
   EXPECT_EQ(after.admissionRequestId(), active.request_id);
   EXPECT_EQ(after.activeGeneration(), active.bundle_generation);
   EXPECT_EQ(after.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kTrackMain);
+            navigation_execution::ExecutionRecoveryState::kTrackMain);
   EXPECT_FALSE(after.safetySuffixActive());
 }
 
@@ -326,7 +331,7 @@ TEST(ExecutionLifecycle, SuspendAndClearDoNotRetainCommandIdentity) {
   EXPECT_EQ(cleared.lifecycle.phase,
             navigation_runtime::ExecutionPhase::kInitialHold);
   EXPECT_EQ(cleared.lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kInitialHold);
+            navigation_execution::ExecutionRecoveryState::kInitialHold);
 }
 
 TEST(ExecutionLifecycle, RecoveryEventsRemainOneWayInsideTheLifecycleRecord) {
@@ -336,23 +341,23 @@ TEST(ExecutionLifecycle, RecoveryEventsRemainOneWayInsideTheLifecycleRecord) {
       navigation_planning::CandidateBundleKind::kEmergencyBrake, 4U);
   authority.commandCommitted(active);
   EXPECT_TRUE(authority.applyRecoveryEvent(
-      navigation_runtime::ExecutionRecoveryEvent::kEmergencyCommitted,
+      navigation_execution::ExecutionRecoveryEvent::kEmergencyCommitted,
       active));
   EXPECT_TRUE(authority.applyRecoveryEvent(
-      navigation_runtime::ExecutionRecoveryEvent::kMainCommitted,
+      navigation_execution::ExecutionRecoveryEvent::kMainCommitted,
       active));
   EXPECT_EQ(authority.snapshot().lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kEmergencyBrake);
+            navigation_execution::ExecutionRecoveryState::kEmergencyBrake);
 
   EXPECT_TRUE(authority.applyRecoveryEvent(
-      navigation_runtime::ExecutionRecoveryEvent::kCertifiedStopObserved,
+      navigation_execution::ExecutionRecoveryEvent::kCertifiedStopObserved,
       active));
   EXPECT_EQ(authority.snapshot().lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kStoppedRecovery);
+            navigation_execution::ExecutionRecoveryState::kStoppedRecovery);
   EXPECT_TRUE(authority.applyRecoveryEvent(
-      navigation_runtime::ExecutionRecoveryEvent::kMainCommitted, active));
+      navigation_execution::ExecutionRecoveryEvent::kMainCommitted, active));
   EXPECT_EQ(authority.snapshot().lifecycle.recovery,
-            navigation_runtime::ExecutionRecoveryState::kTrackMain);
+            navigation_execution::ExecutionRecoveryState::kTrackMain);
 }
 
 }  // namespace

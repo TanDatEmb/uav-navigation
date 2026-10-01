@@ -6,8 +6,8 @@ progress, waypoint acceptance, request progression, successor goal intent and
 mission completion into `navigation_runtime::MissionProgress`. Core loads the
 immutable mission definition and enters its internal validated-goal transition;
 the PX4 External Mode no longer loads a mission or publishes successor goals.
-The legacy `MissionController` library/API remains compiled for compatibility
-but has no adapter product call path.
+The legacy `MissionController` library/API was removed in WP-P0.3; no product
+call path changed because it had no adapter product caller.
 
 Core retains an ordered, route/localization/gate-bound crossing witness across
 callbacks. Crossing is discarded on route or localization identity change,

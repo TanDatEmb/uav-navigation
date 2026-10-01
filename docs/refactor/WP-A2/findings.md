@@ -8,7 +8,8 @@ parameter hoặc external endpoint; `NOT_EVALUABLE` là chưa có phép đo runt
 
 1. **QoS tài liệu/helper lệch QoS thực của `/lio/mapping_observation`.**
    `QosProfiles::mappingObservation()` khai báo best-effort, volatile, depth 1
-   tại `src/estimation/fast_lio_ros/src/qos_profiles.cpp:25-27`, nhưng publisher
+   trên baseline trước P0.3 (các helper đã được xóa theo
+   `docs/refactor/wave1/prompts/WP-P0.3.md:25`), nhưng publisher
    thực tế dùng `QosProfiles::estimatorOutput()` (reliable, depth 10) tại
    `src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:120-121`. Runtime
    subscriber là best-effort depth 1 tại

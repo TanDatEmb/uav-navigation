@@ -40,7 +40,7 @@
 #include "navigation_runtime/runtime_boundaries.hpp"
 #include "navigation_runtime/baseline_refinement.hpp"
 #include "navigation_runtime/same_identity_renewal_injection.hpp"
-#include "navigation_runtime/execution_recovery_state.hpp"
+#include <navigation_execution/execution_recovery_state.hpp>
 #include "navigation_runtime/execution_lifecycle_view.hpp"
 #include "navigation_runtime/trajectory_completion.hpp"
 #include "navigation_runtime/planning_worker.hpp"
@@ -395,7 +395,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       std::unique_lock<std::mutex>& localization_lock);
   // Caller holds command_execution_lease_failure_latch_.transitionMutex().
   bool applyExecutionRecoveryEventLocked(
-      ExecutionRecoveryEvent event,
+      navigation_execution::ExecutionRecoveryEvent event,
       const navigation_planning::CandidateBundle& bundle) noexcept;
   // Caller holds command_execution_lease_failure_latch_.transitionMutex().
   // Command-store invalidation remains explicit at call sites because ordinary

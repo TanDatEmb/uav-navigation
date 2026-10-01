@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import shlex
 import subprocess
@@ -74,6 +75,28 @@ def _mapping_outcomes(updated: int, **overrides: int) -> dict[str, int]:
     }
     values.update(overrides)
     return values
+
+
+def _package_cmake_file(package: str) -> Path:
+    for package_xml in ROOT.glob("src/**/package.xml"):
+        try:
+            document = ET.parse(package_xml)
+        except ET.ParseError:
+            continue
+        if document.getroot().findtext("name") == package:
+            return package_xml.parent / "CMakeLists.txt"
+    raise AssertionError(f"package CMakeLists.txt not found for {package}")
+
+
+def _installed_targets(cmake: Path, package: str) -> set[str]:
+    text = cmake.read_text(encoding="utf-8").replace("${PROJECT_NAME}", package)
+    targets: set[str] = set()
+    for match in re.finditer(r"install\s*\(\s*TARGETS(?P<body>.*?)\)", text, re.DOTALL):
+        body = match.group("body")
+        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", body):
+            if token not in {"EXPORT", "ARCHIVE", "LIBRARY", "RUNTIME", "DESTINATION"}:
+                targets.add(token)
+    return targets
 
 
 class RuntimeContractTest(unittest.TestCase):
@@ -1093,6 +1116,20 @@ class RuntimeContractTest(unittest.TestCase):
             "px4_odometry_bridge/lib/px4_odometry_bridge/px4_odometry_bridge_node",
             build_provenance.CRITICAL_ARTIFACTS,
         )
+
+    def test_critical_artifacts_are_installed_targets(self) -> None:
+        for artifact in build_provenance.CRITICAL_ARTIFACTS:
+            package, _, relative = artifact.partition("/")
+            self.assertTrue(relative, artifact)
+            target = Path(relative).name
+            if target.startswith("lib"):
+                target = target[3:]
+            target = target.removesuffix(".a").removesuffix(".so")
+            self.assertIn(
+                target,
+                _installed_targets(_package_cmake_file(package), package),
+                artifact,
+            )
 
     def test_runtime_artifact_discovery_includes_workspace_shared_library(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

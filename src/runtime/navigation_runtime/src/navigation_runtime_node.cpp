@@ -42,6 +42,13 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 namespace navigation_runtime {
+using navigation_execution::ExecutionPhase;
+using navigation_execution::ExecutionRecoveryEvent;
+using navigation_execution::ExecutionRecoveryState;
+using navigation_execution::executionPhaseTelemetryCodeV1;
+using navigation_execution::executionRecoveryStateKnown;
+using navigation_execution::nominalPlanningAllowed;
+using navigation_execution::transitionExecutionRecovery;
 namespace {
 
 bool executionLifecycleSnapshotsEqual(
@@ -5327,7 +5334,7 @@ void NavigationRuntimeNode::runCycle(
       transition_role, transition_anchor_error_m,
       retained_tracking_limit_m);
   if ((planning_transition == PlanningIntentTransition::kNewIntent)) {
-    // MissionController has invalidated the previous waypoint already. Do
+    // MissionProgress has invalidated the previous waypoint already. Do
     // not publish that waypoint while PlanFromRest runs.
     std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
     std::lock_guard<std::mutex> input_lock(input_mutex_);

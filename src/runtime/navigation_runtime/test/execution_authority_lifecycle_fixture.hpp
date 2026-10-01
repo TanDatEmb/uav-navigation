@@ -4,7 +4,7 @@
 
 #include <navigation_execution/execution_authority.hpp>
 #include <navigation_runtime/execution_lifecycle_view.hpp>
-#include <navigation_runtime/execution_recovery_state.hpp>
+#include <navigation_execution/execution_recovery_state.hpp>
 
 namespace navigation_runtime {
 
@@ -60,7 +60,7 @@ class ExecutionLifecycleFixture final {
     return authority_.requestRestartFromRest(bundle);
   }
   void clearRestartFromRest() noexcept { authority_.clearRestartFromRest(); }
-  bool applyRecoveryEvent(ExecutionRecoveryEvent event,
+  bool applyRecoveryEvent(navigation_execution::ExecutionRecoveryEvent event,
                           const navigation_planning::CandidateBundle& bundle) noexcept {
     return authority_.applyRecoveryEvent(event, bundle);
   }

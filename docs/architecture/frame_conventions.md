@@ -64,6 +64,10 @@ The external-odometry bridge converts position, velocity, and attitude using
 is rejected at ingress unless an explicit measured world alignment is added;
 the bridge never invents a local yaw offset.
 
+The current SITL setup assumes that the LIO frame heading equals the EKF2 NED
+heading. This is only true because the SITL spawn yaw is zero; the assumption
+is not checked at runtime (R5-17, ADR-017 D12).
+
 Timestamp mapping, covariance conversion, public frame generation, freshness,
 finite-value validation, and geometric-jump latching are kept at this
 boundary. Publication is additionally gated by the compact LIO health
