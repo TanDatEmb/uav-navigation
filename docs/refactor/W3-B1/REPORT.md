@@ -10,7 +10,7 @@ CONFIRMED: alias Eigen thuần nằm trong `types.hpp`; `trajectory.hpp` bỏ in
 CONFIRMED: syntax compile các TU/header thuần, `git diff --check`, safety ledger và citation check đã PASS.
 CONDITIONAL: graph command không báo cycle; dependency guard chưa có trên baseline A2 chưa merge.
 NOT_MEASURED: build Release/CTest/gate all do canonical build lock của worktree R2.
-Không push/merge; commit code đã tạo, branch còn local.
+Branch `refactor/W3-B1` sẽ được push để kiến trúc sư review; không merge.
 
 ## 2. Deliverables và changed paths
 
@@ -104,4 +104,4 @@ piece.cpp R099; root_finder.cpp R099; trajectory.cpp R098
 fe39ee4 refactor(planning): move polynomial contract into navigation_planning
 ```
 
-Không push/merge.
+Branch `refactor/W3-B1` được push để review; không merge. A1/A2 dependency và Release/CTest gate vẫn là điều kiện mở.
