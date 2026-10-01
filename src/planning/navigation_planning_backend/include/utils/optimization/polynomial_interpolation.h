@@ -7,7 +7,7 @@
 
 #pragma once
 #include <utils/optimization/banded_system.h>
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 
 namespace geometry_utils {
     namespace poly_interpo {

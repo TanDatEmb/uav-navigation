@@ -4,16 +4,22 @@
  * package documentation; they are not part of the runtime API or behaviour.
  */
 
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <utility>
 
+namespace color_text {
+inline constexpr char RESET[] = "\033[0m";
+inline constexpr char GREEN[] = "\033[32m";
+}  // namespace color_text
+
 using namespace geometry_utils;
-using namespace navigation_math;
+using namespace navigation_planning::polynomial_types;
 using namespace color_text;
 // Trajectory===================================================
 

@@ -3,7 +3,7 @@
 #include <cmath>
 #include <limits>
 
-#include <data_structure/base/piece.h>
+#include <navigation_planning/polynomial/piece.hpp>
 #include <utils/header/eigen_alias.hpp>
 
 namespace navigation_planning_backend {

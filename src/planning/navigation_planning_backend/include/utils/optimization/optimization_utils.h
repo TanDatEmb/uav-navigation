@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 #include <utils/optimization/lbfgs.h>
 
 

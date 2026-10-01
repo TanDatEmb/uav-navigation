@@ -25,8 +25,19 @@ target_link_libraries(${PROJECT_NAME} INTERFACE navigation_common::navigation_co
 target_link_libraries(${PROJECT_NAME} INTERFACE navigation_mission::navigation_mission)
 target_link_libraries(${PROJECT_NAME} INTERFACE navigation_world_model::navigation_world_model)
 
+add_library(polynomial STATIC
+  src/polynomial/piece.cpp
+  src/polynomial/root_finder.cpp
+  src/polynomial/trajectory.cpp)
+add_library(${PROJECT_NAME}::polynomial ALIAS polynomial)
+target_compile_features(polynomial PUBLIC cxx_std_20)
+target_include_directories(polynomial PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_link_libraries(polynomial PUBLIC Eigen3::Eigen)
+
 install(DIRECTORY include/ DESTINATION include)
-install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}Targets)
+install(TARGETS ${PROJECT_NAME} polynomial EXPORT ${PROJECT_NAME}Targets)
 install(EXPORT ${PROJECT_NAME}Targets
   FILE ${PROJECT_NAME}Targets.cmake
   NAMESPACE ${PROJECT_NAME}::

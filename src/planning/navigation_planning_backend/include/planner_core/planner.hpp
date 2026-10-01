@@ -21,7 +21,7 @@
 #include <planner_core/config.hpp>
 #include <planner_core/absolute_deadline.hpp>
 #include <planner_runtime_context/planner_runtime_context.hpp>
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 
 #include <data_structure/base/polytope.h>
 

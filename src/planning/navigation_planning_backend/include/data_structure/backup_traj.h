@@ -8,7 +8,7 @@
 #ifndef BACKUP_TRAJ_H
 #define BACKUP_TRAJ_H
 
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 
 
 namespace navigation_planning_backend {

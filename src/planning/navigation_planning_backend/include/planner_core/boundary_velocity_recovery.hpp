@@ -4,7 +4,7 @@
 #include <cmath>
 #include <limits>
 
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 #include <navigation_planning/planning_limits.hpp>
 #include <planner_core/backup_braking.hpp>
 

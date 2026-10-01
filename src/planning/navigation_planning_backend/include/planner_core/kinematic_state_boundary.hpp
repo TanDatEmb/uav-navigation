@@ -7,7 +7,7 @@
 #include <Eigen/Core>
 #include <Eigen/LU>
 
-#include <data_structure/base/piece.h>
+#include <navigation_planning/polynomial/piece.hpp>
 
 namespace navigation_planning_backend {
 

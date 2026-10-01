@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <limits>
 
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 #include <traj_opt/config.hpp>
 
 namespace traj_opt {

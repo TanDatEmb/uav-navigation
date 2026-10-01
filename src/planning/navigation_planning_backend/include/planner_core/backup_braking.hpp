@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <limits>
 
-#include <data_structure/base/piece.h>
+#include <navigation_planning/polynomial/piece.hpp>
 #include <navigation_planning/planning_limits.hpp>
 #include <navigation_planning/kinematic_state.hpp>
 #include <utils/header/eigen_alias.hpp>
