@@ -40,6 +40,45 @@ class DependencyDirectionTests(unittest.TestCase):
             [("navigation_runtime_policy", "rclcpp")],
         )
 
+    def test_manifest_attributes_and_build_export_depend_are_checked(self) -> None:
+        root = self.write_fixture(
+            "navigation_planning",
+            "<package><name>navigation_planning</name>"
+            '<build_export_depend condition="x">navigation_mapping</build_export_depend>'
+            "</package>",
+        )
+        violations = guard.find_violations(root)
+        self.assertEqual(
+            [(v.package, v.dependency, v.target) for v in violations],
+            [("navigation_planning", "navigation_mapping", None)],
+        )
+
+    def test_cmake_variables_generators_and_comments_are_checked(self) -> None:
+        root = self.write_fixture(
+            "navigation_certifier",
+            "<package><name>navigation_certifier</name></package>",
+            "# target_link_libraries(fake rclcpp)\n"
+            "target_link_libraries(certifier PRIVATE ${RCLCPP_TARGETS})\n"
+            "ament_target_dependencies(certifier $<BUILD_INTERFACE:rclcpp::rclcpp>)\n",
+        )
+        violations = guard.find_violations(root)
+        self.assertEqual(
+            [(v.target, v.dependency) for v in violations],
+            [("certifier", "rclcpp"), ("certifier", "rclcpp")],
+        )
+
+    def test_certifier_product_target_cannot_depend_on_rclcpp(self) -> None:
+        root = self.write_fixture(
+            "navigation_certifier",
+            "<package><name>navigation_certifier</name></package>",
+            "ament_target_dependencies(certifier rclcpp)",
+        )
+        violations = guard.find_violations(root)
+        self.assertEqual(
+            [(v.package, v.target, v.dependency) for v in violations],
+            [("navigation_certifier", "certifier", "rclcpp")],
+        )
+
     def test_sitl_harness_is_only_allowed_from_runtime(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="dependency-guard-"))
         for package_name, dependency in (

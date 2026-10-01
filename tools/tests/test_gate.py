@@ -53,6 +53,7 @@ class GateScriptTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("trailing whitespace", result.stdout + result.stderr)
             self.assertNotIn("GATE_V3_RESULT=PASS", result.stdout)
+            self.assertIn("GATE_V3_RESULT=FAIL", result.stdout)
 
 
 if __name__ == "__main__":

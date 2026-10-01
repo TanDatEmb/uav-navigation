@@ -16,21 +16,17 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_XML_RE = re.compile(
-    r"<(?P<tag>depend|build_depend|exec_depend)\s*>\s*"
+    r"<(?P<tag>depend|build_depend|build_export_depend|exec_depend)\b[^>]*>\s*"
     r"(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*)\s*</(?P=tag)\s*>"
 )
-CMAKE_CALL_RE = re.compile(
-    r"(?P<kind>target_link_libraries|ament_target_dependencies)\s*\(\s*"
-    r"(?P<target>[^\s\)]+)(?P<body>.*?)\)",
-    re.DOTALL,
-)
+CMAKE_CALL_RE = re.compile(r"(?P<kind>target_link_libraries|ament_target_dependencies)\s*\(")
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_:$+.-]*")
 ACCESS_SPECIFIERS = {"PUBLIC", "PRIVATE", "INTERFACE"}
 
 # E6 is deliberately closed.  These are current B3 findings, not a blanket
 # exemption: the named W3-B3 move must remove them.
 PACKAGE_RULES: dict[str, set[str]] = {
-    "navigation_certifier": {"navigation_planning_backend"},
+    "navigation_certifier": {"navigation_planning_backend", "rclcpp"},
     "navigation_execution": {
         "navigation_planning_backend",
         "navigation_mapping",
@@ -99,10 +95,85 @@ def _resolve_target(raw_target: str, package: str) -> str:
 
 def _known_dependency(token: str, known: set[str]) -> str | None:
     token = token.strip()
-    if token in ACCESS_SPECIFIERS or token.startswith("${"):
+    if token.upper() in ACCESS_SPECIFIERS:
         return None
-    base = token.split("::", 1)[0]
-    return base if base in known else None
+    for dependency in known:
+        if re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(dependency)}"
+            rf"(?:_TARGETS)?(?=(?:::|[^A-Za-z0-9_]|$))",
+            token,
+            re.IGNORECASE,
+        ):
+            return dependency
+    return None
+
+
+def _cmake_calls(text: str):
+    """Yield balanced dependency calls while ignoring comments and strings."""
+    for match in CMAKE_CALL_RE.finditer(text):
+        quote = False
+        comment = False
+        escaped = False
+        for character in text[:match.start()]:
+            if comment:
+                if character == "\n":
+                    comment = False
+                continue
+            if quote:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    quote = False
+                continue
+            if character == "#":
+                comment = True
+            elif character == '"':
+                quote = True
+        if comment or quote:
+            continue
+        open_index = text.find("(", match.start())
+        depth = 0
+        quote = False
+        comment = False
+        escaped = False
+        close_index = None
+        for index in range(open_index, len(text)):
+            character = text[index]
+            if comment:
+                if character == "\n":
+                    comment = False
+                continue
+            if quote:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    quote = False
+                continue
+            if character == "#":
+                comment = True
+            elif character == '"':
+                quote = True
+            elif character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+                if depth == 0:
+                    close_index = index
+                    break
+        if close_index is not None:
+            body_start = open_index + 1
+            body = text[body_start:close_index]
+            target_match = re.search(r"\S+", body)
+            if target_match:
+                yield (
+                    match,
+                    target_match.group(0),
+                    body[target_match.end():],
+                )
 
 
 def collect_packages(root: Path = ROOT) -> list[PackageInfo]:
@@ -121,9 +192,9 @@ def collect_packages(root: Path = ROOT) -> list[PackageInfo]:
         if not cmake.is_file():
             continue
         text = cmake.read_text(encoding="utf-8")
-        for match in CMAKE_CALL_RE.finditer(text):
-            target = _resolve_target(match.group("target"), row.name)
-            for token in TOKEN_RE.findall(match.group("body")):
+        for match, raw_target, body in _cmake_calls(text):
+            target = _resolve_target(raw_target, row.name)
+            for token in TOKEN_RE.findall(body):
                 dependency = _known_dependency(token, known)
                 if dependency is None:
                     continue
@@ -215,6 +286,15 @@ def main() -> int:
                 file=sys.stderr,
             )
         return 1
+
+    observed = {_key(use) for use in violations}
+    for key, exception in ALLOWED_VIOLATIONS.items():
+        if key not in observed:
+            print(
+                "DEPENDENCY_DIRECTION: WARNING stale allow-list entry "
+                f"{key}; finding={exception['finding']}, remove_in={exception['wp']}",
+                file=sys.stderr,
+            )
 
     print(
         "DEPENDENCY_DIRECTION: PASS "
