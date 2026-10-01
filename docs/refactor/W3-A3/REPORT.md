@@ -15,8 +15,8 @@ Checkpoint stopped at step 1 because the designated P1A patch does not apply to 
 |---|---|
 | `git apply --check <P1A_legacy_cd7a7d8a.patch>` on W3-A3 | **FAIL / STOP** at `px4_navigation_external_mode/CMakeLists.txt`, `px4_navigation_external_mode/package.xml`, `navigation_runtime_node.cpp` |
 | same `git apply --check` on owner workspace `432dc94` | **PASS** |
-| `git diff --check` | **PENDING final checkpoint commit** |
-| `tools/gate.sh static` | **PENDING final checkpoint commit** |
+| `git diff --check` | **PASS**; clean checkpoint tree |
+| `tools/gate.sh static` | **PASS**; ledger `current=483 lines, gates=34, bypasses=1`; mission authority PASS; citations `checked=920 out_of_range=0`; dependency direction PASS with 4 existing allowed baseline warnings; `GATE_V3_RESULT=PASS` |
 | `tools/gate.sh python` | **NOT_RUN**; step 1 blocker, no Python write-set |
 | `tools/gate.sh ros` | **NOT_RUN**; step 1 blocker, no ROS write-set |
 
@@ -41,7 +41,7 @@ Source: `git log --format='%h %s' origin/main..HEAD` immediately before push.
 
 | SHA | Message |
 |---|---|
-| *(to be filled immediately before push)* | *(checkpoint commit)* |
+| `5374f6e` | `docs(wave3): record A3 replay blocker` |
 
 ## Handoff
 
