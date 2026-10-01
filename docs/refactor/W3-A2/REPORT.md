@@ -16,10 +16,11 @@ Gate v3 tooling and documentation cleanup are implemented on baseline `432dc94` 
 |---|---|
 | `git diff --check` | PASS |
 | `./tools/check_dependency_direction.py` | PASS; 4 baseline exceptions allow-listed with finding/WP, including ADR-021 Q3 `/lio/diagnostics` |
-| `tools/gate.sh static` | PASS; ledger PASS, mission authority PASS, citations `989 checked out_of_range=0`, dependency PASS, `GATE_V3_RESULT=PASS` |
+| `tools/gate.sh static` | PASS; ledger PASS, mission authority PASS, citations `923 checked out_of_range=0`, dependency PASS, `GATE_V3_RESULT=PASS` |
 | targeted gate/dependency tests | PASS (12/12) |
 | B-1 failure-injection tests | PASS; each static validator and `colcon build` fails non-zero with `GATE_V3_RESULT=FAIL` |
-| `tools/gate.sh python` | NOT_MEASURED after current B-1/B-2 changes |
+| `tools/gate.sh python` | PASS; Python 3.12.3, tools/tests 19/19, runtime/tests 421/421, 2 skips |
+| `tools/gate.sh all` | PASS on head `db6e9fb`; tools/tests 19/19, runtime/tests 421/421, 2 skips; ROS had no changed package; `GATE_V3_RESULT=PASS` |
 | `tools/gate.sh ros` | NOT_MEASURED |
 
 ## Findings
