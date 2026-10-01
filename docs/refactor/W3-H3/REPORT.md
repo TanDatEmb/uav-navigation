@@ -51,3 +51,4 @@ No qualification, flight readiness, SITL acceptance, or threshold claim is made.
 | `235d3ad` | `refactor(execution): remove legacy commit entry points` |
 | `6557652` | `docs(h3.1): record missing imu horizon authority` |
 | `852c2d5` | `docs(h3): record early-fix evidence` |
+| `8644d75` | `docs(wave3): record H3 remote handoff` |
