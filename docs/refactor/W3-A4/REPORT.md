@@ -24,14 +24,14 @@
 tools/gate.sh static
 runtime safety ledger validation: PASS (current=485 lines, gates=34, bypasses=1)
 MISSION_AUTHORITY_STATIC_CHECK: PASS
-checked=920 out_of_range=0 ambiguous_basenames=['config.hpp', 'execution_anchor.hpp', 'findings.md', 'main.cpp', 'planner.hpp']
+checked=913 out_of_range=0 ambiguous_basenames=['config.hpp', 'execution_anchor.hpp', 'findings.md', 'main.cpp', 'planner.hpp']
 DEPENDENCY_DIRECTION: PASS (packages=21, allowed_baseline_violations=4)
 GATE_V3_RESULT=PASS
 
 tools/gate.sh python
 Python 3.12.3
-Ran 19 tests in 0.854s — OK
-Ran 437 tests in 2.962s — OK (skipped=2)
+Ran 19 tests in 1.084s — OK
+Ran 437 tests in 3.620s — OK (skipped=2)
 GATE_V3_RESULT=PASS
 
 /usr/bin/python3 tools/runtime/rejudge_all.py --workspace /home/letandat/Dev/uav-navigation-w3-a4 --output /tmp/w3-a4-rejudge-r1.csv --roots /home/letandat/.codex/worktrees/wave2-h2/runtime_evidence
@@ -72,6 +72,7 @@ Source: `git log --format='%h %s' origin/main..HEAD` immediately before the fina
 
 | SHA | Message |
 |---|---|
+| `64997cc` | `docs(runtime-tools): refresh A4 checkpoint report` |
 | `1eabbc9` | `fix(runtime-tools): narrow diagnostic tracking scope` |
 | `5679286` | `test(runtime-tools): expose A4 review regressions` |
 | `96e6f7b` | `docs(wave3): complete A4 commit inventory` |
