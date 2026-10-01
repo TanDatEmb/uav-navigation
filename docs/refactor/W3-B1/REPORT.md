@@ -35,7 +35,7 @@ NOT_APPLICABLE: SITL/replay không chạy vì đây là MOVE-only, không đổi
 - `tools/gate.sh python`: PASS — Python 3.12.3; `tools/tests` 19/19; runtime `422 tests`, `OK (skipped=2)`.
 - `flock /tmp/uavnav-build.lock env PARALLEL_WORKERS=2 MAKE_JOBS=2 make build`: PASS — 23 packages, 18m43s; authoritative build manifest được ghi trong `install/`.
 - `flock /tmp/uavnav-build.lock env PARALLEL_WORKERS=2 MAKE_JOBS=2 make test`: PASS — exit 0; runtime `422 tests`, `OK (skipped=1)`; CTest affected/reverse đã chạy trên build Release.
-- `flock /tmp/uavnav-build.lock bash -lc 'source /opt/ros/jazzy/setup.bash && env PARALLEL_WORKERS=2 MAKE_JOBS=2 ./tools/gate.sh ros'`: FAIL — đúng HEAD `fd2634a078e83c41c9df3f5c25197023c3779e39`; `1483 tests, 0 errors, 5 failures, 0 skipped`. Các failure là attachment-only dependency checks của `px4_ros2_cpp`, cụ thể cpplint/uncrustify; gate không đạt `GATE_V3_RESULT=PASS`.
+- `flock /tmp/uavnav-build.lock bash -lc 'source /opt/ros/jazzy/setup.bash && env PARALLEL_WORKERS=2 MAKE_JOBS=2 ./tools/gate.sh ros'`: FAIL — rerun sau khi B6 nhả lock, đúng HEAD `ae7216ae32cbbc0a1ed03959451642b678d906cd`; `1483 tests, 0 errors, 5 failures, 0 skipped`. Các failure là attachment-only dependency checks của `px4_ros2_cpp`, cụ thể cpplint/uncrustify; gate không đạt `GATE_V3_RESULT=PASS`.
 - SITL/replay: NOT_APPLICABLE cho `refactor(move)`; không dùng thiếu SITL để claim qualification runtime.
 
 ## REVIEW_R1 finding → status → commit
