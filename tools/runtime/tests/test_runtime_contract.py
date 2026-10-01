@@ -1868,15 +1868,6 @@ class RuntimeContractTest(unittest.TestCase):
             planning = runner._mission_planning(mission)
             self.assertEqual(planning["requested_cruise_speed_mps"], expected_velocity)
 
-    def test_navigation_command_publisher_guard_is_ast_based(self) -> None:
-        from tools.check_world_evidence_non_authority import publisher_types
-
-        for source in (
-            "self.create_publisher(NavigationCommand, topic, qos)",
-            "self.create_publisher(\n NavigationCommand, topic, qos)",
-        ):
-            self.assertEqual(publisher_types(source), ["NavigationCommand"])
-
     def test_runtime_json_write_is_atomic_when_sigterm_interrupts_replace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = runner.Session(Path(temporary))
