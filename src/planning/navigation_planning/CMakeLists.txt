@@ -30,6 +30,7 @@ add_library(polynomial STATIC
   src/polynomial/root_finder.cpp
   src/polynomial/trajectory.cpp)
 add_library(${PROJECT_NAME}::polynomial ALIAS polynomial)
+set_target_properties(polynomial PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(polynomial PUBLIC cxx_std_20)
 target_include_directories(polynomial PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
