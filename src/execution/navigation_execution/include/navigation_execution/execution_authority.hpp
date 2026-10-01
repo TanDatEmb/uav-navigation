@@ -119,7 +119,8 @@ enum class StageDecision : std::uint8_t {
 };
 
 // Sole owner of the product command candidate that is allowed to reach the
-// sampler. Candidate construction and validation happen before tryCommit();
+// sampler. Candidate construction and validation happen before conditional
+// product admission;
 // the store critical section compares identities and swaps one shared pointer.
 class ExecutionAuthority {
  public:
