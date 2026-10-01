@@ -3,7 +3,7 @@
 #include <memory>
 
 #include <navigation_execution/execution_authority.hpp>
-#include <navigation_runtime/execution_lifecycle_view.hpp>
+#include <navigation_execution/execution_lifecycle.hpp>
 #include <navigation_execution/execution_recovery_state.hpp>
 
 namespace navigation_runtime {

@@ -1,9 +1,13 @@
 #include "navigation_runtime/planner_fsm.hpp"
-#include "navigation_runtime/baseline_refinement.hpp"
+#include <navigation_execution/execution_decisions.hpp>
+#include <navigation_execution/execution_lifecycle.hpp>
+#include <navigation_execution/execution_recovery_state.hpp>
+#include <navigation_mission/waypoint_behavior.hpp>
+#include "navigation_runtime_policy/baseline_refinement.hpp"
 #include "navigation_runtime/commit_trace.hpp"
 #include "execution_authority_lifecycle_fixture.hpp"
-#include "navigation_runtime/runtime_boundaries.hpp"
-#include "navigation_runtime/desired_planning_intent.hpp"
+#include "navigation_runtime_policy/runtime_boundaries.hpp"
+#include "navigation_runtime_policy/desired_planning_intent.hpp"
 #include <navigation_common/time.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_execution/execution_state_store.hpp>
@@ -21,6 +25,45 @@ using navigation_execution::ExecutionRecoveryState;
 using navigation_execution::nominalPlanningAllowed;
 using navigation_execution::transitionExecutionRecovery;
 namespace {
+
+using navigation_execution::ExecutionPhase;
+using navigation_execution::ExecutionRecoveryEvent;
+using navigation_execution::ExecutionRecoveryState;
+using navigation_execution::PassThroughTerminalAckFacts;
+using navigation_execution::PhaseExecutionCertificate;
+using navigation_execution::PhaseExecutionCertificateStatus;
+using navigation_execution::RetainedValidationTransition;
+using navigation_execution::StaleCommandPublicationDisposition;
+using navigation_execution::TimeAlignedRetainedTracking;
+using navigation_execution::assessPhaseExecutionCertificate;
+using navigation_execution::assessTimeAlignedRetainedTracking;
+using navigation_execution::backupStopNeedsMeasuredRestart;
+using navigation_execution::classifyStaleCommandPublication;
+using navigation_execution::committedSafetySuffixIsUsable;
+using navigation_execution::committedTerminalBundleHoldIsPending;
+using navigation_execution::commandAnchorRecoveryDue;
+using navigation_execution::makeMeasuredEmergencyBoundary;
+using navigation_execution::measuredStateEmergencyMayReplaceCommittedCommand;
+using navigation_execution::passThroughTerminalAckMayRetainCommand;
+using navigation_execution::phaseExecutionBridgeMayPreserveMain;
+using navigation_execution::plannerEmergencyTerminalAltitude;
+using navigation_execution::projectedRetainedAnchorErrorUpperBound;
+using navigation_execution::retainedCommandMatchesExecutionIdentity;
+using navigation_execution::retainedCommandTrackingLimit;
+using navigation_execution::retainedSafetyTransitionMayActivateBackup;
+using navigation_execution::retainedValidationTransition;
+using navigation_execution::stoppedHoldCommandRole;
+using navigation_execution::stoppedPlanningTimeoutMayFailClosed;
+using navigation_execution::supersedingBundleMayRemainAvailable;
+using navigation_execution::terminalHoldIsPending;
+using navigation_execution::terminalMainHasIndeterminatePreStartPressure;
+using navigation_execution::terminalStopCompletionObserved;
+using navigation_execution::terminalStopEndpointContractValid;
+using navigation_execution::terminalStopMayDeferAnchorRecovery;
+using navigation_execution::terminalSuccessorHoldMayTransfer;
+using navigation_execution::worldFreshnessSuspendedCommandMayResume;
+using navigation_mission::completedPassThroughRequiresContinuation;
+using navigation_mission::waypointBehaviorContractValid;
 
 TEST(PlannerFsm, ValidatedStoppedHoldPreservesBackupWitnessOnly) {
   using Role = navigation_planning::CandidateRole;

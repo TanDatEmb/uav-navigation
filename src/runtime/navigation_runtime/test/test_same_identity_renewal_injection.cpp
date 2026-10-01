@@ -8,12 +8,16 @@
 #include <gtest/gtest.h>
 
 #include <navigation_execution/execution_authority.hpp>
-#include <navigation_runtime/execution_lifecycle_view.hpp>
+#include <navigation_execution/execution_lifecycle.hpp>
+#include <navigation_execution/execution_recovery_state.hpp>
 
 namespace navigation_runtime {
 using navigation_execution::ExecutionPhase;
 using navigation_execution::ExecutionRecoveryState;
 namespace {
+
+using navigation_execution::ExecutionPhase;
+using navigation_execution::ExecutionRecoveryState;
 
 std::shared_ptr<const navigation_contracts::msg::NavigationGoal> goalFor(
     const std::shared_ptr<const navigation_planning::CandidateBundle>& bundle) {

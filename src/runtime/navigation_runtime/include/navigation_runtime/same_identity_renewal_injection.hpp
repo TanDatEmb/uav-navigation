@@ -4,9 +4,9 @@
 
 #include <navigation_planning/planning_request.hpp>
 
-#include "navigation_runtime/execution_lifecycle_view.hpp"
+#include <navigation_execution/execution_lifecycle.hpp>
 #include <navigation_execution/execution_recovery_state.hpp>
-#include "navigation_runtime/runtime_boundaries.hpp"
+#include "navigation_runtime_policy/runtime_boundaries.hpp"
 
 namespace navigation_runtime {
 
@@ -50,8 +50,7 @@ struct SameIdentityRenewalFacts final {
   return facts.start_mode ==
              navigation_planning::PlanningStartMode::kCommittedFutureState &&
          facts.transition_kind == GoalTransitionKind::kSteady &&
-         facts.recovery_state ==
-             navigation_execution::ExecutionRecoveryState::kTrackMain &&
+         facts.recovery_state == navigation_execution::ExecutionRecoveryState::kTrackMain &&
          facts.execution_phase == navigation_execution::ExecutionPhase::kTrackingMain &&
          facts.desired_goal_valid && facts.executing_goal_valid &&
          facts.desired_identity_matches_executing &&

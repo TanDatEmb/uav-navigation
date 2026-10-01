@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-#include "navigation_runtime/planning_supervisor.hpp"
+#include "navigation_runtime_policy/planning_supervisor.hpp"
 #include "navigation_runtime/planning_worker.hpp"
 #include "navigation_runtime/heading_rebind_worker.hpp"
 

@@ -3,7 +3,7 @@
 #include <array>
 #include <cstdint>
 
-#include <navigation_runtime/desired_planning_intent.hpp>
+#include <navigation_runtime_policy/desired_planning_intent.hpp>
 
 namespace navigation_runtime {
 namespace {

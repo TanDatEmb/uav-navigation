@@ -13,7 +13,7 @@
 #include <thread>
 #include <utility>
 
-#include "navigation_runtime/planning_supervisor.hpp"
+#include "navigation_runtime_policy/planning_supervisor.hpp"
 
 namespace navigation_runtime {
 
