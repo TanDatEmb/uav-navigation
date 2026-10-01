@@ -1,0 +1,153 @@
+# WP-A6 AS-IS draft. No product/config value is changed here.
+# Values are current SITL YAML overrides where a profile exists, otherwise the
+# typed/default value. Conflict strings intentionally prevent a false PASS.
+
+profile:
+  name: sitl_current_as_is
+  qualification_status: NOT_EVALUABLE
+  provenance:
+    baseline_commit: 7e0b8508781f68ecbd18d15d40129e019108f3e7
+    source_branch: refactor/WP-A6
+
+timing:
+  planner_period_s: 0.10 # planning_timing.hpp:9
+  solve_deadline_s: "CONFLICT: [0.08 (planner.yaml:44; planning_timing.hpp:11), 0.18 (HG-001)]"
+  stitch_duration_s: 0.40 # planning_timing.hpp:12; planner.yaml:42
+  commit_guard_s: 0.02 # planning_timing.hpp:13
+  minimum_main_reserve_s: 0.60 # planning_timing.hpp:14-15; derived, not a new gate
+  command_period_s: 0.02 # planning_timing.hpp:17
+  planner_watchdog_timeout_s: 1.0 # mapping.yaml:23; navigation_runtime_node.cpp:720
+  finalization_reserve_s: 0.04 # planner.yaml:48; qualification.yaml:17
+  stationary_speed_mps: 0.15 # planning_timing.hpp:25; typed scheduler copy only
+  mission_acceptance_speed_mps: 0.15 # mission.hpp:38; mission YAML files; YAML-loadable
+  safety_stop_speed_mps: 0.15 # mission_controller.hpp:100; mission_controller.cpp:376
+  adapter_stationary_velocity_gate_mps: 0.15 # navigation_mode_node.cpp:1526-1527
+  runtime_stopped_recovery_speed_gate_mps: 0.15 # navigation_runtime_node.cpp:4499,4617
+  initial_hold_timeout_s: 5.0 # planning_timing.hpp:23; external_mode.yaml:18; pinned node.cpp:257
+  stopped_recovery_timeout_s: 5.0 # planning_timing.hpp:24; external_mode.yaml:22; pinned node.cpp:258
+  temporal_sample_min_s: 0.002 # trajectory_world_validator.hpp:701; HG-010: 2 ms
+  temporal_sample_max_s: 0.05 # trajectory_world_validator.hpp:701; HG-010: 50 ms
+
+freshness:
+  observation_max_age_s: 0.5 # mapping.yaml:22; runtime_node.cpp:718; odometry bridge:49; HG-006
+  trajectory_stale_after_s: 0.10 # external_mode.yaml:15; node.cpp:184,255; pinned
+  state_stale_after_s: 0.20 # external_mode.yaml:16; node.cpp:186,256; pinned
+  odometry_diagnostics_max_age_s: 2.0 # px4_external_odometry_bridge_node.cpp:51
+  reset_metadata_max_age_s: 0.10 # px4_external_odometry_bridge_node.cpp:64
+  odometry_association_gap_s: 0.005 # px4_external_odometry_bridge_node.cpp:66
+  visibility_association_maximum_age_s: 0.5 # ros_output_publisher.cpp:23; 500 ms typed gate
+  propagated_odometry_maximum_correction_age_s: 0.50 # sim.yaml:69; dataset.yaml:70
+  initial_prior_maximum_topic_prior_age_s: 0.5 # parameter_loader.cpp:200
+  px4_time_validator_max_stale_age_s: 0.20 # time_validator.hpp:15; typed nanoseconds
+  px4_time_validator_max_future_age_s: 0.20 # time_validator.hpp:16; typed nanoseconds
+
+lease:
+  adapter_command_lease_s: 0.10 # planning_timing.hpp:19; typed command lease
+  trajectory_wait_timeout_s: 5.0 # external_mode.yaml:18; node.cpp:187,257; pinned
+  planner_recovery_wait_timeout_s: 5.0 # external_mode.yaml:22; node.cpp:189,258; pinned
+
+envelope:
+  main:
+    maximum_velocity_mps: 5.0 # planner.yaml:88; planner_core/config.hpp:110; HG-004
+    maximum_acceleration_mps2: 5.0 # planner.yaml:89; planner_core/config.hpp:112; HG-004
+    maximum_jerk_mps3: 8.0 # planner.yaml:90; planner_core/config.hpp:114; HG-004
+  physical_backup:
+    maximum_velocity_mps: 12.0 # planner.yaml:99; planning_limits.hpp:16; HG-004
+    maximum_acceleration_mps2: 12.0 # planner.yaml:100; planning_limits.hpp:17; HG-004
+    maximum_jerk_mps3: 30.0 # planner.yaml:101; planning_limits.hpp:18; HG-004
+    maximum_body_rate_rad_s: 5.0 # planner.yaml:102; planning_limits.hpp:19
+    maximum_yaw_rate_rad_s: 5.0 # planner.yaml:102; planning_limits.hpp:20
+    maximum_yaw_acceleration_rad_s2: 0.3 # planning_limits.hpp:21
+    bridge_maximum_expected_speed_mps: 10.0 # sim.yaml:87; odometry bridge:57; distinct from physical 12 m/s
+    bridge_position_jump_m: 0.75 # sim.yaml:85; odometry bridge:53; distinct from HG-007
+    bridge_orientation_jump_rad: 0.35 # sim.yaml:86; odometry bridge:55
+    bridge_maximum_continuity_dt_s: 0.5 # sim.yaml:90; odometry bridge:63
+    mass_kg: 1.64 # planner.yaml:181; planning_limits.hpp:24
+    minimum_thrust_n: "CONFLICT: [6.0 (planner.yaml:104), 6.0*1.64 (planning_limits.hpp:22)]"
+    maximum_thrust_n: "CONFLICT: [25.0 (planner.yaml:103), 25.0*1.64 (planning_limits.hpp:23)]"
+  route:
+    yaw_rate_max_rad_s: "CONFLICT: [2.0 (planner.yaml:72), 1.5 (planner_core/config.hpp:202)]"
+    yaw_acceleration_max_rad_s2: 2.0 # planner.yaml:73
+  optimization_dynamic_reserve_ratio: 0.98 # planner.yaml:139; optimization-only
+
+geometry:
+  vehicle_radius_m: 0.35 # planner.yaml:64; planner_core/config.hpp:196; runner.py:3161; external_mode_scenario.py:1118
+  tracking_error_budget_m: 0.25 # planner.yaml:65; HG-005
+  localization_error_budget_m: 0.05 # planner.yaml:66; HG-005
+  mapping_error_budget_m: 0.10 # planner.yaml:67; HG-005
+  planning_margin_m: 0.05 # planner.yaml:68; HG-005
+  planning_radius_sum_m: 0.80 # HG-005 derived sum
+  command_anchor_error_limit_m: 0.75 # command_safety_contract.hpp:10; HG-007
+  goal_completion_tolerance_m: 0.20 # goal_contract.hpp:12; shadow planner:252; HG-009
+  corridor_plane_tolerance_m: 0.01 # continuous_clearance.hpp:23; planner.yaml:125,167; HG-002/HG-013
+  map_resolution_m: 0.20 # planner.yaml:215,216; HG-010 uses spatial factor 0.5
+  spatial_step_factor: 0.5 # trajectory_world_validator.hpp:568; HG-010
+  local_window_m: 20.0 # planning_timing.hpp:22; planner.yaml:52
+  visibility_horizon_floor_m: 14.0 # planner.yaml:33; HG-034
+  visibility_horizon_cap_m: 23.0 # planner.yaml:28; HG-034
+  adapter_airborne_height_gate_m: 0.5 # navigation_mode_node.cpp:385,937,1518,2294
+  estimator_min_range_m: "CONFLICT: [0.5 (sim.yaml:44; dataset.yaml:51), 0.10 (parameter_loader.cpp:259)]"
+  scan_voxel_m: "CONFLICT: [0.2 (sim.yaml:46), 0.9 (dataset.yaml:53), 0.2 (parameter_loader.cpp:262)]"
+  registration_voxel_m: "CONFLICT: [0.3 (sim.yaml:52; dataset.yaml:59), 0.2 (parameter_loader.cpp:264)]"
+  local_map_half_extent_xy_m: "CONFLICT: [30 (sim.yaml:54), 50 (dataset.yaml:61/default)]"
+  local_map_half_extent_z_m: "CONFLICT: [15 (sim.yaml:54), 25 (dataset.yaml:61/default)]"
+
+# These values are numerical/queue controls, not new safety policy.
+tolerance_numeric:
+  anchor_pvaj_roundoff_tolerances: "position=1.0e-5; velocity=1.0e-5; acceleration=1.0e-4; jerk=1.0e-3; yaw=1.0e-6; yaw_rate=1.0e-5" # candidate_bundle.hpp:398-403; execution_anchor.hpp:47-52; HG-027
+  numerical_roundoff_epsilons: "CONFLICT: [multiple <1e-6 comparison epsilons]" # representative sources in constants.csv; unit-conversion 1e-9 excluded
+  exp_opt_accuracy: 5.0e-6 # planner.yaml:112; typed default 1.0e-5 at traj_opt/config.hpp:187
+  backup_opt_accuracy: 1.0e-6 # planner.yaml:161
+  smooth_eps: 0.01 # planner.yaml:121,166; traj_opt/config.hpp:190
+  command_clock_tolerance_s: 1.0e-9 # planner_fsm.hpp:459; comparison epsilon
+
+retry:
+  feasibility_retry_max_iterations: 64 # planner.yaml:119; traj_opt/config.hpp:195
+  maximum_feasibility_retries: 2 # nominal_trajectory_optimizer.cpp:2767
+  ciri_pass_count: 1 # planner_core/config.hpp:201; planner.yaml:36
+  roundoff_correction_count: 8 # evidence_speed_governor.hpp:152
+
+queue:
+  imu_queue_capacity: 4096 # parameter_loader.cpp:286; sim.yaml:71; dataset.yaml:72
+  lidar_queue_capacity: "CONFLICT: [16 (sim.yaml:72; dataset.yaml:73), 8 (parameter_loader.cpp:288)]"
+  navigation_command_queue_capacity: 16 # navigation_runtime_node.cpp:2780
+  monitor_queue_depth: 100 # common.yaml:2; monitor.py:554
+  lbfgs_memory_size: 32 # planner.yaml:116,164; traj_opt/config.hpp:189
+  nominal_integral_resolution: "CONFLICT: [15 (planner.yaml:120), 10 (traj_opt/config.hpp:188)]"
+  backup_integral_resolution: 12 # planner.yaml:165
+
+evidence:
+  qualified_speed_mps: [1.0, 3.0, 5.0] # planning_stability_qualification.yaml:4
+  characterization_speed_mps: [6.0, 8.0] # planning_stability_qualification.yaml:5
+  consecutive_runs_per_speed: 10 # planning_stability_qualification.yaml:8
+  minimum_seed_count: 30 # planning_stability_qualification.yaml:10
+  mid360_visibility_sensor_model: Mid-360 # runtime_safety_current.md:100; model identifier, not numeric threshold
+  qualification_status: NOT_EVALUABLE # no authoritative effective manifest/distribution
+
+judge:
+  max_match_gap_s: 0.15 # tools/runtime/evaluation.py:27
+  stop_enter_mps: 0.10 # tools/runtime/evaluation.py:28
+  stop_exit_mps: 0.20 # tools/runtime/evaluation.py:29
+  min_stop_duration_s: 0.20 # tools/runtime/evaluation.py:30
+  default_stale_after_s: 1.0 # common.yaml:6; report.py:1111,1269; monitor.py:103
+  stale_after_s_by_stream:
+    simulation_clock: 0.50 # common.yaml:11
+    imu: 0.10 # common.yaml:12
+    lidar: 0.50 # common.yaml:13
+    corrected_odometry: 1.00 # common.yaml:14
+    propagated_odometry: 0.50 # common.yaml:15
+    registered_scan: 0.50 # common.yaml:16
+    mapping_diagnostics: 2.0 # common.yaml:17
+    external_odometry: 0.20 # common.yaml:18
+    ground_truth_odometry: 0.50 # common.yaml:19
+    px4_odometry: 1.00 # common.yaml:20
+    vehicle_status: 1.00 # common.yaml:21
+    local_position: 1.00 # common.yaml:22
+    estimator_status_flags: 2.50 # common.yaml:23
+  vehicle_collision_radius_m: 0.35 # runner.py:3161; external_mode_scenario.py:1118; R-08 seam
+  ground_truth_collision_clearance_m: 0.05 # external_mode_scenario.py:3112
+  lio_residual_p95_warning_m: 0.35 # external_mode_scenario.py:2923; warning only
+  lio_residual_watchdog_m: 0.5 # external_mode_scenario.py:1395; fail-closed watchdog
+  lio_residual_watchdog_velocity_mps: 0.75 # external_mode_scenario.py:1395
+  pillar_clearance_m: 0.8 # external_mode_scenario.yaml:30; external_mode_scenario.py:3110
+  world_observation_fault_duration_ms: "CONFLICT: [allowed {420,430,520,700}; disabled sentinel 0]" # runner.py:2009,3029,3132

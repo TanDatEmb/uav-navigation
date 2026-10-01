@@ -1,0 +1,775 @@
+# Message ICD, baseline 7e0b850. `fields` are serialized ROS fields; `constants`
+# preserves the remaining .msg declarations so the declaration totals are
+# explicit (for example NavigationExecutionDiagnostics is 61 fields + 4 constants = 65).
+
+- msg: EstimatorHealth
+  type: navigation_contracts/msg/EstimatorHealth
+  source: src/contracts/navigation_contracts/msg/EstimatorHealth.msg
+  constants:
+    - {name: WAITING_FOR_SENSORS, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/EstimatorHealth.msg:5}
+    - {name: INITIALIZING, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/EstimatorHealth.msg:6}
+    - {name: TRACKING, type: uint8, value: 2, source: src/contracts/navigation_contracts/msg/EstimatorHealth.msg:7}
+    - {name: DEGRADED, type: uint8, value: 3, source: src/contracts/navigation_contracts/msg/EstimatorHealth.msg:8}
+    - {name: LOST, type: uint8, value: 4, source: src/contracts/navigation_contracts/msg/EstimatorHealth.msg:9}
+    - {name: RESETTING, type: uint8, value: 5, source: src/contracts/navigation_contracts/msg/EstimatorHealth.msg:10}
+  fields:
+    - {name: header, type: std_msgs/Header, unit: -, frame: -, semantics: ROS timestamp for health snapshot, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:616], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1730, purpose: gate}], unused: false}
+    - {name: localization_epoch, type: uint64, unit: -, frame: -, semantics: Public FAST-LIO frame epoch, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:616], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1730, purpose: gate}, {node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:337, purpose: gate}], unused: false}
+    - {name: state, type: uint8, unit: enum, frame: -, semantics: Estimator lifecycle state, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:735], read_by: [{node: px4_external_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:158, purpose: safety_gate}], unused: false}
+    - {name: navigation_valid, type: bool, unit: -, frame: -, semantics: Estimator navigation validity, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:756], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1730, purpose: gate}, {node: px4_external_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:158, purpose: safety_gate}], unused: false}
+    - {name: covariance_valid, type: bool, unit: -, frame: -, semantics: Covariance projection is usable, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:804], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1730, purpose: gate}], unused: false}
+    - {name: observability_valid, type: bool, unit: -, frame: -, semantics: Translation observability gate result, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:759], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1730, purpose: gate}], unused: false}
+    - {name: correction_fresh, type: bool, unit: -, frame: -, semantics: Latest correction is fresh enough for propagation, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:616], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1730, purpose: gate}], unused: false}
+    - {name: propagation_valid, type: bool, unit: -, frame: -, semantics: Propagated state is valid, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:616], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1730, purpose: gate}], unused: false}
+    - {name: last_correction_stamp, type: builtin_interfaces/Time, unit: ns, frame: -, semantics: Source time of last accepted correction, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:616], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1730, purpose: compute}], unused: false}
+    - {name: last_propagated_state_stamp, type: builtin_interfaces/Time, unit: ns, frame: -, semantics: Source time of last propagated state, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:616], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1730, purpose: compute}], unused: false}
+    - {name: reason_code, type: uint16, unit: -, frame: -, semantics: Compact estimator reason code, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:616], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1730, purpose: log}], unused: false}
+
+- msg: NavigationCommand
+  type: navigation_contracts/msg/NavigationCommand
+  source: src/contracts/navigation_contracts/msg/NavigationCommand.msg
+  constants:
+    - {name: ROLE_MAIN, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:28}
+    - {name: ROLE_BACKUP, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:29}
+    - {name: ROLE_EMERGENCY, type: uint8, value: 2, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:30}
+    - {name: STATUS_EMPTY, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:33}
+    - {name: STATUS_READY, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:34}
+    - {name: STATUS_BRAKING, type: uint8, value: 2, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:35}
+    - {name: STATUS_COMPLETED, type: uint8, value: 3, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:36}
+    - {name: STATUS_REJECTED, type: uint8, value: 4, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:37}
+    - {name: STATUS_HANDOVER, type: uint8, value: 5, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:38}
+    - {name: EMERGENCY_AUTHORIZATION_NONE, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:53}
+    - {name: EMERGENCY_AUTHORIZATION_ACTUAL_ANCHOR_CERTIFICATE_EXCEEDED, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:54}
+    - {name: EMERGENCY_AUTHORIZATION_PROJECTED_MAIN_ONLY_CERTIFICATE_EXCEEDED, type: uint8, value: 2, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:55}
+    - {name: EMERGENCY_AUTHORIZATION_OTHER_INVALID, type: uint8, value: 3, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:56}
+    - {name: EMERGENCY_AUTHORIZATION_INDETERMINATE_PRE_START_TRACKING, type: uint8, value: 4, source: src/contracts/navigation_contracts/msg/NavigationCommand.msg:58}
+  fields:
+    - {name: header, type: std_msgs/Header, unit: -, frame: lio_odom, semantics: Command sample stamp and frame, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9366], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:272, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1599, purpose: evidence}], unused: false}
+    - {name: localization_epoch, type: uint64, unit: -, frame: -, semantics: Estimator epoch bound to command, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9673], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1392, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1603, purpose: evidence}], unused: false}
+    - {name: goal_epoch, type: uint64, unit: -, frame: -, semantics: Monotonic goal identity, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9673], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1392, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1604, purpose: evidence}], unused: false}
+    - {name: mode_activation_id, type: uint64, unit: -, frame: -, semantics: PX4 External Mode activation binding, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9673], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1392, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1602, purpose: evidence}], unused: false}
+    - {name: mission_id, type: string, unit: -, frame: -, semantics: Mission identity, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9673], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1392, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1602, purpose: evidence}], unused: false}
+    - {name: waypoint_index, type: uint32, unit: -, frame: -, semantics: Active waypoint index, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9673], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1392, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1604, purpose: evidence}], unused: false}
+    - {name: request_id, type: uint64, unit: -, frame: -, semantics: Exact goal request identity, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9673], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1392, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1605, purpose: evidence}], unused: false}
+    - {name: world_generation, type: uint64, unit: -, frame: lio_odom, semantics: World model generation bound to planning, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9673], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:507, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1666, purpose: evidence}], unused: false}
+    - {name: world_revision, type: uint64, unit: -, frame: lio_odom, semantics: World observation revision, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9673], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:508, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1667, purpose: evidence}], unused: false}
+    - {name: world_observation_stamp, type: builtin_interfaces/Time, unit: ns, frame: lio_odom, semantics: Source time of world evidence, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9366], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:510, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1668, purpose: evidence}], unused: false}
+    - {name: bundle_generation, type: uint64, unit: -, frame: -, semantics: Committed trajectory bundle generation, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9673], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1392, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1606, purpose: evidence}], unused: false}
+    - {name: certified_main_continuation, type: bool, unit: -, frame: -, semantics: Producer-certified MAIN continuation witness, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9673], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1016, purpose: gate}], unused: false}
+    - {name: continuation_boundary_stamp_ns, type: uint64, unit: ns, frame: -, semantics: Boundary time for certified continuation, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9673], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1016, purpose: gate}], unused: false}
+    - {name: sample_id, type: uint64, unit: -, frame: -, semantics: Strictly ordered command sample identity, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9673], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1392, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1606, purpose: evidence}], unused: false}
+    - {name: state_source_stamp, type: builtin_interfaces/Time, unit: ns, frame: lio_odom, semantics: Vehicle-state source time used by authorization, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9366], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1392, purpose: gate}], unused: false}
+    - {name: valid_until, type: builtin_interfaces/Time, unit: ns, frame: -, semantics: Temporal lease end, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9366], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1392, purpose: gate}], unused: false}
+    - {name: role, type: uint8, unit: enum, frame: -, semantics: MAIN/BACKUP/EMERGENCY command role, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9395], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:77, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1609, purpose: evidence}], unused: false}
+    - {name: status, type: uint8, unit: enum, frame: -, semantics: Command lifecycle status, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9395], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1334, purpose: gate}, {node: world_observation_gate, at: tools/runtime/world_observation_gate.py:114, purpose: judge}], unused: false}
+    - {name: position, type: geometry_msgs/Point, unit: m, frame: lio_odom, semantics: Position trajectory sample, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9538], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1793, purpose: compute}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1670, purpose: evidence}], unused: false}
+    - {name: velocity, type: geometry_msgs/Vector3, unit: m/s, frame: lio_odom, semantics: Velocity trajectory sample, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9539], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1793, purpose: compute}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1671, purpose: evidence}], unused: false}
+    - {name: acceleration, type: geometry_msgs/Vector3, unit: m/s^2, frame: lio_odom, semantics: Acceleration trajectory sample, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9540], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1793, purpose: compute}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1672, purpose: evidence}], unused: false}
+    - {name: jerk, type: geometry_msgs/Vector3, unit: m/s^3, frame: lio_odom, semantics: Jerk trajectory sample, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9543], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:115, purpose: compute}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1673, purpose: evidence}], unused: false}
+    - {name: yaw, type: float64, unit: rad, frame: lio_odom, semantics: ENU yaw setpoint, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9549], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1795, purpose: compute}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1674, purpose: evidence}], unused: false}
+    - {name: yaw_rate, type: float64, unit: rad/s, frame: lio_odom, semantics: ENU yaw-rate setpoint, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9549], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1796, purpose: compute}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1675, purpose: evidence}], unused: false}
+    - {name: trajectory_time_s, type: float64, unit: s, frame: -, semantics: Time along committed bundle, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9395], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:121, purpose: compute}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1599, purpose: evidence}], unused: false}
+    - {name: emergency_authorization_reason, type: uint8, unit: enum, frame: -, semantics: Velocity-only emergency authorization reason, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9416], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1705, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1632, purpose: evidence}], unused: false}
+    - {name: emergency_candidate_commit_result, type: uint8, unit: enum, frame: -, semantics: Independent emergency brake commit result, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9420], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1707, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1635, purpose: evidence}], unused: false}
+
+- msg: NavigationCommandAdmission
+  type: navigation_contracts/msg/NavigationCommandAdmission
+  source: src/contracts/navigation_contracts/msg/NavigationCommandAdmission.msg
+  constants: []
+  fields:
+    - {name: header, type: std_msgs/Header, unit: -, frame: lio_odom, semantics: Receipt publication stamp, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:983], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1754, purpose: gate}], unused: false}
+    - {name: mode_activation_id, type: uint64, unit: -, frame: -, semantics: Adapter activation identity, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:983], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2792, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1840, purpose: evidence}], unused: false}
+    - {name: mission_id, type: string, unit: -, frame: -, semantics: Command mission identity, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:983], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2792, purpose: gate}], unused: false}
+    - {name: localization_epoch, type: uint64, unit: -, frame: -, semantics: Command estimator epoch, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:983], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2792, purpose: gate}], unused: false}
+    - {name: goal_epoch, type: uint64, unit: -, frame: -, semantics: Command goal epoch, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:983], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2792, purpose: gate}], unused: false}
+    - {name: waypoint_index, type: uint32, unit: -, frame: -, semantics: Command waypoint index, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:983], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2792, purpose: gate}], unused: false}
+    - {name: request_id, type: uint64, unit: -, frame: -, semantics: Exact command request identity, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:983], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2792, purpose: gate}], unused: false}
+    - {name: bundle_generation, type: uint64, unit: -, frame: -, semantics: Exact bundle generation, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:983], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2792, purpose: gate}], unused: false}
+    - {name: sample_id, type: uint64, unit: -, frame: -, semantics: Exact accepted sample identity, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:983], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2792, purpose: gate}], unused: false}
+
+- msg: NavigationCommandRejection
+  type: navigation_contracts/msg/NavigationCommandRejection
+  source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg
+  constants:
+    - {name: STAGE_PRESENCE, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg:5}
+    - {name: STAGE_CONTRACT, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg:6}
+    - {name: STAGE_TEMPORAL_LEASE, type: uint8, value: 2, source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg:7}
+    - {name: STAGE_TERMINAL_OWNERSHIP, type: uint8, value: 3, source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg:8}
+    - {name: STAGE_SESSION_IDENTITY, type: uint8, value: 4, source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg:9}
+    - {name: STAGE_ODOMETRY_FRESHNESS, type: uint8, value: 5, source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg:10}
+    - {name: STAGE_SAMPLE_ORDERING, type: uint8, value: 6, source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg:11}
+    - {name: STAGE_TRACKING_ENVELOPE, type: uint8, value: 7, source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg:12}
+    - {name: DISPOSITION_RETAIN_PREVIOUS, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg:15}
+    - {name: DISPOSITION_FAIL_NAVIGATION, type: uint8, value: 2, source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg:16}
+    - {name: DISPOSITION_SAFETY_STOP, type: uint8, value: 3, source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg:17}
+    - {name: DISPOSITION_IGNORE_AFTER_TERMINAL, type: uint8, value: 4, source: src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg:18}
+  fields:
+    - {name: header, type: std_msgs/Header, unit: -, frame: lio_odom, semantics: Rejection publication stamp, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1798, purpose: evidence}], unused: false}
+    - {name: callback_steady_ns, type: uint64, unit: ns, frame: -, semantics: Adapter callback steady timestamp, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1798, purpose: evidence}], unused: false}
+    - {name: command_present, type: bool, unit: -, frame: -, semantics: Whether a command was available at admission, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1798, purpose: evidence}], unused: false}
+    - {name: stage, type: uint8, unit: enum, frame: -, semantics: Admission stage that rejected command, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1798, purpose: judge}], unused: false}
+    - {name: reason_code, type: uint16, unit: -, frame: -, semantics: Adapter rejection reason, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1798, purpose: judge}], unused: false}
+    - {name: disposition, type: uint8, unit: enum, frame: -, semantics: Retain/fail/safety/ignore disposition, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1798, purpose: judge}], unused: false}
+    - {name: mode_activation_id, type: uint64, unit: -, frame: -, semantics: Adapter activation identity, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1840, purpose: evidence}], unused: false}
+    - {name: localization_epoch, type: uint64, unit: -, frame: -, semantics: Rejected command estimator epoch, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1840, purpose: evidence}], unused: false}
+    - {name: goal_epoch, type: uint64, unit: -, frame: -, semantics: Rejected command goal epoch, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1840, purpose: evidence}], unused: false}
+    - {name: mission_id, type: string, unit: -, frame: -, semantics: Rejected command mission identity, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1840, purpose: evidence}], unused: false}
+    - {name: waypoint_index, type: uint32, unit: -, frame: -, semantics: Rejected waypoint index, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1840, purpose: evidence}], unused: false}
+    - {name: request_id, type: uint64, unit: -, frame: -, semantics: Rejected request identity, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1840, purpose: evidence}], unused: false}
+    - {name: bundle_generation, type: uint64, unit: -, frame: -, semantics: Rejected bundle identity, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1840, purpose: evidence}], unused: false}
+    - {name: sample_id, type: uint64, unit: -, frame: -, semantics: Rejected sample identity, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1840, purpose: evidence}], unused: false}
+    - {name: command_stamp, type: builtin_interfaces/Time, unit: ns, frame: lio_odom, semantics: Rejected command stamp, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1798, purpose: evidence}], unused: false}
+    - {name: valid_until, type: builtin_interfaces/Time, unit: ns, frame: -, semantics: Rejected command lease end, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1798, purpose: evidence}], unused: false}
+    - {name: source_age_ms, type: float64, unit: ms, frame: -, semantics: Source age at rejection, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1798, purpose: evidence}], unused: false}
+    - {name: receive_age_ms, type: float64, unit: ms, frame: -, semantics: Receive age at rejection, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1798, purpose: evidence}], unused: false}
+    - {name: tracking_longitudinal_error_m, type: float64, unit: m, frame: lio_odom, semantics: Longitudinal tracking error, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1798, purpose: evidence}], unused: false}
+    - {name: tracking_lateral_error_m, type: float64, unit: m, frame: lio_odom, semantics: Lateral tracking error, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1101], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1798, purpose: evidence}], unused: false}
+
+- msg: NavigationExecutionDiagnostics
+  type: navigation_contracts/msg/NavigationExecutionDiagnostics
+  source: src/contracts/navigation_contracts/msg/NavigationExecutionDiagnostics.msg
+  constants:
+    - {name: ANALYTIC_ROLE_UNKNOWN, type: uint8, value: 255, source: src/contracts/navigation_contracts/msg/NavigationExecutionDiagnostics.msg:19}
+    - {name: EXECUTION_AUTHORIZATION_UNSPECIFIED, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/NavigationExecutionDiagnostics.msg:37}
+    - {name: EXECUTION_AUTHORIZATION_GRANTED, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/NavigationExecutionDiagnostics.msg:38}
+    - {name: EXECUTION_AUTHORIZATION_REJECTED, type: uint8, value: 2, source: src/contracts/navigation_contracts/msg/NavigationExecutionDiagnostics.msg:39}
+  fields:
+    - {name: header, type: std_msgs/Header, unit: -, frame: lio_odom, semantics: Evidence sample stamp, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: mode_activation_id, type: uint64, unit: -, frame: -, semantics: Adapter activation binding, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: localization_epoch, type: uint64, unit: -, frame: -, semantics: Estimator epoch, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: goal_epoch, type: uint64, unit: -, frame: -, semantics: Goal epoch, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: mission_id, type: string, unit: -, frame: -, semantics: Mission identity, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: waypoint_index, type: uint32, unit: -, frame: -, semantics: Waypoint index, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: request_id, type: uint64, unit: -, frame: -, semantics: Request identity, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: bundle_generation, type: uint64, unit: -, frame: -, semantics: Bundle generation, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: bundle_owner_cycle_id, type: uint64, unit: -, frame: -, semantics: Planner cycle that owns bundle, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: bundle_source, type: uint8, unit: enum, frame: -, semantics: Bundle source classification, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: sample_id, type: uint64, unit: -, frame: -, semantics: Command sample identity, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: world_generation, type: uint64, unit: -, frame: -, semantics: World generation, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9898], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1778, purpose: evidence}], unused: false}
+    - {name: world_revision, type: uint64, unit: -, frame: -, semantics: World revision, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9898], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1778, purpose: evidence}], unused: false}
+    - {name: world_observation_stamp, type: builtin_interfaces/Time, unit: ns, frame: lio_odom, semantics: World observation source stamp, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9898], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1779, purpose: evidence}], unused: false}
+    - {name: reason_code, type: uint16, unit: -, frame: -, semantics: Execution decision reason, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: analytic_sample_role, type: uint8, unit: enum, frame: -, semantics: Analytic role classification, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: backup_available, type: bool, unit: -, frame: -, semantics: Backup suffix is available, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: backup_start_time_s, type: float64, unit: s, frame: -, semantics: Backup transition time in trajectory, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: time_to_backup_start_s, type: float64, unit: s, frame: -, semantics: Remaining time to backup start, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: safety_suffix_active, type: bool, unit: -, frame: -, semantics: Safety suffix currently active, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: execution_recovery_state, type: uint8, unit: enum, frame: -, semantics: Execution recovery state, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: anchor_error_m, type: float64, unit: m, frame: lio_odom, semantics: Raw anchor error, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: projected_anchor_error_m, type: float64, unit: m, frame: lio_odom, semantics: Projected anchor error, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: retained_tracking_limit_m, type: float64, unit: m, frame: lio_odom, semantics: Retained command tracking limit, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: relative_anchor_speed_mps, type: float64, unit: m/s, frame: lio_odom, semantics: Relative anchor speed, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: committed_suffix_usable, type: bool, unit: -, frame: -, semantics: Committed safety suffix is usable, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: sampled_path_clear, type: bool, unit: -, frame: lio_odom, semantics: Sampled path is clear, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: tracking_certificate_exceeded, type: bool, unit: -, frame: lio_odom, semantics: Actual tracking certificate exceeded, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: projected_tracking_certificate_exceeded, type: bool, unit: -, frame: lio_odom, semantics: Projected MAIN-only certificate exceeded, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: causal_planning_cycle_id, type: uint64, unit: -, frame: -, semantics: Causal planning cycle, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: causal_timestamp_ns, type: uint64, unit: ns, frame: -, semantics: Causal event timestamp, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: execution_authorization, type: uint8, unit: enum, frame: -, semantics: Execution authorization result, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: execution_authorization_steady_ns, type: uint64, unit: ns, frame: -, semantics: Authorization decision steady time, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: evaluation_now_ns, type: uint64, unit: ns, frame: -, semantics: Evaluation time, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: execution_state_source_stamp_ns, type: uint64, unit: ns, frame: -, semantics: State source time, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: execution_state_receive_stamp_ns, type: uint64, unit: ns, frame: -, semantics: State receive time, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: execution_state_source_age_ms, type: float64, unit: ms, frame: -, semantics: State source age, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: execution_state_receive_age_ms, type: float64, unit: ms, frame: -, semantics: State receive age, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: committed_bundle_start_stamp_ns, type: uint64, unit: ns, frame: -, semantics: Committed bundle start time, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: measured_position_at_state_source, type: geometry_msgs/Point, unit: m, frame: lio_odom, semantics: Measured state position, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: measured_velocity_at_state_source, type: geometry_msgs/Vector3, unit: m/s, frame: lio_odom, semantics: Measured state velocity, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: committed_command_position_at_now, type: geometry_msgs/Point, unit: m, frame: lio_odom, semantics: Committed command position at evaluation time, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: committed_command_velocity_at_now, type: geometry_msgs/Vector3, unit: m/s, frame: lio_odom, semantics: Committed command velocity at evaluation time, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: committed_command_position_at_state_source, type: geometry_msgs/Point, unit: m, frame: lio_odom, semantics: Command position aligned to state source, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: committed_command_velocity_at_state_source, type: geometry_msgs/Vector3, unit: m/s, frame: lio_odom, semantics: Command velocity aligned to state source, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: anchor_error_raw_m, type: float64, unit: m, frame: lio_odom, semantics: Unaligned anchor error, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: anchor_error_time_aligned_m, type: float64, unit: m, frame: lio_odom, semantics: Time-aligned anchor error, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: command_motion_over_state_age_m, type: float64, unit: m, frame: lio_odom, semantics: Command motion during state age, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: velocity_residual_time_aligned_mps, type: float64, unit: m/s, frame: lio_odom, semantics: Time-aligned velocity residual, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: retained_elapsed_s, type: float64, unit: s, frame: -, semantics: Retained-command elapsed time, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: committed_bundle_duration_s, type: float64, unit: s, frame: -, semantics: Bundle duration, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: committed_safety_transition_time_s, type: float64, unit: s, frame: -, semantics: Safety transition time, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9884], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: retained_validate_without_new_commit, type: bool, unit: -, frame: -, semantics: Retained decision can validate without new commit, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9478], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: retained_fresh_vehicle_state, type: bool, unit: -, frame: -, semantics: Retained decision has fresh state, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9478], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: retained_committed_command_available, type: bool, unit: -, frame: -, semantics: Retained command is available, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9478], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: retained_command_anchor_valid, type: bool, unit: -, frame: lio_odom, semantics: Retained command anchor is valid, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9478], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: current_vehicle_state_known_free, type: bool, unit: -, frame: lio_odom, semantics: Current state is known free, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9478], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: retained_safety_trajectory_available, type: bool, unit: -, frame: lio_odom, semantics: Retained safety trajectory available, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9478], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: retained_terminal_stop, type: bool, unit: -, frame: lio_odom, semantics: Retained terminal stop state, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9478], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: retained_committed_role, type: int8, unit: enum, frame: -, semantics: Retained command role, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9478], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+    - {name: retained_recovery_state_before, type: uint8, unit: enum, frame: -, semantics: Recovery state before retained decision, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:9478], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1775, purpose: evidence}], unused: false}
+
+- msg: NavigationGoal
+  type: navigation_contracts/msg/NavigationGoal
+  source: src/contracts/navigation_contracts/msg/NavigationGoal.msg
+  constants:
+    - {name: BEHAVIOR_PASS_THROUGH, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/NavigationGoal.msg:11}
+    - {name: BEHAVIOR_STOP, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/NavigationGoal.msg:12}
+  fields:
+    - {name: header, type: std_msgs/Header, unit: -, frame: lio_odom, semantics: Goal receipt timestamp/frame, set_by: [tools/runtime/external_mode_scenario.py:2479], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: mission_id, type: string, unit: -, frame: -, semantics: Mission identity, set_by: [tools/runtime/external_mode_scenario.py:2434], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: gate}], unused: false}
+    - {name: waypoint_index, type: uint32, unit: -, frame: -, semantics: Target waypoint index, set_by: [tools/runtime/external_mode_scenario.py:2434], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: request_id, type: uint64, unit: -, frame: -, semantics: Goal request identity, set_by: [tools/runtime/external_mode_scenario.py:2434], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: gate}], unused: false}
+    - {name: target, type: geometry_msgs/Point, unit: m, frame: lio_odom, semantics: Target position, set_by: [tools/runtime/external_mode_scenario.py:2434], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: acceptance_radius_m, type: float64, unit: m, frame: lio_odom, semantics: Goal acceptance radius, set_by: [tools/runtime/external_mode_scenario.py:2434], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: gate}], unused: false}
+    - {name: behavior, type: uint8, unit: enum, frame: -, semantics: Pass-through or stop behavior, set_by: [tools/runtime/external_mode_scenario.py:2434], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: has_next_target, type: bool, unit: -, frame: -, semantics: Whether a following target exists, set_by: [tools/runtime/external_mode_scenario.py:2434], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: next_target, type: geometry_msgs/Point, unit: m, frame: lio_odom, semantics: Following target position, set_by: [tools/runtime/external_mode_scenario.py:2434], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: route, type: navigation_contracts/RouteSnapshot, unit: -, frame: lio_odom, semantics: Immutable route and measured progress snapshot, set_by: [tools/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2434], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+
+- msg: NavigationMissionProgress
+  type: navigation_contracts/msg/NavigationMissionProgress
+  source: src/contracts/navigation_contracts/msg/NavigationMissionProgress.msg
+  constants:
+    - {name: GOAL, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/NavigationMissionProgress.msg:12}
+    - {name: COMPLETE, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/NavigationMissionProgress.msg:13}
+  fields:
+    - {name: header, type: std_msgs/Header, unit: -, frame: lio_odom, semantics: Progress receipt stamp/frame, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2665], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1921, purpose: evidence}], unused: false}
+    - {name: mission_id, type: string, unit: -, frame: -, semantics: Mission identity, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2665], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291, purpose: gate}], unused: false}
+    - {name: route_revision, type: uint64, unit: -, frame: lio_odom, semantics: Route revision, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2665], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291, purpose: gate}], unused: false}
+    - {name: localization_epoch, type: uint64, unit: -, frame: -, semantics: Estimator epoch, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2665], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291, purpose: gate}], unused: false}
+    - {name: mode_activation_id, type: uint64, unit: -, frame: -, semantics: Adapter activation identity, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2665], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291, purpose: gate}], unused: false}
+    - {name: waypoint_index, type: uint32, unit: -, frame: -, semantics: Progress waypoint index, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2665], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291, purpose: gate}], unused: false}
+    - {name: request_id, type: uint64, unit: -, frame: -, semantics: Goal request identity, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2665], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291, purpose: gate}], unused: false}
+    - {name: event, type: uint8, unit: enum, frame: -, semantics: GOAL or COMPLETE event, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2665], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291, purpose: gate}], unused: false}
+    - {name: waypoint_accepted, type: bool, unit: -, frame: -, semantics: Core acceptance receipt flag, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2665], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291, purpose: gate}], unused: false}
+    - {name: accepted_waypoint_index, type: uint32, unit: -, frame: -, semantics: Accepted waypoint index, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2665], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291, purpose: gate}], unused: false}
+    - {name: acceptance_position_error_m, type: float64, unit: m, frame: lio_odom, semantics: Position error at acceptance, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2665], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291, purpose: gate}], unused: false}
+    - {name: acceptance_speed_mps, type: float64, unit: m/s, frame: lio_odom, semantics: Speed at acceptance, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2665], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291, purpose: gate}], unused: false}
+
+- msg: NavigationModeStatus
+  type: navigation_contracts/msg/NavigationModeStatus
+  source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg
+  constants:
+    - {name: ACTIVE, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:13}
+    - {name: BRAKING, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:14}
+    - {name: PAUSED, type: uint8, value: 2, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:15}
+    - {name: COMPLETE, type: uint8, value: 3, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:16}
+    - {name: FAILED, type: uint8, value: 4, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:17}
+    - {name: NONE, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:20}
+    - {name: SAFETY_STOP, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:21}
+    - {name: OPERATOR_TAKEOVER, type: uint8, value: 2, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:22}
+    - {name: ODOMETRY_STALE, type: uint8, value: 3, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:23}
+    - {name: TRAJECTORY_INVALID, type: uint8, value: 4, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:24}
+    - {name: TRACK_TRAJECTORY, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:29}
+    - {name: WAIT_AIRBORNE, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:30}
+    - {name: WAIT_HEALTH, type: uint8, value: 2, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:31}
+    - {name: WAIT_FIRST_COMMAND, type: uint8, value: 3, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:32}
+    - {name: MISSION_HOLD, type: uint8, value: 4, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:33}
+    - {name: COMPLETED_HOLD, type: uint8, value: 5, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:34}
+    - {name: RECOVERY_HOLD, type: uint8, value: 6, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:35}
+    - {name: FAILSAFE_HOLD, type: uint8, value: 7, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:36}
+    - {name: HANDOVER_HOLD, type: uint8, value: 8, source: src/contracts/navigation_contracts/msg/NavigationModeStatus.msg:37}
+  fields:
+    - {name: header, type: std_msgs/Header, unit: -, frame: lio_odom, semantics: Adapter status stamp/frame, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1762, purpose: evidence}], unused: false}
+    - {name: mission_id, type: string, unit: -, frame: -, semantics: Current mission identity, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}], unused: false}
+    - {name: waypoint_index, type: uint32, unit: -, frame: -, semantics: Current waypoint index, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}], unused: false}
+    - {name: request_id, type: uint64, unit: -, frame: -, semantics: Current request identity, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}], unused: false}
+    - {name: activation_id, type: uint64, unit: -, frame: -, semantics: Adapter activation identity, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}], unused: false}
+    - {name: airborne, type: bool, unit: -, frame: -, semantics: PX4 armed/height airborne observation, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}], unused: false}
+    - {name: state, type: uint8, unit: enum, frame: -, semantics: PX4-owned lifecycle state, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}, {node: world_observation_gate, at: tools/runtime/world_observation_gate.py:146, purpose: judge}], unused: false}
+    - {name: reason, type: uint8, unit: enum, frame: -, semantics: Lifecycle reason, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}], unused: false}
+    - {name: external_mode_state, type: uint8, unit: enum, frame: -, semantics: Diagnostic External Mode classification, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}], unused: false}
+    - {name: external_mode_reason, type: string, unit: -, frame: -, semantics: Diagnostic External Mode reason, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: log}], unused: false}
+    - {name: waypoint_accepted, type: bool, unit: -, frame: -, semantics: Copy of Core terminal acceptance receipt, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}], unused: false}
+    - {name: accepted_waypoint_index, type: uint32, unit: -, frame: -, semantics: Accepted waypoint index copy, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}], unused: false}
+    - {name: acceptance_position_error_m, type: float64, unit: m, frame: lio_odom, semantics: Acceptance position error copy, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}], unused: false}
+    - {name: acceptance_speed_mps, type: float64, unit: m/s, frame: lio_odom, semantics: Acceptance speed copy, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:355], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743, purpose: gate}], unused: false}
+
+- msg: OdometryTransportTrace
+  type: navigation_contracts/msg/OdometryTransportTrace
+  source: src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg
+  constants:
+    - {name: PRODUCER_PUBLISHED, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg:2}
+    - {name: ADAPTER_CALLBACK, type: uint8, value: 2, source: src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg:3}
+    - {name: NOT_APPLICABLE, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg:6}
+    - {name: ACCEPTED, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg:7}
+    - {name: INVALID_MESSAGE, type: uint8, value: 2, source: src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg:8}
+    - {name: HEALTH_NOT_READY, type: uint8, value: 3, source: src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg:9}
+    - {name: HEALTH_INVALID, type: uint8, value: 4, source: src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg:10}
+    - {name: LOCALIZATION_EPOCH_MISMATCH, type: uint8, value: 5, source: src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg:11}
+    - {name: SEQUENCE_NON_INCREASING, type: uint8, value: 6, source: src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg:12}
+    - {name: SOURCE_TIMESTAMP_INVALID, type: uint8, value: 7, source: src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg:13}
+    - {name: SOURCE_TIMESTAMP_NON_INCREASING, type: uint8, value: 8, source: src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg:14}
+  fields:
+    - {name: phase, type: uint8, unit: enum, frame: -, semantics: Producer or adapter phase, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:50, src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:548], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: disposition, type: uint8, unit: enum, frame: -, semantics: Transport acceptance/disposition, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:50, src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:548], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: localization_epoch, type: uint64, unit: -, frame: -, semantics: State epoch in timing trace, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:50, src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:548], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: sequence, type: uint64, unit: -, frame: -, semantics: State sequence, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:50, src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:548], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: source_stamp_ros_ns, type: int64, unit: ns, frame: lio_odom, semantics: Source ROS stamp, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:50], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: expected_publish_source_ns, type: int64, unit: ns, frame: -, semantics: Expected publish source time, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:50], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: last_published_source_ns, type: int64, unit: ns, frame: -, semantics: Previous published source time, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:50], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: worker_estimate_ready_steady_ns, type: int64, unit: ns, frame: -, semantics: Worker estimate-ready steady time, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:50], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: publisher_enter_steady_ns, type: int64, unit: ns, frame: -, semantics: Publisher entry steady time, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:50], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: publisher_publish_call_steady_ns, type: int64, unit: ns, frame: -, semantics: Publisher call steady time, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:50], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: publisher_exit_steady_ns, type: int64, unit: ns, frame: -, semantics: Publisher exit steady time, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:50], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: callback_enter_ros_ns, type: int64, unit: ns, frame: -, semantics: Adapter callback ROS time, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:548], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: callback_enter_steady_ns, type: int64, unit: ns, frame: -, semantics: Adapter callback steady time, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:548], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: lock_requested_steady_ns, type: int64, unit: ns, frame: -, semantics: State lock request time, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:548], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: lock_acquired_steady_ns, type: int64, unit: ns, frame: -, semantics: State lock acquisition time, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:548], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: accepted_receive_ros_ns, type: int64, unit: ns, frame: -, semantics: Accepted receive ROS time, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:548], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+    - {name: accepted_receive_steady_ns, type: int64, unit: ns, frame: -, semantics: Accepted receive steady time, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:548], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:312, purpose: evidence}], unused: false}
+
+- msg: PropagatedOdometry
+  type: navigation_contracts/msg/PropagatedOdometry
+  source: src/contracts/navigation_contracts/msg/PropagatedOdometry.msg
+  constants: []
+  fields:
+    - {name: odometry, type: nav_msgs/Odometry, unit: -, frame: lio_odom/base_link, semantics: Propagated pose/twist and source header, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:47], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1734, purpose: compute}, {node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:331, purpose: gate}], unused: false}
+    - {name: localization_epoch, type: uint64, unit: -, frame: -, semantics: Propagated state epoch, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:47], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1734, purpose: gate}, {node: px4_external_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:101, purpose: gate}], unused: false}
+    - {name: sequence, type: uint64, unit: -, frame: -, semantics: Strict sequence within epoch, set_by: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:47], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1734, purpose: gate}, {node: px4_external_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:101, purpose: gate}], unused: false}
+
+- msg: RegisteredScan
+  type: navigation_contracts/msg/RegisteredScan
+  source: src/contracts/navigation_contracts/msg/RegisteredScan.msg
+  constants: []
+  fields:
+    - {name: header, type: std_msgs/Header, unit: -, frame: lio_odom, semantics: Observation source stamp/frame, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: gate}, {node: world_observation_gate, at: tools/runtime/world_observation_gate.py:155, purpose: judge}], unused: false}
+    - {name: localization_epoch, type: uint64, unit: -, frame: -, semantics: Observation estimator epoch, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: gate}, {node: world_observation_gate, at: tools/runtime/world_observation_gate.py:161, purpose: judge}], unused: false}
+    - {name: scan_sequence, type: uint64, unit: -, frame: -, semantics: Scan sequence within epoch, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: gate}, {node: world_observation_gate, at: tools/runtime/world_observation_gate.py:161, purpose: judge}], unused: false}
+    - {name: body_frame_id, type: string, unit: -, frame: -, semantics: Body frame associated with corrected pose, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: gate}], unused: false}
+    - {name: corrected_pose, type: geometry_msgs/PoseWithCovariance, unit: -, frame: lio_odom, semantics: Corrected base pose/covariance, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: compute}], unused: false}
+    - {name: sensor_origin_pose, type: geometry_msgs/Pose, unit: -, frame: lio_odom, semantics: Registered sensor origin pose, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: compute}], unused: false}
+    - {name: sensor_origin_valid, type: bool, unit: -, frame: -, semantics: Sensor origin pose validity, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: gate}], unused: false}
+    - {name: points, type: sensor_msgs/PointCloud2, unit: -, frame: lio_odom, semantics: Registered occupied points, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: compute}], unused: false}
+    - {name: free_space_endpoints, type: sensor_msgs/PointCloud2, unit: m, frame: lio_odom, semantics: Explicit no-return endpoints, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: compute}], unused: false}
+    - {name: visibility_observation_present, type: bool, unit: -, frame: -, semantics: Visibility association presence, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: gate}], unused: false}
+    - {name: visibility_source_ray_count, type: uint32, unit: rays, frame: -, semantics: Source ray count, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: evidence}], unused: false}
+    - {name: visibility_no_return_count, type: uint32, unit: rays, frame: -, semantics: No-return ray count, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: evidence}], unused: false}
+    - {name: visibility_selected_no_return_count, type: uint32, unit: rays, frame: -, semantics: Selected no-return ray count, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: evidence}], unused: false}
+    - {name: visibility_detected_no_return_count, type: uint32, unit: rays, frame: -, semantics: Detected no-return ray count, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: evidence}], unused: false}
+    - {name: visibility_sampling_cap, type: uint32, unit: rays, frame: -, semantics: Visibility sampling cap, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: evidence}], unused: false}
+    - {name: visibility_sampling_policy, type: string, unit: -, frame: -, semantics: Visibility sampling policy label, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: evidence}], unused: false}
+    - {name: visibility_provenance_error, type: string, unit: -, frame: -, semantics: Visibility provenance error text, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: gate}], unused: false}
+    - {name: visibility_stamp_skew_ns, type: int64, unit: ns, frame: -, semantics: Visibility-to-scan stamp skew, set_by: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:522], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726, purpose: gate}], unused: false}
+
+- msg: RouteSnapshot
+  type: navigation_contracts/msg/RouteSnapshot
+  source: src/contracts/navigation_contracts/msg/RouteSnapshot.msg
+  constants:
+    - {name: BEHAVIOR_PASS_THROUGH, type: uint8, value: 0, source: src/contracts/navigation_contracts/msg/RouteSnapshot.msg:7}
+    - {name: BEHAVIOR_STOP, type: uint8, value: 1, source: src/contracts/navigation_contracts/msg/RouteSnapshot.msg:8}
+  fields:
+    - {name: mission_id, type: string, unit: -, frame: -, semantics: Route mission identity, set_by: [tools/runtime/external_mode_scenario.py:2454], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: frame_id, type: string, unit: -, frame: -, semantics: Route coordinate frame, set_by: [tools/runtime/external_mode_scenario.py:2454], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: gate}], unused: false}
+    - {name: route_revision, type: uint64, unit: -, frame: -, semantics: Immutable route revision, set_by: [tools/runtime/external_mode_scenario.py:2454], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: gate}], unused: false}
+    - {name: request_id, type: uint64, unit: -, frame: -, semantics: Route request identity, set_by: [tools/runtime/external_mode_scenario.py:2454], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: gate}], unused: false}
+    - {name: active_waypoint_index, type: uint32, unit: -, frame: -, semantics: Route active waypoint, set_by: [tools/runtime/external_mode_scenario.py:2454], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: waypoint_positions, type: "geometry_msgs/Point[]", unit: m, frame: lio_odom, semantics: Ordered route positions, set_by: [tools/runtime/external_mode_scenario.py:2454], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: waypoint_ids, type: "string[]", unit: -, frame: -, semantics: Ordered waypoint identities, set_by: [tools/runtime/external_mode_scenario.py:2454], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: waypoint_acceptance_radii_m, type: "float64[]", unit: m, frame: lio_odom, semantics: Per-waypoint acceptance radii, set_by: [tools/runtime/external_mode_scenario.py:2454], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: gate}], unused: false}
+    - {name: waypoint_behaviors, type: "uint8[]", unit: enum, frame: -, semantics: Per-waypoint behavior, set_by: [tools/runtime/external_mode_scenario.py:2454], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: measured_progress_valid, type: bool, unit: -, frame: lio_odom, semantics: Measured progress validity, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: measured_segment_index, type: uint32, unit: -, frame: lio_odom, semantics: Measured route segment, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: measured_progress_arc_m, type: float64, unit: m, frame: lio_odom, semantics: Monotonic measured arc progress, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: measured_projection_arc_m, type: float64, unit: m, frame: lio_odom, semantics: Projection arc progress, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+    - {name: measured_lateral_error_m, type: float64, unit: m, frame: lio_odom, semantics: Measured lateral route error, set_by: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739], read_by: [{node: navigation_runtime_node, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739, purpose: compute}], unused: false}
+
+# PX4 messages below include every serialized field of each pinned message type
+# touched by product, px4_ros2_interface_lib, or the SITL observers. Fields not
+# read locally are retained with `unused: true`; constants remain authoritative
+# in the pinned px4_msgs submodule.
+- msg: VehicleLocalPosition
+  type: px4_msgs/msg/VehicleLocalPosition
+  source: src/external/px4_msgs/msg/VehicleLocalPosition.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: NED, semantics: PX4 publication time, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1547, purpose: gate}], unused: false}
+    - {name: timestamp_sample, type: uint64, unit: us, frame: NED, semantics: PX4 sample time, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1548, purpose: gate}], unused: false}
+    - {name: x, type: float32, unit: m, frame: NED, semantics: North position, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1274, purpose: compute}], unused: false}
+    - {name: y, type: float32, unit: m, frame: NED, semantics: East position, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1274, purpose: compute}], unused: false}
+    - {name: z, type: float32, unit: m, frame: NED, semantics: Down position, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1274, purpose: compute}], unused: false}
+    - {name: heading, type: float32, unit: rad, frame: NED, semantics: PX4 local heading, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1547, purpose: gate}], unused: false}
+    - {name: heading_var, type: float32, unit: rad^2, frame: NED, semantics: Heading variance, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1547, purpose: gate}], unused: false}
+    - {name: vx, type: float32, unit: m/s, frame: NED, semantics: North velocity, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1547, purpose: compute}], unused: false}
+    - {name: vy, type: float32, unit: m/s, frame: NED, semantics: East velocity, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1547, purpose: compute}], unused: false}
+    - {name: vz, type: float32, unit: m/s, frame: NED, semantics: Down velocity, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1547, purpose: compute}], unused: false}
+    - {name: xy_valid, type: bool, unit: -, frame: NED, semantics: Horizontal position validity, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1547, purpose: gate}], unused: false}
+    - {name: z_valid, type: bool, unit: -, frame: NED, semantics: Vertical position validity, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1547, purpose: gate}], unused: false}
+    - {name: v_xy_valid, type: bool, unit: -, frame: NED, semantics: Horizontal velocity validity, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1547, purpose: gate}], unused: false}
+    - {name: v_z_valid, type: bool, unit: -, frame: NED, semantics: Vertical velocity validity, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1547, purpose: gate}], unused: false}
+    - {name: delta_xy, type: "float32[2]", unit: m, frame: NED, semantics: Latest horizontal reset delta, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:178, purpose: gate}], unused: false}
+    - {name: delta_z, type: float32, unit: m, frame: NED, semantics: Latest vertical reset delta, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:178, purpose: gate}], unused: false}
+    - {name: xy_reset_counter, type: uint8, unit: -, frame: NED, semantics: Horizontal reset counter, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:178, purpose: gate}], unused: false}
+    - {name: z_reset_counter, type: uint8, unit: -, frame: NED, semantics: Vertical reset counter, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:178, purpose: gate}], unused: false}
+    - {name: delta_vxy, type: "float32[2]", unit: m/s, frame: NED, semantics: Horizontal velocity reset delta, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:184-185, purpose: gate}], unused: false}
+    - {name: vxy_reset_counter, type: uint8, unit: -, frame: NED, semantics: Horizontal velocity reset counter, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:189, purpose: gate}], unused: false}
+    - {name: delta_vz, type: float32, unit: m/s, frame: NED, semantics: Vertical velocity reset delta, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:185, purpose: gate}], unused: false}
+    - {name: vz_reset_counter, type: uint8, unit: -, frame: NED, semantics: Vertical velocity reset counter, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:190, purpose: gate}], unused: false}
+    - {name: z_deriv, type: float32, unit: m/s, frame: NED, semantics: Down-position derivative, set_by: [PX4], read_by: [], unused: true}
+    - {name: ax, type: float32, unit: m/s^2, frame: NED, semantics: North acceleration, set_by: [PX4], read_by: [], unused: true}
+    - {name: ay, type: float32, unit: m/s^2, frame: NED, semantics: East acceleration, set_by: [PX4], read_by: [], unused: true}
+    - {name: az, type: float32, unit: m/s^2, frame: NED, semantics: Down acceleration, set_by: [PX4], read_by: [], unused: true}
+    - {name: unaided_heading, type: float32, unit: rad, frame: NED, semantics: Gyro-integrated heading, set_by: [PX4], read_by: [], unused: true}
+    - {name: delta_heading, type: float32, unit: rad, frame: NED, semantics: Heading reset delta, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:186, purpose: gate}], unused: false}
+    - {name: heading_reset_counter, type: uint8, unit: -, frame: NED, semantics: Heading reset counter, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:191, purpose: gate}], unused: false}
+    - {name: heading_good_for_control, type: bool, unit: -, frame: NED, semantics: Heading quality flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: tilt_var, type: float32, unit: rad^2, frame: NED, semantics: Tilt variance, set_by: [PX4], read_by: [], unused: true}
+    - {name: xy_global, type: bool, unit: -, frame: WGS84, semantics: Global horizontal reference validity, set_by: [PX4], read_by: [], unused: true}
+    - {name: z_global, type: bool, unit: -, frame: WGS84, semantics: Global altitude reference validity, set_by: [PX4], read_by: [], unused: true}
+    - {name: ref_timestamp, type: uint64, unit: us, frame: WGS84, semantics: Global reference timestamp, set_by: [PX4], read_by: [], unused: true}
+    - {name: ref_lat, type: float64, unit: deg, frame: WGS84, semantics: Reference latitude, set_by: [PX4], read_by: [], unused: true}
+    - {name: ref_lon, type: float64, unit: deg, frame: WGS84, semantics: Reference longitude, set_by: [PX4], read_by: [], unused: true}
+    - {name: ref_alt, type: float32, unit: m, frame: WGS84, semantics: Reference altitude, set_by: [PX4], read_by: [], unused: true}
+    - {name: dist_bottom_valid, type: bool, unit: -, frame: -, semantics: Bottom-distance validity, set_by: [PX4], read_by: [], unused: true}
+    - {name: dist_bottom, type: float32, unit: m, frame: -, semantics: Distance to bottom surface, set_by: [PX4], read_by: [], unused: true}
+    - {name: dist_bottom_var, type: float32, unit: m^2, frame: -, semantics: Bottom-distance variance, set_by: [PX4], read_by: [], unused: true}
+    - {name: delta_dist_bottom, type: float32, unit: m, frame: -, semantics: Bottom-distance reset delta, set_by: [PX4], read_by: [], unused: true}
+    - {name: dist_bottom_reset_counter, type: uint8, unit: -, frame: -, semantics: Bottom-distance reset counter, set_by: [PX4], read_by: [], unused: true}
+    - {name: dist_bottom_sensor_bitfield, type: uint8, unit: bitmask, frame: -, semantics: Bottom-distance sensor sources, set_by: [PX4], read_by: [], unused: true}
+    - {name: eph, type: float32, unit: m, frame: NED, semantics: Horizontal position error standard deviation, set_by: [PX4], read_by: [], unused: true}
+    - {name: epv, type: float32, unit: m, frame: NED, semantics: Vertical position error standard deviation, set_by: [PX4], read_by: [], unused: true}
+    - {name: evh, type: float32, unit: m/s, frame: NED, semantics: Horizontal velocity error standard deviation, set_by: [PX4], read_by: [], unused: true}
+    - {name: evv, type: float32, unit: m/s, frame: NED, semantics: Vertical velocity error standard deviation, set_by: [PX4], read_by: [], unused: true}
+    - {name: dead_reckoning, type: bool, unit: -, frame: NED, semantics: Dead-reckoning flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: vxy_max, type: float32, unit: m/s, frame: NED, semantics: Maximum horizontal speed, set_by: [PX4], read_by: [], unused: true}
+    - {name: vz_max, type: float32, unit: m/s, frame: NED, semantics: Maximum vertical speed, set_by: [PX4], read_by: [], unused: true}
+    - {name: hagl_min, type: float32, unit: m, frame: -, semantics: Minimum height above ground, set_by: [PX4], read_by: [], unused: true}
+    - {name: hagl_max_z, type: float32, unit: m, frame: -, semantics: Maximum height for vertical control, set_by: [PX4], read_by: [], unused: true}
+    - {name: hagl_max_xy, type: float32, unit: m, frame: -, semantics: Maximum height for horizontal control, set_by: [PX4], read_by: [], unused: true}
+
+- msg: VehicleStatus
+  type: px4_msgs/msg/VehicleStatus
+  source: src/external/px4_msgs/msg/VehicleStatus.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: PX4 status time, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:418, purpose: gate}], unused: false}
+    - {name: arming_state, type: uint8, unit: enum, frame: -, semantics: Armed/disarmed state, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:418, purpose: gate}], unused: false}
+    - {name: nav_state, type: uint8, unit: enum, frame: -, semantics: Current PX4 navigation state, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:418, purpose: gate}], unused: false}
+    - {name: executor_in_charge, type: uint8, unit: -, frame: -, semantics: Active mode executor, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:418, purpose: gate}], unused: false}
+    - {name: failsafe, type: bool, unit: -, frame: -, semantics: PX4 failsafe state, set_by: [PX4], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:540, purpose: judge}], unused: false}
+    - {name: pre_flight_checks_pass, type: bool, unit: -, frame: -, semantics: PX4 preflight check result, set_by: [PX4], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:540, purpose: judge}], unused: false}
+    - {name: armed_time, type: uint64, unit: us, frame: -, semantics: Arming timestamp, set_by: [PX4], read_by: [], unused: true}
+    - {name: takeoff_time, type: uint64, unit: us, frame: -, semantics: Takeoff timestamp, set_by: [PX4], read_by: [], unused: true}
+    - {name: latest_arming_reason, type: uint8, unit: enum, frame: -, semantics: Last arming reason, set_by: [PX4], read_by: [], unused: true}
+    - {name: latest_disarming_reason, type: uint8, unit: enum, frame: -, semantics: Last disarming reason, set_by: [PX4], read_by: [], unused: true}
+    - {name: nav_state_timestamp, type: uint64, unit: us, frame: -, semantics: Navigation-state activation timestamp, set_by: [PX4], read_by: [], unused: true}
+    - {name: nav_state_user_intention, type: uint8, unit: enum, frame: -, semantics: User-selected navigation state, set_by: [PX4], read_by: [], unused: true}
+    - {name: valid_nav_states_mask, type: uint32, unit: bitmask, frame: -, semantics: Valid navigation-state bitmask, set_by: [PX4], read_by: [], unused: true}
+    - {name: can_set_nav_states_mask, type: uint32, unit: bitmask, frame: -, semantics: Navigation states selectable by user, set_by: [PX4], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:1420-1537, purpose: judge}], unused: false}
+    - {name: failure_detector_status, type: uint16, unit: bitmask, frame: -, semantics: Detected failure bitmask, set_by: [PX4], read_by: [], unused: true}
+    - {name: hil_state, type: uint8, unit: enum, frame: -, semantics: Hardware-in-loop state, set_by: [PX4], read_by: [], unused: true}
+    - {name: vehicle_type, type: uint8, unit: enum, frame: -, semantics: Vehicle locomotion type, set_by: [PX4], read_by: [], unused: true}
+    - {name: failsafe_and_user_took_over, type: bool, unit: -, frame: -, semantics: Failsafe with user takeover, set_by: [PX4], read_by: [], unused: true}
+    - {name: failsafe_defer_state, type: uint8, unit: enum, frame: -, semantics: Failsafe deferral state, set_by: [PX4], read_by: [], unused: true}
+    - {name: gcs_connection_lost, type: bool, unit: -, frame: -, semantics: GCS link-loss state, set_by: [PX4], read_by: [], unused: true}
+    - {name: gcs_connection_lost_counter, type: uint8, unit: -, frame: -, semantics: GCS link-loss event counter, set_by: [PX4], read_by: [], unused: true}
+    - {name: high_latency_data_link_lost, type: bool, unit: -, frame: -, semantics: High-latency link-loss state, set_by: [PX4], read_by: [], unused: true}
+    - {name: is_vtol, type: bool, unit: -, frame: -, semantics: VTOL capability, set_by: [PX4], read_by: [], unused: true}
+    - {name: is_vtol_tailsitter, type: bool, unit: -, frame: -, semantics: VTOL tailsitter flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: in_transition_mode, type: bool, unit: -, frame: -, semantics: VTOL transition active, set_by: [PX4], read_by: [], unused: true}
+    - {name: in_transition_to_fw, type: bool, unit: -, frame: -, semantics: VTOL transition-to-fixed-wing flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: system_type, type: uint8, unit: enum, frame: -, semantics: MAVLink system type, set_by: [PX4], read_by: [], unused: true}
+    - {name: system_id, type: uint8, unit: -, frame: -, semantics: MAVLink system id, set_by: [PX4], read_by: [], unused: true}
+    - {name: component_id, type: uint8, unit: -, frame: -, semantics: MAVLink component id, set_by: [PX4], read_by: [], unused: true}
+    - {name: safety_button_available, type: bool, unit: -, frame: -, semantics: Safety-button availability, set_by: [PX4], read_by: [], unused: true}
+    - {name: safety_off, type: bool, unit: -, frame: -, semantics: Safety state, set_by: [PX4], read_by: [], unused: true}
+    - {name: power_input_valid, type: bool, unit: -, frame: -, semantics: Power input validity, set_by: [PX4], read_by: [], unused: true}
+    - {name: usb_connected, type: bool, unit: -, frame: -, semantics: USB telemetry observed, set_by: [PX4], read_by: [], unused: true}
+    - {name: open_drone_id_system_present, type: bool, unit: -, frame: -, semantics: OpenDroneID system presence, set_by: [PX4], read_by: [], unused: true}
+    - {name: open_drone_id_system_healthy, type: bool, unit: -, frame: -, semantics: OpenDroneID system health, set_by: [PX4], read_by: [], unused: true}
+    - {name: parachute_system_present, type: bool, unit: -, frame: -, semantics: Parachute system presence, set_by: [PX4], read_by: [], unused: true}
+    - {name: parachute_system_healthy, type: bool, unit: -, frame: -, semantics: Parachute system health, set_by: [PX4], read_by: [], unused: true}
+    - {name: rc_calibration_in_progress, type: bool, unit: -, frame: -, semantics: RC calibration state, set_by: [PX4], read_by: [], unused: true}
+    - {name: calibration_enabled, type: bool, unit: -, frame: -, semantics: Calibration enabled state, set_by: [PX4], read_by: [], unused: true}
+
+- msg: VehicleOdometry
+  type: px4_msgs/msg/VehicleOdometry
+  source: src/external/px4_msgs/msg/VehicleOdometry.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: PX4 odometry publication time, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:301, purpose: gate}], unused: false}
+    - {name: timestamp_sample, type: uint64, unit: us, frame: -, semantics: Odometry sample time, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:178, purpose: gate}], unused: false}
+    - {name: pose_frame, type: uint8, unit: enum, frame: -, semantics: Pose frame selector, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:334, purpose: compute}], unused: false}
+    - {name: position, type: "float32[3]", unit: m, frame: pose_frame, semantics: Position vector, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:336, purpose: compute}], unused: false}
+    - {name: q, type: "float32[4]", unit: -, frame: pose_frame, semantics: Hamilton quaternion, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:337, purpose: compute}], unused: false}
+    - {name: velocity_frame, type: uint8, unit: enum, frame: -, semantics: Velocity frame selector, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:335, purpose: compute}], unused: false}
+    - {name: velocity, type: "float32[3]", unit: m/s, frame: velocity_frame, semantics: Velocity vector, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:338, purpose: compute}], unused: false}
+    - {name: angular_velocity, type: "float32[3]", unit: rad/s, frame: body FRD, semantics: Body angular velocity, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:339, purpose: compute}], unused: false}
+    - {name: position_variance, type: "float32[3]", unit: m^2, frame: pose_frame, semantics: Position variance, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:341, purpose: compute}], unused: false}
+    - {name: orientation_variance, type: "float32[3]", unit: rad^2, frame: body, semantics: Orientation variance, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:345, purpose: compute}], unused: false}
+    - {name: velocity_variance, type: "float32[3]", unit: m^2/s^2, frame: velocity_frame, semantics: Velocity variance, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:343, purpose: compute}], unused: false}
+    - {name: reset_counter, type: uint8, unit: -, frame: -, semantics: PX4 odometry reset counter, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:348, purpose: gate}], unused: false}
+    - {name: quality, type: int8, unit: -, frame: -, semantics: PX4 odometry quality indicator, set_by: [PX4], read_by: [], unused: true}
+
+- msg: VehicleAttitude
+  type: px4_msgs/msg/VehicleAttitude
+  source: src/external/px4_msgs/msg/VehicleAttitude.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp_sample, type: uint64, unit: us, frame: -, semantics: Attitude sample time, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:197, purpose: gate}], unused: false}
+    - {name: q, type: "float32[4]", unit: -, frame: FRD/NED, semantics: Body-to-NED quaternion, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:197, purpose: compute}], unused: false}
+    - {name: quat_reset_counter, type: uint8, unit: -, frame: -, semantics: Attitude reset counter, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:204, purpose: gate}], unused: false}
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Attitude publication timestamp, set_by: [PX4], read_by: [], unused: true}
+    - {name: delta_q_reset, type: "float32[4]", unit: -, frame: FRD/NED, semantics: Quaternion reset delta, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:201-203, purpose: compute}], unused: false}
+
+- msg: TimesyncStatus
+  type: px4_msgs/msg/TimesyncStatus
+  source: src/external/px4_msgs/msg/TimesyncStatus.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Timesync status time, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:102, purpose: evidence}], unused: false}
+    - {name: source_protocol, type: uint8, unit: enum, frame: -, semantics: Timesync source protocol, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:102, purpose: evidence}], unused: false}
+    - {name: remote_timestamp, type: uint64, unit: us, frame: -, semantics: Remote timestamp, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:102, purpose: evidence}], unused: false}
+    - {name: observed_offset, type: int64, unit: us, frame: -, semantics: Raw observed offset, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:102, purpose: evidence}], unused: false}
+    - {name: estimated_offset, type: int64, unit: us, frame: -, semantics: Smoothed offset, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:102, purpose: evidence}], unused: false}
+    - {name: round_trip_time, type: uint32, unit: us, frame: -, semantics: Timesync RTT, set_by: [PX4], read_by: [{node: px4_odometry_bridge_node, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:102, purpose: evidence}], unused: false}
+
+- msg: TrajectorySetpoint
+  type: px4_msgs/msg/TrajectorySetpoint
+  source: src/external/px4_msgs/msg/TrajectorySetpoint.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: PX4 setpoint timestamp, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/control/setpoint_types/experimental/trajectory.cpp:22], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:545, purpose: evidence}], unused: false}
+    - {name: position, type: "float32[3]", unit: m, frame: NED, semantics: Position setpoint, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:2534], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:2150, purpose: evidence}], unused: false}
+    - {name: velocity, type: "float32[3]", unit: m/s, frame: NED, semantics: Velocity setpoint, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:2535], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:2150, purpose: evidence}], unused: false}
+    - {name: acceleration, type: "float32[3]", unit: m/s^2, frame: NED, semantics: Acceleration setpoint, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:2535], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:2150, purpose: evidence}], unused: false}
+    - {name: jerk, type: "float32[3]", unit: m/s^3, frame: NED, semantics: Jerk setpoint, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:2535], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:2150, purpose: evidence}], unused: false}
+    - {name: yaw, type: float32, unit: rad, frame: NED, semantics: Yaw setpoint, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:2538], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:2183, purpose: evidence}], unused: false}
+    - {name: yawspeed, type: float32, unit: rad/s, frame: NED, semantics: Yaw-rate setpoint, set_by: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:2539], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:2183, purpose: evidence}], unused: false}
+
+- msg: VehicleControlMode
+  type: px4_msgs/msg/VehicleControlMode
+  source: src/external/px4_msgs/msg/VehicleControlMode.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Control mode timestamp, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode.cpp:201], read_by: [], unused: true}
+    - {name: flag_control_position_enabled, type: bool, unit: -, frame: -, semantics: PX4 position-control flag, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode.cpp:49], read_by: [], unused: true}
+    - {name: flag_control_velocity_enabled, type: bool, unit: -, frame: -, semantics: PX4 velocity-control flag, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode.cpp:49], read_by: [], unused: true}
+    - {name: flag_control_acceleration_enabled, type: bool, unit: -, frame: -, semantics: PX4 acceleration-control flag, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode.cpp:49], read_by: [], unused: true}
+    - {name: source_id, type: uint8, unit: -, frame: -, semantics: Mode source id, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode.cpp:49], read_by: [], unused: true}
+    - {name: flag_armed, type: bool, unit: -, frame: -, semantics: PX4 armed flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: flag_multicopter_position_control_enabled, type: bool, unit: -, frame: -, semantics: Multicopter position-control flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: flag_control_manual_enabled, type: bool, unit: -, frame: -, semantics: Manual-control flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: flag_control_auto_enabled, type: bool, unit: -, frame: -, semantics: Auto-control flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: flag_control_offboard_enabled, type: bool, unit: -, frame: -, semantics: Offboard-control flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: flag_control_altitude_enabled, type: bool, unit: -, frame: -, semantics: Altitude-control flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: flag_control_climb_rate_enabled, type: bool, unit: -, frame: -, semantics: Climb-rate-control flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: flag_control_attitude_enabled, type: bool, unit: -, frame: -, semantics: Attitude-control flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: flag_control_rates_enabled, type: bool, unit: -, frame: -, semantics: Rate-control flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: flag_control_allocation_enabled, type: bool, unit: -, frame: -, semantics: Control-allocation flag, set_by: [PX4], read_by: [], unused: true}
+    - {name: flag_control_termination_enabled, type: bool, unit: -, frame: -, semantics: Flight-termination control flag, set_by: [PX4], read_by: [], unused: true}
+
+- msg: VehicleCommand
+  type: px4_msgs/msg/VehicleCommand
+  source: src/external/px4_msgs/msg/VehicleCommand.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Command timestamp, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: param1, type: float32, unit: -, frame: -, semantics: Command parameter 1, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: param2, type: float32, unit: -, frame: -, semantics: Command parameter 2, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: param3, type: float32, unit: -, frame: -, semantics: Command parameter 3, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: param4, type: float32, unit: -, frame: -, semantics: Command parameter 4, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: param5, type: float64, unit: -, frame: -, semantics: Command parameter 5, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: param6, type: float64, unit: -, frame: -, semantics: Command parameter 6, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: param7, type: float32, unit: -, frame: -, semantics: Command parameter 7, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: command, type: uint32, unit: -, frame: -, semantics: PX4 vehicle command id, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: target_system, type: uint8, unit: -, frame: -, semantics: Target system, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: target_component, type: uint8, unit: -, frame: -, semantics: Target component, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: source_system, type: uint8, unit: -, frame: -, semantics: Source system, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: source_component, type: uint16, unit: -, frame: -, semantics: Source component, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: confirmation, type: uint8, unit: -, frame: -, semantics: PX4 confirmation count, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+    - {name: from_external, type: bool, unit: -, frame: -, semantics: External source marker, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:47], read_by: [], unused: true}
+
+- msg: VehicleCommandAck
+  type: px4_msgs/msg/VehicleCommandAck
+  source: src/external/px4_msgs/msg/VehicleCommandAck.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: ACK timestamp, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:148, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:571, purpose: evidence}], unused: false}
+    - {name: command, type: uint32, unit: -, frame: -, semantics: Acknowledged command id, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:148, purpose: gate}], unused: false}
+    - {name: result, type: uint8, unit: enum, frame: -, semantics: ACK result, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:148, purpose: gate}], unused: false}
+    - {name: result_param1, type: uint8, unit: -, frame: -, semantics: ACK result parameter, set_by: [PX4], read_by: [], unused: true}
+    - {name: result_param2, type: int32, unit: -, frame: -, semantics: ACK detail parameter, set_by: [PX4], read_by: [], unused: true}
+    - {name: target_system, type: uint8, unit: -, frame: -, semantics: Target system, set_by: [PX4], read_by: [], unused: true}
+    - {name: target_component, type: uint16, unit: -, frame: -, semantics: Target component, set_by: [PX4], read_by: [], unused: true}
+    - {name: from_external, type: bool, unit: -, frame: -, semantics: External source marker, set_by: [PX4], read_by: [], unused: true}
+
+- msg: ModeCompleted
+  type: px4_msgs/msg/ModeCompleted
+  source: src/external/px4_msgs/msg/ModeCompleted.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Mode completion timestamp, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:488, purpose: gate}], unused: false}
+    - {name: result, type: uint8, unit: enum, frame: -, semantics: Mode completion result, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:488, purpose: gate}, {node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:543, purpose: evidence}], unused: false}
+    - {name: nav_state, type: uint8, unit: enum, frame: -, semantics: Completed source navigation state, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:488, purpose: gate}], unused: false}
+
+- msg: RegisterExtComponentRequest
+  type: px4_msgs/msg/RegisterExtComponentRequest
+  source: src/external/px4_msgs/msg/RegisterExtComponentRequest.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Registration request timestamp, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:62], read_by: [], unused: true}
+    - {name: request_id, type: uint64, unit: -, frame: -, semantics: Registration correlation id, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:62], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:121, purpose: gate}], unused: false}
+    - {name: name, type: 'char[25]', unit: -, frame: -, semantics: Component/mode name, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:62], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:121, purpose: gate}], unused: false}
+    - {name: px4_ros2_api_version, type: uint16, unit: -, frame: -, semantics: PX4 ROS 2 API version, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:62], read_by: [], unused: true}
+    - {name: register_arming_check, type: bool, unit: -, frame: -, semantics: Request arming-check registration, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:62], read_by: [], unused: true}
+    - {name: register_mode, type: bool, unit: -, frame: -, semantics: Request mode registration, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:62], read_by: [], unused: true}
+    - {name: register_mode_executor, type: bool, unit: -, frame: -, semantics: Request executor registration, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:62], read_by: [], unused: true}
+    - {name: enable_replace_internal_mode, type: bool, unit: -, frame: -, semantics: Replace internal mode flag, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:62], read_by: [], unused: true}
+    - {name: replace_internal_mode, type: uint8, unit: enum, frame: -, semantics: Internal mode to replace, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:62], read_by: [], unused: true}
+    - {name: activate_mode_immediately, type: bool, unit: -, frame: -, semantics: Immediate activation flag, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:62], read_by: [], unused: true}
+
+- msg: RegisterExtComponentReply
+  type: px4_msgs/msg/RegisterExtComponentReply
+  source: src/external/px4_msgs/msg/RegisterExtComponentReply.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Registration reply timestamp, set_by: [PX4], read_by: [], unused: true}
+    - {name: request_id, type: uint64, unit: -, frame: -, semantics: Registration correlation id, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:121, purpose: gate}], unused: false}
+    - {name: name, type: 'char[25]', unit: -, frame: -, semantics: Registered name, set_by: [PX4], read_by: [], unused: true}
+    - {name: px4_ros2_api_version, type: uint16, unit: -, frame: -, semantics: Negotiated API version, set_by: [PX4], read_by: [], unused: true}
+    - {name: success, type: bool, unit: -, frame: -, semantics: Registration result, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:121, purpose: gate}], unused: false}
+    - {name: arming_check_id, type: int8, unit: -, frame: -, semantics: Assigned arming-check id, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:133, purpose: compute}], unused: false}
+    - {name: mode_id, type: int8, unit: -, frame: -, semantics: Assigned mode id, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:134, purpose: compute}], unused: false}
+    - {name: mode_executor_id, type: int8, unit: -, frame: -, semantics: Assigned executor id, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:135, purpose: compute}], unused: false}
+
+- msg: UnregisterExtComponent
+  type: px4_msgs/msg/UnregisterExtComponent
+  source: src/external/px4_msgs/msg/UnregisterExtComponent.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Unregister timestamp, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:172], read_by: [], unused: true}
+    - {name: name, type: 'char[25]', unit: -, frame: -, semantics: Component name, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:186], read_by: [], unused: true}
+    - {name: arming_check_id, type: int8, unit: -, frame: -, semantics: Assigned arming-check id, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:182], read_by: [], unused: true}
+    - {name: mode_id, type: int8, unit: -, frame: -, semantics: Assigned mode id, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:183], read_by: [], unused: true}
+    - {name: mode_executor_id, type: int8, unit: -, frame: -, semantics: Assigned executor id, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/registration.cpp:184], read_by: [], unused: true}
+
+- msg: ConfigOverrides
+  type: px4_msgs/msg/ConfigOverrides
+  source: src/external/px4_msgs/msg/ConfigOverrides.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Override timestamp, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/overrides.cpp:40], read_by: [], unused: true}
+    - {name: disable_auto_disarm, type: bool, unit: -, frame: -, semantics: Auto-disarm override, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/overrides.cpp:40], read_by: [], unused: true}
+    - {name: defer_failsafes, type: bool, unit: -, frame: -, semantics: Failsafe deferral override, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/overrides.cpp:40], read_by: [], unused: true}
+    - {name: defer_failsafes_timeout_s, type: int16, unit: s, frame: -, semantics: Failsafe deferral timeout, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/overrides.cpp:40], read_by: [], unused: true}
+    - {name: source_type, type: int8, unit: enum, frame: -, semantics: Override source type, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/overrides.cpp:40], read_by: [], unused: true}
+    - {name: source_id, type: uint8, unit: -, frame: -, semantics: Override source id, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/overrides.cpp:40], read_by: [], unused: true}
+
+- msg: ArmingCheckRequest
+  type: px4_msgs/msg/ArmingCheckRequest
+  source: src/external/px4_msgs/msg/ArmingCheckRequest.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Arming-check request time, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/health_and_arming_checks.cpp:29, purpose: gate}], unused: false}
+    - {name: request_id, type: uint8, unit: -, frame: -, semantics: Request correlation id, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/health_and_arming_checks.cpp:29, purpose: gate}], unused: false}
+    - {name: valid_registrations_mask, type: uint32, unit: -, frame: -, semantics: Valid registration bitmask, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/health_and_arming_checks.cpp:29, purpose: gate}], unused: false}
+
+- msg: ArmingCheckReply
+  type: px4_msgs/msg/ArmingCheckReply
+  source: src/external/px4_msgs/msg/ArmingCheckReply.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Arming-check reply time, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/health_and_arming_checks.cpp:24], read_by: [], unused: true}
+    - {name: request_id, type: uint8, unit: -, frame: -, semantics: Request correlation id, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/health_and_arming_checks.cpp:24], read_by: [], unused: true}
+    - {name: registration_id, type: uint8, unit: -, frame: -, semantics: Arming-check registration id, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/health_and_arming_checks.cpp:24], read_by: [], unused: true}
+    - {name: health_component_index, type: uint8, unit: -, frame: -, semantics: Health component index, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/include/px4_ros2/components/health_and_arming_checks.hpp:85], read_by: [], unused: true}
+    - {name: health_component_is_present, type: bool, unit: -, frame: -, semantics: Health component presence, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/include/px4_ros2/components/health_and_arming_checks.hpp:86], read_by: [], unused: true}
+    - {name: health_component_warning, type: bool, unit: -, frame: -, semantics: Health component warning, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/include/px4_ros2/components/health_and_arming_checks.hpp:87], read_by: [], unused: true}
+    - {name: health_component_error, type: bool, unit: -, frame: -, semantics: Health component error, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/include/px4_ros2/components/health_and_arming_checks.hpp:88], read_by: [], unused: true}
+    - {name: can_arm_and_run, type: bool, unit: -, frame: -, semantics: Component may arm/run, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/include/px4_ros2/components/health_and_arming_checks.hpp:37], read_by: [], unused: true}
+    - {name: num_events, type: uint8, unit: -, frame: -, semantics: Number of queued arming events, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/include/px4_ros2/components/health_and_arming_checks.hpp:76], read_by: [], unused: true}
+    - {name: mode_req_local_position, type: bool, unit: -, frame: -, semantics: Local position requirement, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/include/px4_ros2/common/requirement_flags.hpp:23], read_by: [], unused: true}
+    - {name: events, type: "Event[5]", unit: -, frame: -, semantics: Queued arming failure events, set_by: [PX4], read_by: [], unused: true}
+    - {name: mode_req_angular_velocity, type: bool, unit: -, frame: -, semantics: Angular-velocity requirement, set_by: [PX4], read_by: [], unused: true}
+    - {name: mode_req_attitude, type: bool, unit: -, frame: -, semantics: Attitude requirement, set_by: [PX4], read_by: [], unused: true}
+    - {name: mode_req_local_alt, type: bool, unit: -, frame: -, semantics: Local-altitude requirement, set_by: [PX4], read_by: [], unused: true}
+    - {name: mode_req_local_position_relaxed, type: bool, unit: -, frame: -, semantics: Relaxed local-position requirement, set_by: [PX4], read_by: [], unused: true}
+    - {name: mode_req_global_position, type: bool, unit: -, frame: -, semantics: Global-position requirement, set_by: [PX4], read_by: [], unused: true}
+    - {name: mode_req_global_position_relaxed, type: bool, unit: -, frame: -, semantics: Relaxed global-position requirement, set_by: [PX4], read_by: [], unused: true}
+    - {name: mode_req_mission, type: bool, unit: -, frame: -, semantics: Mission requirement, set_by: [PX4], read_by: [], unused: true}
+    - {name: mode_req_home_position, type: bool, unit: -, frame: -, semantics: Home-position requirement, set_by: [PX4], read_by: [], unused: true}
+    - {name: mode_req_prevent_arming, type: bool, unit: -, frame: -, semantics: Prevent-arming requirement, set_by: [PX4], read_by: [], unused: true}
+    - {name: mode_req_manual_control, type: bool, unit: -, frame: -, semantics: Manual-control requirement, set_by: [PX4], read_by: [], unused: true}
+
+- msg: MessageFormatRequest
+  type: px4_msgs/msg/MessageFormatRequest
+  source: src/external/px4_msgs/msg/MessageFormatRequest.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Compatibility request time, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/message_compatibility_check.cpp:172], read_by: [], unused: true}
+    - {name: protocol_version, type: uint16, unit: -, frame: -, semantics: Compatibility protocol version, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/message_compatibility_check.cpp:172], read_by: [], unused: true}
+    - {name: topic_name, type: 'char[50]', unit: -, frame: -, semantics: Topic being checked, set_by: [src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/message_compatibility_check.cpp:172], read_by: [], unused: true}
+
+- msg: MessageFormatResponse
+  type: px4_msgs/msg/MessageFormatResponse
+  source: src/external/px4_msgs/msg/MessageFormatResponse.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Compatibility response time, set_by: [PX4], read_by: [], unused: true}
+    - {name: protocol_version, type: uint16, unit: -, frame: -, semantics: Compatibility protocol version, set_by: [PX4], read_by: [], unused: true}
+    - {name: topic_name, type: 'char[50]', unit: -, frame: -, semantics: Topic being checked, set_by: [PX4], read_by: [], unused: true}
+    - {name: success, type: bool, unit: -, frame: -, semantics: Message format compatibility result, set_by: [PX4], read_by: [{node: px4_navigation_external_mode_node, at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/message_compatibility_check.cpp:201, purpose: gate}], unused: false}
+    - {name: message_hash, type: uint32, unit: -, frame: -, semantics: PX4 message hash, set_by: [PX4], read_by: [], unused: true}
+
+- msg: VehicleGlobalPosition
+  type: px4_msgs/msg/VehicleGlobalPosition
+  source: src/external/px4_msgs/msg/VehicleGlobalPosition.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: WGS84, semantics: Global-position publication timestamp, set_by: [PX4], read_by: [], unused: true}
+    - {name: timestamp_sample, type: uint64, unit: us, frame: WGS84, semantics: Global-position sample timestamp, set_by: [PX4], read_by: [], unused: true}
+    - {name: lat, type: float64, unit: deg, frame: WGS84, semantics: Latitude, set_by: [PX4], read_by: [], unused: true}
+    - {name: lon, type: float64, unit: deg, frame: WGS84, semantics: Longitude, set_by: [PX4], read_by: [], unused: true}
+    - {name: alt, type: float32, unit: m, frame: WGS84, semantics: Altitude above mean sea level, set_by: [PX4], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:2133-2136, purpose: judge}], unused: false}
+    - {name: alt_ellipsoid, type: float32, unit: m, frame: WGS84, semantics: Altitude above ellipsoid, set_by: [PX4], read_by: [], unused: true}
+    - {name: lat_lon_valid, type: bool, unit: -, frame: WGS84, semantics: Horizontal global-position validity, set_by: [PX4], read_by: [], unused: true}
+    - {name: alt_valid, type: bool, unit: -, frame: WGS84, semantics: Altitude validity, set_by: [PX4], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:2134-2136, purpose: judge}], unused: false}
+    - {name: delta_alt, type: float32, unit: m, frame: WGS84, semantics: Altitude reset delta, set_by: [PX4], read_by: [], unused: true}
+    - {name: delta_terrain, type: float32, unit: m, frame: WGS84, semantics: Terrain reset delta, set_by: [PX4], read_by: [], unused: true}
+    - {name: lat_lon_reset_counter, type: uint8, unit: -, frame: WGS84, semantics: Horizontal reset counter, set_by: [PX4], read_by: [], unused: true}
+    - {name: alt_reset_counter, type: uint8, unit: -, frame: WGS84, semantics: Altitude reset counter, set_by: [PX4], read_by: [], unused: true}
+    - {name: terrain_reset_counter, type: uint8, unit: -, frame: WGS84, semantics: Terrain reset counter, set_by: [PX4], read_by: [], unused: true}
+    - {name: eph, type: float32, unit: m, frame: WGS84, semantics: Horizontal position error standard deviation, set_by: [PX4], read_by: [], unused: true}
+    - {name: epv, type: float32, unit: m, frame: WGS84, semantics: Vertical position error standard deviation, set_by: [PX4], read_by: [], unused: true}
+    - {name: terrain_alt, type: float32, unit: m, frame: WGS84, semantics: Terrain altitude, set_by: [PX4], read_by: [], unused: true}
+    - {name: terrain_alt_valid, type: bool, unit: -, frame: WGS84, semantics: Terrain-altitude validity, set_by: [PX4], read_by: [], unused: true}
+    - {name: dead_reckoning, type: bool, unit: -, frame: WGS84, semantics: Dead-reckoning flag, set_by: [PX4], read_by: [], unused: true}
+
+- msg: VehicleLandDetected
+  type: px4_msgs/msg/VehicleLandDetected
+  source: src/external/px4_msgs/msg/VehicleLandDetected.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Land-detector timestamp, set_by: [PX4], read_by: [], unused: true}
+    - {name: freefall, type: bool, unit: -, frame: -, semantics: Freefall state, set_by: [PX4], read_by: [], unused: true}
+    - {name: ground_contact, type: bool, unit: -, frame: -, semantics: Ground-contact state, set_by: [PX4], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:2143-2147, purpose: judge}], unused: false}
+    - {name: maybe_landed, type: bool, unit: -, frame: -, semantics: Possible-landed state, set_by: [PX4], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:2143-2147, purpose: judge}], unused: false}
+    - {name: landed, type: bool, unit: -, frame: -, semantics: Authoritative landed state, set_by: [PX4], read_by: [{node: external_mode_scenario, at: tools/runtime/external_mode_scenario.py:2140-2147, purpose: judge}], unused: false}
+    - {name: in_ground_effect, type: bool, unit: -, frame: -, semantics: Ground-effect state, set_by: [PX4], read_by: [], unused: true}
+    - {name: in_descend, type: bool, unit: -, frame: -, semantics: Descent state, set_by: [PX4], read_by: [], unused: true}
+    - {name: has_low_throttle, type: bool, unit: -, frame: -, semantics: Low-throttle state, set_by: [PX4], read_by: [], unused: true}
+    - {name: vertical_movement, type: bool, unit: -, frame: -, semantics: Vertical movement state, set_by: [PX4], read_by: [], unused: true}
+    - {name: horizontal_movement, type: bool, unit: -, frame: -, semantics: Horizontal movement state, set_by: [PX4], read_by: [], unused: true}
+    - {name: rotational_movement, type: bool, unit: -, frame: -, semantics: Rotational movement state, set_by: [PX4], read_by: [], unused: true}
+    - {name: close_to_ground_or_skipped_check, type: bool, unit: -, frame: -, semantics: Close-ground or skipped-check state, set_by: [PX4], read_by: [], unused: true}
+    - {name: at_rest, type: bool, unit: -, frame: -, semantics: At-rest state, set_by: [PX4], read_by: [], unused: true}
+
+- msg: OffboardControlMode
+  type: px4_msgs/msg/OffboardControlMode
+  source: src/external/px4_msgs/msg/OffboardControlMode.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: -, semantics: Offboard heartbeat timestamp, set_by: [tools/runtime/external_mode_scenario.py:519-520, tools/runtime/closed_loop_characterization.py:168, tools/runtime/offboard_scenario.py:73], read_by: [{node: px4_fmu, at: px4_msgs OffboardControlMode input contract, purpose: gate}], unused: false}
+    - {name: position, type: bool, unit: -, frame: -, semantics: Position-control selection, set_by: [tools/runtime/external_mode_scenario.py:519-520, tools/runtime/closed_loop_characterization.py:168, tools/runtime/offboard_scenario.py:73], read_by: [{node: px4_fmu, at: px4_msgs OffboardControlMode input contract, purpose: gate}], unused: false}
+    - {name: velocity, type: bool, unit: -, frame: -, semantics: Velocity-control selection, set_by: [tools/runtime/external_mode_scenario.py:519-520, tools/runtime/closed_loop_characterization.py:168, tools/runtime/offboard_scenario.py:73], read_by: [{node: px4_fmu, at: px4_msgs OffboardControlMode input contract, purpose: gate}], unused: false}
+    - {name: acceleration, type: bool, unit: -, frame: -, semantics: Acceleration-control selection, set_by: [tools/runtime/external_mode_scenario.py:519-520, tools/runtime/closed_loop_characterization.py:168, tools/runtime/offboard_scenario.py:73], read_by: [{node: px4_fmu, at: px4_msgs OffboardControlMode input contract, purpose: gate}], unused: false}
+    - {name: attitude, type: bool, unit: -, frame: -, semantics: Attitude-control selection, set_by: [tools/runtime/external_mode_scenario.py:519-520, tools/runtime/closed_loop_characterization.py:168, tools/runtime/offboard_scenario.py:73], read_by: [{node: px4_fmu, at: px4_msgs OffboardControlMode input contract, purpose: gate}], unused: false}
+    - {name: body_rate, type: bool, unit: -, frame: -, semantics: Body-rate selection, set_by: [tools/runtime/external_mode_scenario.py:519-520, tools/runtime/closed_loop_characterization.py:168, tools/runtime/offboard_scenario.py:73], read_by: [{node: px4_fmu, at: px4_msgs OffboardControlMode input contract, purpose: gate}], unused: false}
+    - {name: thrust_and_torque, type: bool, unit: -, frame: -, semantics: Thrust/torque selection, set_by: [tools/runtime/external_mode_scenario.py:519-520, tools/runtime/closed_loop_characterization.py:168, tools/runtime/offboard_scenario.py:73], read_by: [{node: px4_fmu, at: px4_msgs OffboardControlMode input contract, purpose: gate}], unused: false}
+    - {name: direct_actuator, type: bool, unit: -, frame: -, semantics: Direct-actuator selection, set_by: [tools/runtime/external_mode_scenario.py:519-520, tools/runtime/closed_loop_characterization.py:168, tools/runtime/offboard_scenario.py:73], read_by: [{node: px4_fmu, at: px4_msgs OffboardControlMode input contract, purpose: gate}], unused: false}
+
+- msg: VehicleLocalPositionSetpoint
+  type: px4_msgs/msg/VehicleLocalPositionSetpoint
+  source: src/external/px4_msgs/msg/VehicleLocalPositionSetpoint.msg
+  product_touch_surface: true
+  fields:
+    - {name: timestamp, type: uint64, unit: us, frame: NED, semantics: Effective setpoint timestamp, set_by: [PX4], read_by: [{node: closed_loop_characterization, at: tools/runtime/closed_loop_characterization.py:174, purpose: evidence}], unused: false}
+    - {name: x, type: float32, unit: m, frame: NED, semantics: Effective north setpoint, set_by: [PX4], read_by: [{node: closed_loop_characterization, at: tools/runtime/closed_loop_characterization.py:174, purpose: evidence}], unused: false}
+    - {name: y, type: float32, unit: m, frame: NED, semantics: Effective east setpoint, set_by: [PX4], read_by: [{node: closed_loop_characterization, at: tools/runtime/closed_loop_characterization.py:174, purpose: evidence}], unused: false}
+    - {name: z, type: float32, unit: m, frame: NED, semantics: Effective down setpoint, set_by: [PX4], read_by: [{node: closed_loop_characterization, at: tools/runtime/closed_loop_characterization.py:174, purpose: evidence}], unused: false}
+    - {name: vx, type: float32, unit: m/s, frame: NED, semantics: Effective north velocity setpoint, set_by: [PX4], read_by: [{node: closed_loop_characterization, at: tools/runtime/closed_loop_characterization.py:174, purpose: evidence}], unused: false}
+    - {name: vy, type: float32, unit: m/s, frame: NED, semantics: Effective east velocity setpoint, set_by: [PX4], read_by: [{node: closed_loop_characterization, at: tools/runtime/closed_loop_characterization.py:174, purpose: evidence}], unused: false}
+    - {name: vz, type: float32, unit: m/s, frame: NED, semantics: Effective down velocity setpoint, set_by: [PX4], read_by: [{node: closed_loop_characterization, at: tools/runtime/closed_loop_characterization.py:174, purpose: evidence}], unused: false}
+    - {name: acceleration, type: "float32[3]", unit: m/s^2, frame: NED, semantics: Effective acceleration setpoint, set_by: [PX4], read_by: [{node: closed_loop_characterization, at: tools/runtime/closed_loop_characterization.py:174, purpose: evidence}], unused: false}
+    - {name: thrust, type: "float32[3]", unit: normalized, frame: NED, semantics: Effective thrust vector, set_by: [PX4], read_by: [{node: closed_loop_characterization, at: tools/runtime/closed_loop_characterization.py:174, purpose: evidence}], unused: false}
+    - {name: yaw, type: float32, unit: rad, frame: NED, semantics: Effective yaw setpoint, set_by: [PX4], read_by: [{node: closed_loop_characterization, at: tools/runtime/closed_loop_characterization.py:174, purpose: evidence}], unused: false}
+    - {name: yawspeed, type: float32, unit: rad/s, frame: NED, semantics: Effective yaw-rate setpoint, set_by: [PX4], read_by: [{node: closed_loop_characterization, at: tools/runtime/closed_loop_characterization.py:174, purpose: evidence}], unused: false}

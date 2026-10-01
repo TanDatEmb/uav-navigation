@@ -1,0 +1,9910 @@
+#include "navigation_runtime/navigation_runtime_node.hpp"
+#include "navigation_runtime/mission_dynamics.hpp"
+#include "navigation_runtime/mission_goal.hpp"
+#include "navigation_runtime/mapping_fail_stop.hpp"
+#include "navigation_runtime/commit_trace.hpp"
+#include "navigation_runtime/localization_epoch_reset.hpp"
+
+#include <navigation_mapping/mapping_actor.hpp>
+#include <navigation_mapping/current_body_support.hpp>
+
+#include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/planning_supervisor.hpp"
+#include "navigation_runtime/planning_worker.hpp"
+#include "navigation_runtime/certified_continuation.hpp"
+#include "navigation_runtime/path_relative_tracking.hpp"
+#include "navigation_runtime/experimental_tracking.hpp"
+#include "navigation_runtime/runtime_boundaries.hpp"
+#include "navigation_runtime/mapping_observation_contract.hpp"
+#include "navigation_runtime/world_temporal_assessment.hpp"
+#include <navigation_execution/timestamp_freshness.hpp>
+#include <navigation_contracts/navigation_command_contract.hpp>
+#include <navigation_contracts/command_safety_contract.hpp>
+#include <navigation_contracts/execution_state_freshness.hpp>
+#include <navigation_common/time.hpp>
+#include <navigation_world_model/goal_contract.hpp>
+#include <navigation_planning_backend/planner_facade.hpp>
+#include <navigation_planning/candidate_admission.hpp>
+#include <navigation_planning/planning_timing.hpp>
+#include <navigation_mission/route_progress.hpp>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <filesystem>
+#include <iomanip>
+#include <limits>
+#include <sstream>
+#include <stdexcept>
+#include <string_view>
+
+#include <ament_index_cpp/get_package_share_directory.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
+
+namespace navigation_runtime {
+namespace {
+
+bool executionLifecycleSnapshotsEqual(
+    const navigation_execution::ExecutionAuthoritySnapshot& lhs,
+    const navigation_execution::ExecutionAuthoritySnapshot& rhs) noexcept {
+  return lhs.admission_localization_epoch == rhs.admission_localization_epoch &&
+         lhs.admission_goal_epoch == rhs.admission_goal_epoch &&
+         lhs.admissionRequestId() == rhs.admissionRequestId() &&
+         lhs.activeGoalEpoch() == rhs.activeGoalEpoch() &&
+         lhs.activeRequestId() == rhs.activeRequestId() &&
+         lhs.activeGeneration() == rhs.activeGeneration() &&
+         lhs.lifecycle == rhs.lifecycle;
+}
+
+bool executionAuthoritySnapshotsEqual(
+    const navigation_execution::ExecutionAuthoritySnapshot& lhs,
+    const navigation_execution::ExecutionAuthoritySnapshot& rhs) noexcept {
+  return lhs.version == rhs.version && lhs.active.get() == rhs.active.get() &&
+         lhs.pending.get() == rhs.pending.get() &&
+         lhs.pending_activation_ns == rhs.pending_activation_ns;
+}
+
+const char* worldTemporalReasonName(const WorldTemporalReason reason) noexcept {
+  switch (reason) {
+    case WorldTemporalReason::kCurrent: return "CURRENT";
+    case WorldTemporalReason::kNoSnapshot: return "NO_SNAPSHOT";
+    case WorldTemporalReason::kInvalidTimeContract: return "INVALID_TIME_CONTRACT";
+    case WorldTemporalReason::kSourceStampMissing: return "SOURCE_STAMP_MISSING";
+    case WorldTemporalReason::kSourceStale: return "SOURCE_STALE";
+    case WorldTemporalReason::kSourceFuture: return "SOURCE_FUTURE";
+  }
+  return "UNCLASSIFIED";
+}
+
+const std::string& worldRuntimeInstanceId() {
+  static const auto instance_id = std::to_string(
+      navigation_common::steadyClockNowNanoseconds());
+  return instance_id;
+}
+
+// Terminal intent describes END, not HEAD or measured stopping. This phase
+// predicate schedules validation only; it grants neither exposure nor brake
+// authority. Ordinary MAIN-with-BACKUP renewal is deliberately not included.
+bool terminalMainMonitorPhaseIsOpen(
+    const navigation_planning::CandidateBundle& bundle,
+    const navigation_execution::ExecutionAuthoritySnapshot& episode,
+    const std::int64_t now_ns) noexcept {
+  return bundle.kind == navigation_planning::CandidateBundleKind::kTerminalStop &&
+         bundle.terminal_stop && !bundle.backup_available &&
+         bundle.role == navigation_planning::CandidateRole::kMain &&
+         bundle.hasDeclaredEndpointMetadata() &&
+         bundle.declared_start_ns <= now_ns && now_ns < bundle.declared_end_ns &&
+         episode.commandAvailable() && !episode.failed() &&
+         !episode.restartFromRest() && !episode.safetySuffixActive() &&
+         episode.lifecycle.phase == ExecutionPhase::kTrackingMain &&
+         episode.lifecycle.recovery == ExecutionRecoveryState::kTrackMain &&
+         episode.admission_localization_epoch == bundle.localization_epoch &&
+         episode.admission_goal_epoch == bundle.goal_epoch && episode.admissionRequestId() == bundle.request_id &&
+         episode.activeGeneration() == bundle.bundle_generation;
+}
+
+void warnWorldRevalidationFailure(
+    const rclcpp::Logger& logger, const char* phase, std::uint64_t expected_generation,
+    const navigation_planning::TrajectoryValidationResult& validation,
+    const navigation_world_model::WorldSnapshotIdentity& requested_world) {
+  RCLCPP_WARN(
+      logger,
+      "%s generation=%lu failed full immutable candidate revalidation "
+      "failure=%d blocked_role=%d samples=%lu evaluated_generation=%lu "
+      "tube_failure=%d unknown_policy=%d cell_witness=%d cell_state=%d "
+      "cell_or_geometric_position=(%.9g,%.9g,%.9g) blocked_t=%.9g interval_end_t=%.9g "
+      "curve_bound_m=%.9g curve_tolerance_m=%.9g "
+      "pinned_world=(%lu,%lu,%lu,%lld) validated_world=(%lu,%lu,%lu,%lld) "
+      "requested_world=(%lu,%lu,%lu,%lld)",
+      phase, static_cast<unsigned long>(expected_generation),
+      validation.failure_code, validation.blocked_role,
+      static_cast<unsigned long>(validation.sample_count),
+      static_cast<unsigned long>(validation.evaluated_generation),
+      validation.tube_failure_code, validation.evaluated_unknown_policy,
+      validation.blocking_cell_observed ? 1 : 0, validation.first_blocked_cell_state,
+      validation.first_blocked_position.x(), validation.first_blocked_position.y(),
+      validation.first_blocked_position.z(), validation.first_blocked_time_s,
+      validation.unsafe_interval_end_time_s, validation.curve_deviation_bound_m,
+      validation.curve_deviation_tolerance_m,
+      static_cast<unsigned long>(validation.pinned_world.localization_epoch),
+      static_cast<unsigned long>(validation.pinned_world.generation),
+      static_cast<unsigned long>(validation.pinned_world.revision),
+      static_cast<long long>(validation.pinned_world.observation_stamp_ns),
+      static_cast<unsigned long>(validation.validated_world.localization_epoch),
+      static_cast<unsigned long>(validation.validated_world.generation),
+      static_cast<unsigned long>(validation.validated_world.revision),
+      static_cast<long long>(validation.validated_world.observation_stamp_ns),
+      static_cast<unsigned long>(requested_world.localization_epoch),
+      static_cast<unsigned long>(requested_world.generation),
+      static_cast<unsigned long>(requested_world.revision),
+      static_cast<long long>(requested_world.observation_stamp_ns));
+}
+
+bool goalIdentityNewer(const navigation_contracts::msg::NavigationGoal& candidate,
+                       const navigation_contracts::msg::NavigationGoal& current) {
+  if (candidate.mission_id != current.mission_id) return false;
+  if (candidate.request_id != current.request_id) {
+    return candidate.request_id > current.request_id;
+  }
+  if (candidate.waypoint_index != current.waypoint_index) {
+    return candidate.waypoint_index > current.waypoint_index;
+  }
+  return candidate.route.route_revision > current.route.route_revision;
+}
+
+bool finiteNonzeroQuaternion(const Eigen::Quaterniond& quaternion) {
+  const double scale = quaternion.coeffs().cwiseAbs().maxCoeff();
+  return quaternion.coeffs().allFinite() && std::isfinite(scale) && scale > 1.0e-9;
+}
+
+bool propagatedOdometryFinite(const nav_msgs::msg::Odometry& odometry) {
+  const auto& position = odometry.pose.pose.position;
+  const auto& orientation = odometry.pose.pose.orientation;
+  const auto& velocity = odometry.twist.twist.linear;
+  const Eigen::Quaterniond quaternion{
+      orientation.w, orientation.x, orientation.y, orientation.z};
+  return std::isfinite(position.x) && std::isfinite(position.y) &&
+         std::isfinite(position.z) && std::isfinite(velocity.x) &&
+         std::isfinite(velocity.y) && std::isfinite(velocity.z) &&
+         finiteNonzeroQuaternion(quaternion);
+}
+
+bool hasFloatField(const sensor_msgs::msg::PointCloud2& message, const std::string& name) {
+  return std::any_of(message.fields.begin(), message.fields.end(), [&](const auto& field) {
+    return field.name == name && field.datatype == sensor_msgs::msg::PointField::FLOAT32 &&
+           field.count >= 1 && static_cast<std::uint64_t>(field.offset) + sizeof(float) <=
+                                    message.point_step;
+  });
+}
+
+double pointFromMessage(const geometry_msgs::msg::Point& point, int axis) {
+  if (axis == 0) return point.x;
+  if (axis == 1) return point.y;
+  return point.z;
+}
+
+const geometry_msgs::msg::Point& plannerTarget(
+    const navigation_contracts::msg::NavigationGoal& goal) {
+  // The current checkpoint remains the geometric endpoint. For pass-through
+  // continuity, the runtime separately forwards next_target as an outgoing
+  // tangent; it must never replace this waypoint in the geometric problem.
+  return goal.target;
+}
+
+double goalCompletionTolerance(
+    const navigation_contracts::msg::NavigationGoal& goal) {
+  // Core MissionProgress owns waypoint acceptance. The planner's
+  // smaller geometric connection tolerance is intentionally not reused for
+  // the runtime terminal decision: a certified local endpoint inside the
+  // requested acceptance ball is a valid waypoint hold, including a safety
+  // suffix that stopped short of the exact coordinate.
+  if (std::isfinite(goal.acceptance_radius_m) && goal.acceptance_radius_m > 0.0) {
+    return std::max(navigation_world_model::kGoalCompletionToleranceM,
+                    goal.acceptance_radius_m);
+  }
+  return navigation_world_model::kGoalCompletionToleranceM;
+}
+
+std::optional<navigation_mission::ImmutableRouteSnapshot> decodeRouteSnapshot(
+    const navigation_contracts::msg::NavigationGoal& goal) noexcept {
+  try {
+  const auto& source = goal.route;
+  const std::size_t count = source.waypoint_positions.size();
+  if (count == 0U || count > navigation_mission::kMaximumMissionWaypoints ||
+      source.mission_id.size() > navigation_mission::kMaximumMissionIdLength ||
+      source.frame_id.size() > navigation_mission::kMaximumMissionFrameLength ||
+      source.waypoint_ids.size() != count ||
+      source.waypoint_acceptance_radii_m.size() != count ||
+      source.waypoint_behaviors.size() != count ||
+      source.mission_id != goal.mission_id || source.frame_id != goal.header.frame_id ||
+      source.request_id != goal.request_id ||
+      source.active_waypoint_index != goal.waypoint_index ||
+      source.active_waypoint_index >= count || !source.measured_progress_valid) {
+    return std::nullopt;
+  }
+  navigation_mission::Mission mission;
+  mission.id = source.mission_id;
+  mission.frame = source.frame_id;
+  mission.waypoints.reserve(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto& point = source.waypoint_positions[index];
+    const double radius = source.waypoint_acceptance_radii_m[index];
+    const std::uint8_t behavior = source.waypoint_behaviors[index];
+    if (source.waypoint_ids[index].empty() ||
+        source.waypoint_ids[index].size() > navigation_mission::kMaximumWaypointIdLength ||
+        !std::isfinite(point.x) ||
+        !std::isfinite(point.y) || !std::isfinite(point.z) ||
+        !std::isfinite(radius) || radius <= 0.0 ||
+        (behavior != navigation_contracts::msg::RouteSnapshot::BEHAVIOR_PASS_THROUGH &&
+         behavior != navigation_contracts::msg::RouteSnapshot::BEHAVIOR_STOP)) {
+      return std::nullopt;
+    }
+    navigation_mission::MissionWaypoint waypoint;
+    waypoint.id = source.waypoint_ids[index];
+    waypoint.position_enu = Eigen::Vector3d{point.x, point.y, point.z};
+    waypoint.acceptance_radius_m = radius;
+    waypoint.behavior =
+        behavior == navigation_contracts::msg::RouteSnapshot::BEHAVIOR_STOP
+            ? navigation_mission::MissionWaypoint::Behavior::Stop
+            : navigation_mission::MissionWaypoint::Behavior::PassThrough;
+    mission.waypoints.push_back(std::move(waypoint));
+  }
+  const bool active_pass_through =
+      mission.waypoints[source.active_waypoint_index].behavior ==
+      navigation_mission::MissionWaypoint::Behavior::PassThrough;
+  if (!waypointBehaviorContractValid(
+          active_pass_through, source.active_waypoint_index + 1U < count)) {
+    return std::nullopt;
+  }
+
+  navigation_mission::RouteProgress route(mission);
+  navigation_mission::ImmutableRouteSnapshot snapshot;
+  snapshot.mission_id = source.mission_id;
+  snapshot.frame = source.frame_id;
+  snapshot.route_revision = source.route_revision;
+  snapshot.request_id = source.request_id;
+  snapshot.active_waypoint_index = source.active_waypoint_index;
+  snapshot.waypoints = mission.waypoints;
+  snapshot.segments = route.segments();
+  snapshot.waypoint_arc_lengths_m.reserve(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    snapshot.waypoint_arc_lengths_m.push_back(route.waypointArcLengthM(index));
+  }
+  snapshot.total_length_m = route.totalLengthM();
+  snapshot.measured_progress.valid = true;
+  snapshot.measured_progress.progress_arc_m = source.measured_progress_arc_m;
+  snapshot.measured_progress.projection.valid = true;
+  snapshot.measured_progress.projection.segment_index = snapshot.segments.empty()
+      ? std::numeric_limits<std::size_t>::max()
+      : source.measured_segment_index;
+  snapshot.measured_progress.projection.arc_length_m =
+      source.measured_projection_arc_m;
+  snapshot.measured_progress.projection.lateral_error_m =
+      source.measured_lateral_error_m;
+  if ((!snapshot.segments.empty() &&
+       source.measured_segment_index >= snapshot.segments.size()) ||
+      (snapshot.segments.empty() && source.measured_segment_index != 0U) ||
+      !std::isfinite(source.measured_progress_arc_m) ||
+      !std::isfinite(source.measured_projection_arc_m) ||
+      !std::isfinite(source.measured_lateral_error_m)) {
+    return std::nullopt;
+  }
+  if (snapshot.segments.empty()) {
+    if (std::abs(source.measured_projection_arc_m) > 1.0e-6) {
+      return std::nullopt;
+    }
+    snapshot.measured_progress.projection.segment_fraction = 0.0;
+  } else {
+    const auto& measured_segment =
+        snapshot.segments[source.measured_segment_index];
+    const double fraction =
+        (source.measured_projection_arc_m - measured_segment.start_arc_m) /
+        measured_segment.length_m;
+    if (!std::isfinite(fraction) || fraction < -1.0e-6 || fraction > 1.0 + 1.0e-6) {
+      return std::nullopt;
+    }
+    snapshot.measured_progress.projection.segment_fraction =
+        std::clamp(fraction, 0.0, 1.0);
+  }
+  const auto progress_point = route.pointAtArc(source.measured_projection_arc_m);
+  if (!progress_point.has_value()) return std::nullopt;
+  snapshot.measured_progress.projection.point = *progress_point;
+  snapshot.measured_progress.projection.tangent = snapshot.segments.empty()
+      ? Eigen::Vector3d::Zero()
+      : snapshot.segments[snapshot.measured_progress.projection.segment_index].tangent;
+    return snapshot.valid()
+             ? std::optional<navigation_mission::ImmutableRouteSnapshot>{
+                   std::move(snapshot)}
+             : std::nullopt;
+  } catch (const std::exception&) {
+    return std::nullopt;
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
+std::optional<CertifiedMainContinuationWindow> certifiedMainContinuationWindow(
+    const navigation_planning::CandidateBundle& candidate,
+    const navigation_contracts::msg::NavigationGoal& goal,
+    const std::uint64_t localization_epoch,
+    const std::uint64_t goal_epoch,
+    const bool trajectory_finished) noexcept {
+  if (goal.behavior != navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH ||
+      !candidate.route_boundary_event.has_value() ||
+      !candidate.route_boundary_constraint.has_value()) {
+    return std::nullopt;
+  }
+  const auto route = decodeRouteSnapshot(goal);
+  const auto& boundary = *candidate.route_boundary_event;
+  if (!route) {
+    return std::nullopt;
+  }
+  const auto boundary_sample = candidate.sampleAtDeclaredStamp(boundary.boundary_stamp_ns);
+  if (!boundary_sample) {
+    return std::nullopt;
+  }
+
+  const auto boundary_offset_ns = boundary.boundary_stamp_ns - candidate.declared_start_ns;
+  const auto canonical_offset_ns = [](const double seconds)
+      -> std::optional<std::int64_t> {
+    if (!std::isfinite(seconds) || seconds < 0.0) return std::nullopt;
+    const long double nanos = static_cast<long double>(seconds) * 1.0e9L;
+    if (!std::isfinite(nanos) || nanos < 0.0L ||
+        nanos > static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
+      return std::nullopt;
+    }
+    return static_cast<std::int64_t>(std::llround(nanos));
+  };
+  // Use the producer's canonical role interval rather than a duration magic
+  // number: the boundary must leave the complete scheduler MAIN reserve before
+  // the role interval ends (backup switch or declared endpoint).
+  std::int64_t main_interval_begin_ns = -1;
+  std::int64_t main_interval_end_ns = -1;
+  for (const auto& interval : candidate.role_schedule) {
+    const auto begin_ns = canonical_offset_ns(interval.begin_time_s);
+    const auto end_ns = canonical_offset_ns(interval.end_time_s);
+    if (begin_ns && end_ns && interval.role == navigation_planning::CandidateRole::kMain &&
+        boundary_offset_ns >= *begin_ns && boundary_offset_ns < *end_ns) {
+      main_interval_begin_ns = *begin_ns;
+      main_interval_end_ns = *end_ns;
+      break;
+    }
+  }
+  const CertifiedMainContinuationBoundaryFacts facts{
+      true,
+      navigation_mission::passThroughNextWaypointIsCoincidentStop(*route),
+      trajectory_finished,
+      true,
+      true,
+      candidate.localization_epoch,
+      localization_epoch,
+      candidate.goal_epoch,
+      goal_epoch,
+      candidate.request_id,
+      goal.request_id,
+      boundary.kind,
+      boundary_sample->role,
+      boundary.junction_index,
+      candidate.route_boundary_constraint->junction_index,
+      goal.waypoint_index,
+      boundary.boundary_stamp_ns,
+      candidate.declared_start_ns,
+      candidate.declared_end_ns,
+      main_interval_begin_ns,
+      main_interval_end_ns};
+  if (!certifiedMainContinuationBoundaryEligible(facts)) {
+    return std::nullopt;
+  }
+  if (candidate.declared_start_ns >
+      std::numeric_limits<std::int64_t>::max() - main_interval_end_ns) {
+    return std::nullopt;
+  }
+  const auto main_end_stamp_ns = candidate.declared_start_ns + main_interval_end_ns;
+  if (main_end_stamp_ns <= candidate.declared_start_ns ||
+      main_end_stamp_ns <= boundary.boundary_stamp_ns) {
+    return std::nullopt;
+  }
+  return CertifiedMainContinuationWindow{
+      boundary.boundary_stamp_ns, main_end_stamp_ns};
+}
+
+bool completionWitnessMatchesCurrentExecution(
+    const TrajectoryCompletionWitness& witness,
+    const navigation_execution::ExecutionAuthoritySnapshot& timeline,
+    const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_bundle,
+    const std::optional<navigation_contracts::msg::NavigationGoal>& executing_goal,
+    const std::uint64_t command_goal_epoch,
+    const std::uint64_t localization_epoch,
+    const bool episode_failure_latched,
+    const bool command_exposure_allowed) noexcept {
+  if (episode_failure_latched || !command_exposure_allowed || !expected_bundle ||
+      !timeline.active ||
+      timeline.active.get() != expected_bundle.get() || !executing_goal ||
+      executing_goal->mission_id != witness.mission_id ||
+      executing_goal->waypoint_index != witness.waypoint_index ||
+      executing_goal->request_id != witness.request_id ||
+      command_goal_epoch != witness.goal_epoch ||
+      localization_epoch != witness.localization_epoch) {
+    return false;
+  }
+  return completionWitnessMatches(
+      witness, timeline.active->bundle_generation,
+      timeline.version,
+      timeline.active->localization_epoch, timeline.active->goal_epoch,
+      timeline.active->request_id, executing_goal->mission_id,
+      executing_goal->waypoint_index);
+}
+
+bool routeSnapshotMatchesGoalMirrors(
+    const navigation_mission::ImmutableRouteSnapshot& route,
+    const navigation_contracts::msg::NavigationGoal& goal) noexcept {
+  if (!route.valid() || route.active_waypoint_index >= route.waypoints.size()) {
+    return false;
+  }
+  const auto point_matches = [](const geometry_msgs::msg::Point& message,
+                                const Eigen::Vector3d& expected) {
+    return std::isfinite(message.x) && std::isfinite(message.y) &&
+           std::isfinite(message.z) &&
+           (Eigen::Vector3d{message.x, message.y, message.z} - expected).norm() <=
+               1.0e-6;
+  };
+  const auto& active = route.waypoints[route.active_waypoint_index];
+  const std::uint8_t expected_behavior =
+      active.behavior == navigation_mission::MissionWaypoint::Behavior::Stop
+          ? navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
+          : navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
+  if (!point_matches(goal.target, active.position_enu) ||
+      !std::isfinite(goal.acceptance_radius_m) ||
+      std::abs(goal.acceptance_radius_m - active.acceptance_radius_m) > 1.0e-9 ||
+      goal.behavior != expected_behavior) {
+    return false;
+  }
+  const std::size_t next_index = route.active_waypoint_index + 1U;
+  const bool expected_next = next_index < route.waypoints.size();
+  return goal.has_next_target == expected_next &&
+         (!expected_next ||
+          point_matches(goal.next_target, route.waypoints[next_index].position_enu));
+}
+
+void addObservationAccountingValues(
+    diagnostic_msgs::msg::DiagnosticStatus& status,
+    const navigation_mapping::ObservationAccounting::Snapshot& accounting) {
+  const auto add_value = [&status](const std::string& key, std::uint64_t value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = std::to_string(value);
+    status.values.push_back(std::move(item));
+  };
+  // These fields are one canonical snapshot. Report consumers must not
+  // reconstruct lifecycle state by combining independent diagnostic events.
+  add_value("received_observation_count", accounting.received);
+  add_value("observation_rejected_before_inbox_count", accounting.rejected_before_inbox);
+  add_value("accepted_observation_count", accounting.accepted_to_inbox);
+  add_value("observation_accepted_to_inbox_count", accounting.accepted_to_inbox);
+  add_value("observation_replaced_pending_count", accounting.replaced_pending);
+  add_value("observation_replaced_waiting_count", accounting.replaced_waiting);
+  add_value("observation_replaced_ready_count", accounting.replaced_ready);
+  add_value("dropped_cloud_count", accounting.replaced_waiting + accounting.replaced_ready);
+  add_value("observation_discarded_pending_count", accounting.discarded_pending);
+  add_value("observation_discarded_waiting_count", accounting.discarded_waiting);
+  add_value("observation_discarded_ready_count", accounting.discarded_ready);
+  add_value("observation_discarded_shutdown_ready_count", accounting.discarded_shutdown_ready);
+  add_value("observation_discarded_nonmonotonic_count", accounting.discarded_nonmonotonic);
+  add_value("observation_ready_submitted_count", accounting.ready_submitted);
+  add_value("observation_waiting_count", accounting.waiting);
+  add_value("observation_ready_count", accounting.ready);
+  add_value("mapping_started_count", accounting.mapping_started);
+  add_value("mapping_published_count", accounting.mapping_published);
+  add_value("mapping_failed_count", accounting.mapping_failed);
+  add_value("mapping_pending_count", accounting.pending);
+  add_value("mapping_in_flight_count", accounting.in_flight);
+  add_value("observation_accounting_valid", accounting.allInvariantsHold() ? 1U : 0U);
+  add_value("observation_accounting_violation_count", accounting.violation_count);
+}
+
+void appendJsonString(std::ostringstream& output, const std::string_view value) {
+  output << '"';
+  for (const char character : value) {
+    switch (character) {
+      case '"': output << "\\\""; break;
+      case '\\': output << "\\\\"; break;
+      case '\n': output << "\\n"; break;
+      case '\r': output << "\\r"; break;
+      case '\t': output << "\\t"; break;
+      case '\b': output << "\\b"; break;
+      case '\f': output << "\\f"; break;
+      default:
+        if (static_cast<unsigned char>(character) < 0x20U) {
+          constexpr char hex[] = "0123456789abcdef";
+          const auto value_byte = static_cast<unsigned char>(character);
+          output << "\\u00" << hex[value_byte >> 4U] << hex[value_byte & 0x0fU];
+        } else {
+          output << character;
+        }
+        break;
+    }
+  }
+  output << '"';
+}
+
+void appendJsonNumber(std::ostringstream& output, const double value) {
+  if (std::isfinite(value)) {
+    output << std::setprecision(17) << value;
+  } else {
+    output << "null";
+  }
+}
+
+void appendJsonVector(std::ostringstream& output, const Eigen::Vector3d& value) {
+  output << '[';
+  appendJsonNumber(output, value.x());
+  output << ',';
+  appendJsonNumber(output, value.y());
+  output << ',';
+  appendJsonNumber(output, value.z());
+  output << ']';
+}
+
+void appendJsonPath(std::ostringstream& output,
+                    const std::vector<Eigen::Vector3d>& points) {
+  output << '[';
+  for (std::size_t index = 0; index < points.size(); ++index) {
+    if (index != 0U) output << ',';
+    appendJsonVector(output, points[index]);
+  }
+  output << ']';
+}
+
+std::string plannerPathSnapshotJson(
+    const navigation_planning::CommittedTrajectorySnapshot& snapshot,
+    const std::uint64_t planning_cycle_id,
+    const std::uint64_t solve_generation,
+    const int planner_result,
+    const int replan_code,
+    const int commit_decision,
+    const std::string_view solve_stage_name,
+    const Eigen::Vector3d& target,
+    const Eigen::Vector3d& planning_target,
+    const double goal_acceptance_radius_m,
+    const bool goal_endpoint_adjusted,
+    const navigation_world_model::CellState robot_grid,
+    const navigation_world_model::CellState robot_inflated_grid,
+    const navigation_world_model::CellState target_grid,
+    const navigation_world_model::CellState target_inflated_grid,
+    const bool safety_suffix_active,
+    const bool terminal_stop) {
+  const auto& trajectory = snapshot.position;
+  const bool has_committed_bundle = snapshot.generation > 0U && !trajectory.empty();
+  std::vector<Eigen::Vector3d> nominal_path;
+  std::vector<Eigen::Vector3d> backup_path;
+  std::vector<Eigen::Vector3d> emergency_path;
+  if (has_committed_bundle && std::isfinite(trajectory.duration_s) &&
+      trajectory.duration_s > 0.0) {
+    constexpr std::size_t kMaximumPathPoints = 64U;
+    const auto point_count = boundedTrajectorySampleCount(
+        trajectory.duration_s, 0.08, kMaximumPathPoints);
+    if (point_count) {
+      nominal_path.reserve(*point_count);
+      backup_path.reserve(*point_count);
+      emergency_path.reserve(*point_count);
+    }
+    for (std::size_t index = 0; point_count && index < *point_count; ++index) {
+      const double trajectory_time = trajectory.duration_s * static_cast<double>(index) /
+                                     static_cast<double>(*point_count - 1U);
+      navigation_planning::TrajectoryPoint point;
+      if (!trajectory.sample(trajectory_time, point)) continue;
+      switch (point.role) {
+        case navigation_planning::CandidateRole::kMain:
+          nominal_path.push_back(point.position_world);
+          break;
+        case navigation_planning::CandidateRole::kBackup:
+          backup_path.push_back(point.position_world);
+          break;
+        case navigation_planning::CandidateRole::kEmergency:
+          emergency_path.push_back(point.position_world);
+          break;
+      }
+    }
+  }
+
+  std::ostringstream output;
+  output << '{';
+  output << "\"schema_version\":1";
+  output << ",\"source\":";
+  appendJsonString(output, has_committed_bundle ? "committed_bundle" : "none");
+  output << ",\"path_available\":" << (has_committed_bundle ? "true" : "false");
+  output << ",\"absence_reason\":";
+  appendJsonString(output, has_committed_bundle ? "" : "no_committed_executable_candidate");
+  output << ",\"terminal_command_semantics\":";
+  appendJsonString(output, has_committed_bundle ? "trajectory_sample" : "no_path_origin_hold");
+  output << ",\"terminal_stop\":" << (terminal_stop ? "true" : "false");
+  output << ",\"planning_cycle_id\":" << planning_cycle_id;
+  output << ",\"solve_generation\":" << solve_generation;
+  output << ",\"bundle_generation\":" << snapshot.generation;
+  output << ",\"planner_result\":" << planner_result;
+  output << ",\"replan_code\":" << replan_code;
+  output << ",\"commit_decision\":" << commit_decision;
+  output << ",\"solve_stage_name\":";
+  appendJsonString(output, solve_stage_name);
+  output << ",\"selected_role\":";
+  appendJsonString(output, safety_suffix_active ? "backup" : "nominal");
+  output << ",\"target\" :";
+  appendJsonVector(output, target);
+  output << ",\"planning_target\" :";
+  appendJsonVector(output, planning_target);
+  output << ",\"goal_acceptance_radius_m\":";
+  appendJsonNumber(output, goal_acceptance_radius_m);
+  output << ",\"goal_endpoint_adjusted\":"
+         << (goal_endpoint_adjusted ? "true" : "false");
+  output << ",\"robot_grid_state\":" << static_cast<int>(robot_grid);
+  output << ",\"robot_inflated_grid_state\":" << static_cast<int>(robot_inflated_grid);
+  output << ",\"target_grid_state\":" << static_cast<int>(target_grid);
+  output << ",\"target_inflated_grid_state\":" << static_cast<int>(target_inflated_grid);
+  output << ",\"certificate_world_generation\":" << snapshot.certificate.validated_world.generation;
+  output << ",\"certificate_world_revision\":" << snapshot.certificate.validated_world.revision;
+  output << ",\"certificate_world_stamp_ns\":" << snapshot.certificate.validated_world.observation_stamp_ns;
+  output << ",\"duration_s\":";
+  appendJsonNumber(output, trajectory.duration_s);
+  output << ",\"backup_available\":" << (snapshot.backup_available ? "true" : "false");
+  output << ",\"backup_start_time_s\":";
+  appendJsonNumber(output, snapshot.backup_start_time_s);
+  output << ",\"nominal_path\":";
+  appendJsonPath(output, nominal_path);
+  output << ",\"backup_path\":";
+  appendJsonPath(output, backup_path);
+  output << ",\"emergency_path\":";
+  appendJsonPath(output, emergency_path);
+  output << '}';
+  return output.str();
+}
+
+}  // namespace
+
+NavigationRuntimeNode::NavigationRuntimeNode(const rclcpp::NodeOptions& options)
+    : NavigationRuntimeNode(options, NavigationRuntimeDependencies{}) {}
+
+NavigationRuntimeNode::NavigationRuntimeNode(
+    const rclcpp::NodeOptions& options, NavigationRuntimeDependencies dependencies)
+    : rclcpp::Node("navigation_runtime_node", options),
+      command_sampler_(execution_authority_),
+      mapping_lifecycle_observer_(std::move(dependencies.lifecycle_observer)) {
+  registered_scan_topic_ = declare_parameter(
+      "navigation_runtime.registered_scan_topic", std::string("/lio/mapping_observation"));
+  propagated_odometry_topic_ = declare_parameter(
+      "navigation_runtime.propagated_odometry_topic", std::string("/lio/odometry_propagated"));
+  retained_decision_diagnostics_enabled_ = declare_parameter(
+      "navigation_runtime.retained_decision_diagnostics_enabled", true);
+  goal_topic_ = declare_parameter("navigation_runtime.goal_topic", std::string("/navigation/goal"));
+  status_topic_ = declare_parameter(
+      "navigation_runtime.status_topic", std::string("/navigation/mode_status"));
+  command_topic_ = declare_parameter(
+      "navigation_runtime.command_topic", std::string("/navigation/navigation_command"));
+  planning_frame_ = declare_parameter("navigation_runtime.planning_frame", std::string("lio_odom"));
+  body_frame_id_ = declare_parameter("navigation_runtime.body_frame_id", std::string("base_link"));
+  deployment_profile_ = declare_parameter(
+      "navigation_runtime.deployment_profile", std::string("sitl"));
+  tracking_experiment_ = navigation_contracts::loadTrackingExperimentPolicy(*this);
+  RCLCPP_INFO(get_logger(),
+      "RUNTIME_CONFIG_EFFECTIVE tracking_mode=%s enabled=%d suppress_braking=%d "
+      "suppress_health=%d velocity_only=%d",
+      get_parameter("tracking_experiment.mode").as_string().c_str(),
+      tracking_experiment_.enabled, tracking_experiment_.suppress_braking,
+      tracking_experiment_.suppress_estimator_health_response,
+      tracking_experiment_.velocity_only_enabled);
+  RCLCPP_INFO(get_logger(),
+      "RUNTIME_CONFIG_EFFECTIVE tracking_bounds base=%.17g alpha=%.17g beta=%.17g "
+      "velocity_gain=%.17g velocity_cap=%.17g velocity_accel=%.17g "
+      "velocity_jerk=%.17g velocity_timing=%.17g velocity_reference_age=%.17g "
+      "velocity_transport=%.17g velocity_px4_consume=%.17g",
+      tracking_experiment_.base_m, tracking_experiment_.lateral_alpha_s,
+      tracking_experiment_.longitudinal_beta_s,
+      tracking_experiment_.velocity_only_gain_s_inv,
+      tracking_experiment_.velocity_only_cap_mps,
+      tracking_experiment_.velocity_only_max_acceleration_mps2,
+      tracking_experiment_.velocity_only_max_jerk_mps3,
+      tracking_experiment_.velocity_only_max_timing_bound_s,
+      tracking_experiment_.velocity_only_max_reference_age_s,
+      tracking_experiment_.velocity_only_output_transport_bound_s,
+      tracking_experiment_.velocity_only_px4_consume_bound_s);
+  if (tracking_experiment_.enabled) {
+    RCLCPP_WARN(get_logger(),
+        "SITL TRACKING EXPERIMENT: increased collision risk accepted for characterization; "
+        "base=%.3fm lateral_alpha=%.3fs longitudinal_beta=%.3fs suppress_MAIN_tracking_braking=%d; "
+        "not flight qualification",
+        tracking_experiment_.base_m, tracking_experiment_.lateral_alpha_s,
+        tracking_experiment_.longitudinal_beta_s, tracking_experiment_.suppress_braking);
+  }
+  data_freshness_window_s_ = declare_parameter(
+      "navigation_runtime.data_freshness_window_s", 0.5);
+  planner_watchdog_timeout_s_ = declare_parameter(
+      "navigation_runtime.planner_watchdog_timeout_s", 1.0);
+  const auto inject_failed_replan_cycle_id = declare_parameter(
+      "navigation_runtime.inject_failed_replan_cycle_id", std::int64_t{0});
+  inject_failed_replan_cycle_id_ = inject_failed_replan_cycle_id > 0
+      ? static_cast<std::uint64_t>(inject_failed_replan_cycle_id) : 0U;
+  inject_failed_replan_once_ = declare_parameter(
+      "navigation_runtime.inject_failed_replan_once", false);
+  inject_failed_replan_when_safe_ = declare_parameter(
+      "navigation_runtime.inject_failed_replan_when_safe", false);
+  inject_failed_replan_after_handoff_ = declare_parameter(
+      "navigation_runtime.inject_failed_replan_after_handoff", false);
+  inject_failed_replan_repeated_ = declare_parameter(
+      "navigation_runtime.inject_failed_replan_repeated", false);
+  inject_failed_plan_from_rest_repeated_ = declare_parameter(
+      "navigation_runtime.inject_failed_plan_from_rest_repeated", false);
+  const bool inject_exact_optimization_failed_once = declare_parameter(
+      "navigation_runtime.inject_exact_optimization_failed_once", false);
+  const auto exact_predecessor_request = declare_parameter(
+      "navigation_runtime.inject_exact_optimization_predecessor_request", std::int64_t{0});
+  const auto exact_successor_request = declare_parameter(
+      "navigation_runtime.inject_exact_optimization_successor_request", std::int64_t{0});
+  const auto exact_alternate_predecessor_request = declare_parameter(
+      "navigation_runtime.inject_exact_optimization_alternate_predecessor_request",
+      std::int64_t{0});
+  const auto exact_alternate_successor_request = declare_parameter(
+      "navigation_runtime.inject_exact_optimization_alternate_successor_request",
+      std::int64_t{0});
+  if (inject_exact_optimization_failed_once) {
+    if (deployment_profile_ != "sitl" ||
+        exact_predecessor_request <= 0 || exact_successor_request <= 0 ||
+        exact_predecessor_request == exact_successor_request ||
+        ((exact_alternate_predecessor_request == 0) !=
+         (exact_alternate_successor_request == 0)) ||
+        exact_alternate_predecessor_request < 0 ||
+        exact_alternate_successor_request < 0 ||
+        (exact_alternate_predecessor_request > 0 &&
+         (exact_alternate_predecessor_request == exact_alternate_successor_request ||
+          (exact_alternate_predecessor_request == exact_predecessor_request &&
+           exact_alternate_successor_request == exact_successor_request))) ||
+        inject_failed_replan_once_ || inject_failed_replan_repeated_ ||
+        inject_failed_plan_from_rest_repeated_) {
+      throw std::invalid_argument(
+          "exact OptimizationFailed injection requires SITL, distinct positive request IDs "
+          "and no other failed-replan injection");
+    }
+    exact_optimization_failure_injection_.setTarget({
+        static_cast<std::uint64_t>(exact_predecessor_request),
+        static_cast<std::uint64_t>(exact_successor_request)});
+    if (exact_alternate_predecessor_request > 0) {
+      exact_optimization_failure_injection_.setAlternateTarget({
+          static_cast<std::uint64_t>(exact_alternate_predecessor_request),
+          static_cast<std::uint64_t>(exact_alternate_successor_request)});
+    }
+  }
+  const auto inject_failed_same_identity_renewal_ordinal = declare_parameter(
+      "navigation_runtime.inject_failed_same_identity_renewal_ordinal", std::int64_t{0});
+  if (inject_failed_same_identity_renewal_ordinal < 0) {
+    throw std::invalid_argument(
+        "navigation_runtime.inject_failed_same_identity_renewal_ordinal must be non-negative");
+  }
+  same_identity_renewal_injection_.setTargetOrdinal(
+      static_cast<std::uint64_t>(inject_failed_same_identity_renewal_ordinal));
+  RCLCPP_INFO(get_logger(),
+      "RUNTIME_CONFIG_EFFECTIVE planner_fault cycle=%lld once=%d when_safe=%d "
+      "after_handoff=%d repeated=%d rest_repeated=%d exact_optimization=%d "
+      "renewal_ordinal=%lld",
+      static_cast<long long>(inject_failed_replan_cycle_id),
+      inject_failed_replan_once_, inject_failed_replan_when_safe_,
+      inject_failed_replan_after_handoff_, inject_failed_replan_repeated_,
+      inject_failed_plan_from_rest_repeated_, inject_exact_optimization_failed_once,
+      static_cast<long long>(inject_failed_same_identity_renewal_ordinal));
+  planner_config_path_ = declare_parameter("navigation_runtime.config_path", std::string{});
+  const auto mission_file =
+      declare_parameter("navigation_runtime.mission_file", std::string{});
+  if (planner_config_path_.empty()) {
+    planner_config_path_ = ament_index_cpp::get_package_share_directory("navigation_runtime") +
+                         "/config/planner.yaml";
+  }
+
+  if (!std::filesystem::exists(planner_config_path_)) {
+    throw std::runtime_error("planner backend config does not exist: " + planner_config_path_);
+  }
+  if (deployment_profile_ != "sitl" && deployment_profile_ != "hardware") {
+    throw std::invalid_argument(
+        "navigation_runtime.deployment_profile must be 'sitl' or 'hardware'");
+  }
+  if (deployment_profile_ == "hardware") {
+    throw std::invalid_argument(
+        "hardware planner backend runtime is blocked until an immutable sensor-visibility "
+        "certificate and its runtime verifier are implemented");
+  }
+  const auto planning_period = ratePeriodNanoseconds(
+      navigation_planning::PlanningTimingContract::kPlannerRateHz);
+  const auto command_period = ratePeriodNanoseconds(
+      navigation_planning::PlanningTimingContract::kCommandRateHz);
+  if (!planning_period || !command_period ||
+      std::chrono::duration_cast<std::chrono::microseconds>(*planning_period).count() <= 0) {
+    throw std::invalid_argument(
+        "navigation_runtime planner/command rates must produce positive representable periods");
+  }
+  if (!std::isfinite(data_freshness_window_s_) || data_freshness_window_s_ <= 0.0 ||
+      !std::isfinite(planner_watchdog_timeout_s_) || planner_watchdog_timeout_s_ <= 0.0) {
+    throw std::invalid_argument(
+        "planner backend timing and safety parameters must be positive");
+  }
+  if (navigation_planning::PlanningTimingContract::kSnapshotPeriodS >
+          data_freshness_window_s_ ||
+      navigation_planning::PlanningTimingContract::kSnapshotPeriodS >
+          navigation_planning::PlanningTimingContract::kPlannerPeriodS) {
+    throw std::invalid_argument(
+        "the product mapping snapshot period must not exceed "
+        "the world freshness window or planner period");
+  }
+  const auto data_freshness_window_ns =
+      navigation_common::secondsToNanoseconds(data_freshness_window_s_);
+  const auto planner_watchdog_timeout_ns =
+      navigation_common::secondsToNanoseconds(planner_watchdog_timeout_s_);
+  const auto command_stream_timeout_ns =
+      navigation_common::secondsToNanoseconds(
+          navigation_planning::PlanningTimingContract::kCommandStreamTimeoutS);
+  if (!data_freshness_window_ns || *data_freshness_window_ns <= 0 ||
+      !planner_watchdog_timeout_ns || *planner_watchdog_timeout_ns <= 0 ||
+      !command_stream_timeout_ns || *command_stream_timeout_ns <= 0) {
+    throw std::invalid_argument(
+        "navigation_runtime timing values are too small or large for nanosecond precision");
+  }
+  data_freshness_window_ns_ = *data_freshness_window_ns;
+  command_stream_timeout_ns_ = *command_stream_timeout_ns;
+  planner_watchdog_timeout_ns_ = *planner_watchdog_timeout_ns;
+  if (body_frame_id_.empty()) {
+    throw std::invalid_argument("navigation_runtime.body_frame_id must not be empty");
+  }
+  diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+      "/navigation/diagnostics", rclcpp::QoS(rclcpp::KeepLast(5)).reliable());
+  std::optional<navigation_planning::DynamicLimits> mission_limits;
+  if (!mission_file.empty()) {
+    auto definition = navigation_mission::loadMission(mission_file, planning_frame_);
+    mission_limits.emplace();
+    mission_limits->intent.requested_cruise_speed_mps =
+        definition.planning.requested_cruise_speed_mps;
+    mission_limits->unknown_space_policy = definition.planning.unknown_policy;
+    mission_progress_.emplace(std::move(definition));
+    mission_dynamic_limits_ = *mission_limits;
+    RCLCPP_INFO(
+        get_logger(),
+        "Applying mission dynamics to planner backend before optimizer construction: "
+        "velocity=%.3f acceleration=%.3f jerk=%.3f",
+        mission_limits->intent.requested_cruise_speed_mps,
+        mission_limits->vehicle.maximum_acceleration_mps2,
+        mission_limits->vehicle.maximum_jerk_mps3);
+  }
+  // Dynamics are immutable after construction. This process-local identity is
+  // sufficient for request supersession and is never used as a certificate.
+  dynamics_hash_ = static_cast<std::uint64_t>(std::hash<std::string>{}(
+      planner_config_path_ + "\n" + mission_file));
+  if (dynamics_hash_ == 0U) dynamics_hash_ = 1U;
+  const auto ros_clock = get_clock();
+  auto mapping_actor = std::make_shared<navigation_mapping::MappingActor>(
+      planner_config_path_, [ros_clock] { return ros_clock->now().seconds(); },
+      navigation_mapping::MappingFrameContract{planning_frame_, body_frame_id_},
+      navigation_planning::PlanningTimingContract::kSnapshotPeriodS);
+  const auto mapping_configuration = mapping_actor->configuration();
+  if (mapping_configuration.callbacks_enabled ||
+      mapping_configuration.raycasting_batch_update_size != 1) {
+    throw std::invalid_argument(
+        "navigation_runtime owns mapping callbacks and requires one mapping "
+        "observation per raycast update");
+  }
+  if (planning_frame_ == "lio_odom" &&
+      mapping_configuration.virtual_ground_ceiling_enabled) {
+    throw std::invalid_argument(
+        "absolute mapping virtual ground/ceiling planes are invalid in lio_odom; "
+        "disable the virtual ground/ceiling planes in the mapping configuration");
+  }
+  const auto initial_snapshot = mapping_actor->initialSnapshot();
+  world_snapshot_store_.publish(initial_snapshot.view);
+  mapping_telemetry_ = std::make_shared<MappingTelemetry>();
+  MappingTelemetrySnapshot initial_telemetry;
+  initial_telemetry.snapshot_bytes = initial_snapshot.metrics.bytes;
+  initial_telemetry.snapshot_owned_bytes = initial_snapshot.metrics.owned_bytes;
+  initial_telemetry.snapshot_shared_metadata_bytes = initial_snapshot.metrics.shared_metadata_bytes;
+  initial_telemetry.snapshot_live_count = initial_snapshot.metrics.live_count;
+  initial_telemetry.snapshot_peak_live_count = initial_snapshot.metrics.peak_live_count;
+  initial_telemetry.snapshot_live_owned_bytes = initial_snapshot.metrics.live_owned_bytes;
+  initial_telemetry.snapshot_peak_live_owned_bytes = initial_snapshot.metrics.peak_live_owned_bytes;
+  mapping_telemetry_->initialize(initial_telemetry);
+  auto process_mapping = [this, mapping_actor, telemetry = mapping_telemetry_,
+                          lifecycle_observer = mapping_lifecycle_observer_,
+                          store = &world_snapshot_store_,
+                          command_store = &execution_authority_,
+                          ros_clock,
+                          epoch_ready = &localization_epoch_ready_]
+      (PendingRegisteredScan&& pending) mutable {
+    const auto callback_started = std::chrono::steady_clock::now();
+    try {
+      if (!pending.message) {
+        throw std::invalid_argument("mapping worker received a null RegisteredScan");
+      }
+      if (!pending.message->sensor_origin_valid) {
+        throw navigation_mapping::MappingObservationRejected(
+            navigation_mapping::MappingObservationRejectionReason::kMissingSensorOrigin);
+      }
+      const auto prior_world_identity = store->load().identity;
+      const auto decode_started = std::chrono::steady_clock::now();
+      auto decoded = std::make_unique<navigation_mapping::PointCloud>();
+      if (!decodeCloud(pending.message->points, *decoded)) {
+        throw std::invalid_argument("mapping worker could not decode registered points");
+      }
+      std::unique_ptr<navigation_mapping::PointCloud> decoded_free_space;
+      if (pending.message->visibility_observation_present) {
+        decoded_free_space = std::make_unique<navigation_mapping::PointCloud>();
+        if (!decodeCloud(
+                pending.message->free_space_endpoints,
+                *decoded_free_space, false)) {
+          throw std::invalid_argument("mapping worker could not decode visibility endpoints");
+        }
+      }
+      nav_msgs::msg::Odometry corrected;
+      corrected.header = pending.message->header;
+      corrected.child_frame_id = pending.message->body_frame_id;
+      corrected.pose = pending.message->corrected_pose;
+      // MappingWorker calls this callback only after validate_mapping has
+      // admitted the finite, fresh, frame/epoch/time/origin contract.
+      navigation_mapping::MappingObservation observation{
+          std::move(decoded), std::move(corrected), pending.localization_epoch,
+          pending.scan_sequence, pending.stamp_ns,
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - decode_started).count(),
+          nullptr,
+          navigation_world_model::Point3{
+              pending.message->sensor_origin_pose.position.x,
+              pending.message->sensor_origin_pose.position.y,
+              pending.message->sensor_origin_pose.position.z},
+          pending.localization_epoch, pending.stamp_ns};
+      if (decoded_free_space) {
+        observation.free_space_endpoints = std::move(decoded_free_space);
+      }
+      const auto result = mapping_actor->process(observation);
+      if (lifecycle_observer) {
+        lifecycle_observer->onMutableMapUpdated(observation.stamp_ns);
+      }
+      MappingTelemetrySnapshot next = telemetry->snapshot();
+      next.map = result.diagnostics;
+      next.last_update_attempt_stamp_ns = observation.stamp_ns;
+      next.snapshot_export_us = result.snapshot_export_us;
+      next.snapshot_export_mode = static_cast<std::uint64_t>(result.snapshot_export_mode);
+      next.snapshot_full_export_reason =
+          static_cast<std::uint64_t>(result.snapshot_full_export_reason);
+      next.snapshot_export_base_cells = result.snapshot_export_base_cells;
+      next.snapshot_export_inflated_cells = result.snapshot_export_inflated_cells;
+      next.snapshot_patch_depth = result.snapshot_patch_depth;
+      next.pointcloud_decode_us = observation.pointcloud_decode_us;
+      next.observation_decode_us = result.observation_decode_us;
+      next.dirty_region_build_us = result.dirty_region_build_us;
+      next.snapshot_object_build_us = result.snapshot_object_build_us;
+      next.dirty_aabb_voxel_count = result.dirty_aabb_voxel_count;
+      next.base_planning_state_change_count =
+          result.base_planning_state_change_count;
+      next.inflated_planning_state_change_count =
+          result.inflated_planning_state_change_count;
+      next.inflated_planning_state_change_count_valid = false;
+      next.full_snapshot_bytes = result.full_snapshot_bytes;
+      next.copied_snapshot_bytes = result.copied_snapshot_bytes;
+      next.reused_snapshot_bytes = result.reused_snapshot_bytes;
+      next.world_snapshot_published = static_cast<bool>(result.snapshot);
+      if (result.snapshot) {
+        // Recertification consumes only the immutable CandidateBundle snapshot
+        // and the immutable WorldModelView published above.  Never hold the
+        // PlanningWorker/backend mutex across this callback: map ingestion
+        // must not serialize behind optimizer work.  The execution store's
+        // publishAndFinalize gate below linearizes the retained pointer with
+        // the world identity; a concurrent planner commit is either retained
+        // by its exact generation/protected-region proof or rejected on the
+        // next immutable callback.
+        const auto execution_timeline = command_store->snapshot();
+        const auto expected_bundle = execution_timeline.active;
+        const auto expected_pending = execution_timeline.pending;
+        std::optional<navigation_contracts::msg::NavigationGoal> expected_goal;
+        if (expected_bundle && execution_timeline.active_goal) {
+          expected_goal = *execution_timeline.active_goal;
+        }
+        bool retain_validated_bundle = false;
+        bool retain_validated_pending = false;
+        // Diagnostic path codes: 0 none, 1 disjoint-region proof, 2 full
+        // immutable validation, 3 terminal endpoint exception, 4 expired
+        // recovery endpoint exception, 5 rejected/invalidated.
+        int pending_validation_path = 0;
+        int active_validation_path = 0;
+        const auto pending_revalidation_started = std::chrono::steady_clock::now();
+        if (expected_pending && expected_pending->valid() &&
+            expected_pending->protected_region.valid() &&
+            expected_pending->world_identity.localization_epoch ==
+                result.snapshot->identity().localization_epoch &&
+            expected_pending->world_identity.generation ==
+                result.snapshot->identity().generation &&
+            expected_pending->world_identity.revision <
+                result.snapshot->identity().revision &&
+            !result.snapshot->changedRegionIntersectsSince(
+                expected_pending->world_identity,
+                expected_pending->protected_region)) {
+          retain_validated_pending = true;
+          pending_validation_path = 1;
+        }
+        if (expected_pending && expected_pending->valid() &&
+            !retain_validated_pending) {
+          // Changed-region provenance is only a fast path.  A pending
+          // successor has a planner-owned immutable candidate as well, so
+          // revalidate that exact generation before dropping it.  This keeps
+          // a valid scheduled handover alive when a LiDAR update touches the
+          // protected region but does not actually block the candidate.
+          const double authorization_wall_time_s = ros_clock->now().seconds();
+          const auto validation = expected_pending->validateWorld(
+              result.snapshot, authorization_wall_time_s);
+          if (validation.valid) {
+            retain_validated_pending = true;
+            pending_validation_path = 2;
+            ++next.command_revalidation_full_count;
+            RCLCPP_DEBUG(
+                this->get_logger(),
+                "retaining pending generation=%lu after full immutable candidate "
+                "revalidation samples=%lu",
+                static_cast<unsigned long>(expected_pending->bundle_generation),
+                static_cast<unsigned long>(validation.sample_count));
+          } else {
+            pending_validation_path = 5;
+            warnWorldRevalidationFailure(
+                this->get_logger(), "pending", expected_pending->bundle_generation,
+                validation, result.snapshot->identity());
+          }
+        }
+        next.pending_revalidation_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - pending_revalidation_started).count();
+        const auto active_revalidation_started = std::chrono::steady_clock::now();
+        const auto terminal_generation = terminal_bundle_generation_.load(
+            std::memory_order_acquire);
+        const bool terminal_bundle_observed = expected_bundle &&
+            terminal_generation != 0U &&
+            expected_bundle->bundle_generation == terminal_generation;
+        const auto terminal_endpoint = expected_bundle
+            ? expected_bundle->sampleAtDeclaredEnd() : std::nullopt;
+        const auto endpoint_declared_end_ns = expected_bundle &&
+            expected_bundle->declared_end_ns > 0
+            ? std::optional<std::int64_t>{expected_bundle->declared_end_ns}
+            : expected_bundle
+                ? navigation_common::secondsToNanoseconds(
+                      expected_bundle->start_wall_time_s + expected_bundle->duration_s)
+                : std::nullopt;
+        const auto endpoint_execution_state = execution_state_store_.load();
+        const auto endpoint_execution_freshness = endpoint_execution_state
+            ? navigation_contracts::evaluateExecutionStateFreshness(
+                  ros_clock->now().nanoseconds(),
+                  endpoint_execution_state->state.source_stamp_ns,
+                  navigation_common::steadyClockNowNanoseconds(),
+                  endpoint_execution_state->state.receive_stamp_ns,
+                  data_freshness_window_s_)
+            : navigation_contracts::ExecutionStateFreshness{};
+        const bool endpoint_near_current_execution = endpoint_execution_state &&
+            endpoint_execution_freshness.valid() && terminal_endpoint &&
+            endpoint_execution_state->state.localization_epoch ==
+                expected_bundle->localization_epoch &&
+            (terminal_endpoint->position_world -
+                endpoint_execution_state->state.position_world).norm() <=
+                navigation_contracts::kCommandAnchorErrorLimitM;
+        const bool expired_recovery_endpoint = expected_bundle &&
+            endpoint_declared_end_ns &&
+            ros_clock->now().nanoseconds() >= *endpoint_declared_end_ns &&
+            terminal_endpoint && terminal_endpoint->finished &&
+            terminal_endpoint->finite() && endpoint_near_current_execution &&
+            navigation_world_model::isCellTraversable(
+                result.snapshot->classify(
+                    terminal_endpoint->position_world,
+                    navigation_world_model::GridLayer::kInflated),
+                navigation_world_model::UnknownPolicy::kRequireKnownFree) &&
+            ((expected_bundle->kind ==
+                  navigation_planning::CandidateBundleKind::kMainWithBackup &&
+              terminal_endpoint->role == navigation_planning::CandidateRole::kBackup) ||
+             (expected_bundle->kind ==
+                  navigation_planning::CandidateBundleKind::kEmergencyBrake &&
+              terminal_endpoint->role == navigation_planning::CandidateRole::kEmergency));
+        const bool effective_terminal_route = expected_goal && [&] {
+          const auto route = decodeRouteSnapshot(*expected_goal);
+          return route.has_value() &&
+              (expected_goal->behavior ==
+                   navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP ||
+               navigation_mission::passThroughNextWaypointIsCoincidentStop(*route));
+        }();
+        const auto terminal_declared_end_ns = endpoint_declared_end_ns;
+        const bool expired_terminal_endpoint = expected_bundle && expected_goal &&
+            effective_terminal_route && terminal_endpoint &&
+            terminal_declared_end_ns &&
+            ros_clock->now().nanoseconds() >= *terminal_declared_end_ns &&
+            terminal_endpoint->finished && terminal_endpoint->finite() &&
+            (terminal_endpoint->position_world -
+                Eigen::Vector3d{pointFromMessage(plannerTarget(*expected_goal), 0),
+                                pointFromMessage(plannerTarget(*expected_goal), 1),
+                                pointFromMessage(plannerTarget(*expected_goal), 2)}).norm() <=
+                goalCompletionTolerance(*expected_goal) &&
+            terminalStopEndpointContractValid(
+                effective_terminal_route, expected_bundle->kind,
+                expected_bundle->role, terminal_endpoint->role);
+        if (terminal_bundle_observed || expired_terminal_endpoint) {
+          // The executable lease may have ended by the time this map callback
+          // runs. An observed or already-expired terminal command needs one
+          // final safe handover sample, not a revalidation of future
+          // trajectory time. Keep this exception narrow: only the declared
+          // endpoint is sampled, and it must still be finite and known-free
+          // in the new snapshot. The expired-endpoint branch closes the
+          // callback-order race where the command publisher has just emitted
+          // its terminal sample but has not yet published the derived witness.
+          const auto terminal_state = terminal_endpoint
+              ? result.snapshot->classify(
+                    terminal_endpoint->position_world,
+                    navigation_world_model::GridLayer::kInflated)
+              : navigation_world_model::CellState::kOutOfMap;
+          retain_validated_bundle = terminal_endpoint.has_value() &&
+              terminal_endpoint->finished && terminal_endpoint->finite() &&
+              navigation_world_model::isCellTraversable(
+                  terminal_state,
+                  navigation_world_model::UnknownPolicy::kRequireKnownFree);
+          active_validation_path = retain_validated_bundle ? 3 : 5;
+          if (!retain_validated_bundle) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                  "terminal command retention rejected generation=%lu state=%d endpoint=%d",
+                static_cast<unsigned long>(expected_bundle->bundle_generation),
+                static_cast<int>(terminal_state), terminal_endpoint.has_value() ? 1 : 0);
+          }
+        } else if (expired_recovery_endpoint) {
+          // A non-terminal BACKUP or EMERGENCY endpoint can expire between
+          // the command timer and this mapping callback. Preserve only the
+          // endpoint witness so CommandSampler can emit its bounded
+          // STOPPED_HOLD; the next planner cycle must observe the measured
+          // stop and restart from the current state. This never extends the
+          // polynomial lease or treats the endpoint as mission completion.
+          retain_validated_bundle = true;
+          active_validation_path = 4;
+          ++next.command_revalidation_fast_path_count;
+          RCLCPP_INFO(
+              this->get_logger(),
+              "retaining expired recovery endpoint generation=%lu as bounded "
+              "STOPPED_HOLD endpoint=(%.3f,%.3f,%.3f)",
+              static_cast<unsigned long>(expected_bundle->bundle_generation),
+              terminal_endpoint->position_world.x(),
+              terminal_endpoint->position_world.y(),
+              terminal_endpoint->position_world.z());
+        } else if (expected_bundle && expected_bundle->protected_region.valid() &&
+                   expected_bundle->world_identity.localization_epoch ==
+                       result.snapshot->identity().localization_epoch &&
+                   expected_bundle->world_identity.generation ==
+                       result.snapshot->identity().generation &&
+                   expected_bundle->world_identity.revision <=
+                       result.snapshot->identity().revision &&
+                   !result.snapshot->changedRegionIntersectsSince(
+                       expected_bundle->world_identity,
+                       expected_bundle->protected_region)) {
+          // Mapping owns only immutable world/candidate values.  A planner
+          // backend validation call here would race with optimizer state and
+          // reintroduce the callback-wide mutex that this path is designed to
+          // avoid.  The changed-region proof is therefore the only retention
+          // fast path; an intersecting/ambiguous update fails closed.
+          retain_validated_bundle = true;
+          active_validation_path = 1;
+          ++next.command_revalidation_fast_path_count;
+          RCLCPP_DEBUG(
+              this->get_logger(),
+              "retaining generation=%lu on immutable disjoint-region proof",
+              static_cast<unsigned long>(expected_bundle->bundle_generation));
+        } else if (expected_bundle) {
+          // The changed-region proof is a fast path, not the only safe path.
+          // LiDAR updates naturally touch the currently traversed corridor in
+          // open space, so rejecting every intersecting update would erase a
+          // still-safe command at the next observation.  Revalidate the exact
+          // execution generation against the new immutable snapshot before
+          // deciding whether the command must be removed. The execution-owned
+          // immutable bundle carries the exact polynomial and policy needed
+          // for the same full swept certificate; planner warm-start history
+          // is not an execution validation authority.
+          const double authorization_wall_time_s = ros_clock->now().seconds();
+          const auto validation = expected_bundle->validateWorld(
+              result.snapshot, authorization_wall_time_s);
+          if (validation.valid) {
+            retain_validated_bundle = true;
+            active_validation_path = 2;
+            ++next.command_revalidation_full_count;
+            RCLCPP_DEBUG(
+                this->get_logger(),
+                "retaining generation=%lu after full immutable candidate revalidation "
+                "samples=%lu",
+                static_cast<unsigned long>(expected_bundle->bundle_generation),
+                static_cast<unsigned long>(validation.sample_count));
+          } else {
+            active_validation_path = 5;
+            warnWorldRevalidationFailure(
+                this->get_logger(), "active", expected_bundle->bundle_generation,
+                validation, result.snapshot->identity());
+          }
+        }
+        next.active_revalidation_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - active_revalidation_started).count();
+        // The immutable world publication and the dependent execution
+        // certificate transition share one gate.  A retained bundle is copied
+        // with the new identity only when the exact pointer was validated on
+        // this snapshot; otherwise it is cleared fail-closed.
+        const auto publication_finalize_started = std::chrono::steady_clock::now();
+        bool invalidated_current = false;
+        // Retired messages/witnesses are pins, never execution authority.
+        // Release their storage after leaving the publication/owner locks.
+        navigation_contracts::msg::NavigationGoal::ConstSharedPtr retired_pending_goal;
+        std::optional<TrajectoryCompletionWitness> retired_completion_witness;
+        navigation_world_model::WorldCommitDecision publication_decision;
+        {
+          // Lock order: lifecycle owners -> world publication -> timeline ->
+          // episode. Validation above stays outside these locks. Finalizing
+          // revocation after publication by comparing the retired pointer is
+          // too late: the committed transaction has already cleared it.
+          std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+          std::lock_guard<std::mutex> input_lock(input_mutex_);
+          std::lock_guard<std::mutex> command_lock(
+              command_execution_lease_failure_latch_.transitionMutex());
+          const bool exact_owner = expected_bundle && expected_goal &&
+              execution_timeline.active_goal &&
+              expected_bundle->localization_epoch ==
+                  active_localization_epoch_.load(std::memory_order_acquire) &&
+              execution_timeline.active_goal->request_id == expected_bundle->request_id;
+          // An old IN_FLIGHT callback may finish during the reset drain, but
+          // must neither publish its world nor reopen new-epoch readiness.
+          if (result.snapshot->identity().localization_epoch !=
+              active_localization_epoch_.load(std::memory_order_acquire)) {
+            publication_decision = navigation_world_model::WorldCommitDecision::kSuperseded;
+          } else {
+            publication_decision = store->publishAndFinalizeDecision(
+                result.snapshot,
+                [this, command_store, expected_bundle, expected_pending, exact_owner,
+                 &invalidated_current, &retired_completion_witness,
+                 execution_timeline_version = execution_timeline.version, retain_validated_bundle,
+                 retain_validated_pending, identity = result.snapshot->identity(),
+                 refreshed_valid_until_ns = [&] {
+                   const auto now_ns = ros_clock->now().nanoseconds();
+                   return now_ns > std::numeric_limits<std::int64_t>::max() -
+                                       data_freshness_window_ns_
+                              ? std::numeric_limits<std::int64_t>::max()
+                              : now_ns + data_freshness_window_ns_;
+                 }()] {
+                  return command_store->publishWorldIdentityIfCurrentAndFinalizeRevocation(
+                      identity, execution_timeline_version, expected_bundle,
+                      retain_validated_bundle,
+                      [this, exact_owner, &invalidated_current,
+                       &retired_completion_witness]() noexcept {
+                        if (!exact_owner) return;
+                        (void)desired_intent_.consumeHotRetarget();
+                        skip_replan_once_.store(false, std::memory_order_release);
+                        retired_completion_witness = std::move(trajectory_completion_witness_);
+                        trajectory_reaches_goal_.store(false, std::memory_order_release);
+                        terminal_bundle_generation_.store(0U, std::memory_order_release);
+
+                        invalidated_current = true;
+                      },
+                      refreshed_valid_until_ns, expected_pending, retain_validated_pending);
+                });
+            if (publication_decision == navigation_world_model::WorldCommitDecision::kCommitted) {
+              // Same owner lock as reset: no delayed old callback can re-enable
+              // readiness after a newer epoch has closed it.
+              epoch_ready->store(true, std::memory_order_release);
+            }
+          }
+          if (invalidated_current) {
+            retired_pending_goal = pending_goal_owner_.goalSnapshot();
+            (void)pending_goal_owner_.clearIfCurrent(retired_pending_goal);
+          }
+        }
+        next.world_publication_finalize_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - publication_finalize_started).count();
+        if (publication_decision == navigation_world_model::WorldCommitDecision::kSuperseded) {
+          publishWorldTransactionWitness(
+              "WORLD_PUBLICATION_SUPERSEDED", prior_world_identity,
+              result.snapshot->identity(), execution_timeline,
+              command_store->snapshot(), "SUPERSEDED", active_validation_path,
+              pending_validation_path);
+          next.map_update_us = result.map_update_us;
+          next.mapping_callback_total_us =
+              std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::steady_clock::now() - callback_started).count();
+          telemetry->recordUpdate(std::move(next));
+          RCLCPP_DEBUG(
+              this->get_logger(),
+              "world refresh superseded by a newer execution timeline; preserving active/pending bundle");
+          return;
+        }
+        if (publication_decision != navigation_world_model::WorldCommitDecision::kCommitted) {
+          command_store->invalidate();
+          publishWorldTransactionWitness(
+              "WORLD_PUBLICATION_FAILED", prior_world_identity,
+              result.snapshot->identity(), execution_timeline,
+              command_store->snapshot(), "FAIL_CLOSED", active_validation_path,
+              pending_validation_path);
+          next.map_update_us = result.map_update_us;
+          next.mapping_callback_total_us =
+              std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::steady_clock::now() - callback_started).count();
+          telemetry->recordUpdate(std::move(next));
+          RCLCPP_ERROR(
+              this->get_logger(),
+              "world snapshot publication could not finalize the execution certificate "
+              "decision=%d; mapping worker will fail-stop because the new world was not published",
+              static_cast<int>(publication_decision));
+          throw std::runtime_error(
+              "world snapshot publication could not finalize its execution certificate");
+        }
+        publishWorldTransactionWitness(
+            "WORLD_PUBLICATION_COMMITTED", prior_world_identity,
+            result.snapshot->identity(), execution_timeline,
+            command_store->snapshot(),
+            invalidated_current ? "ACTIVE_INVALIDATED" : "COMMITTED",
+            active_validation_path, pending_validation_path);
+        std::optional<navigation_execution::ExecutionAuthoritySnapshot>
+            resumed_from_execution;
+        if (expected_bundle && retain_validated_bundle) {
+          const auto recertified_state = command_store->snapshot();
+          const auto recertified_bundle = recertified_state.active;
+          publishWorldTransactionWitness(
+              "WORLD_COMMAND_RECERTIFIED", expected_bundle->world_identity,
+              result.snapshot->identity(), execution_timeline, recertified_state,
+              "ACTIVE_CERTIFICATE_RETAINED", active_validation_path,
+              pending_validation_path);
+          const auto now_ns = ros_clock->now().nanoseconds();
+          const auto suspended_generation =
+              recertified_state.lifecycle.exposure ==
+                      navigation_execution::ExecutionExposure::kSuspended &&
+                      recertified_state.active
+                  ? recertified_state.active->bundle_generation : 0U;
+          if (recertified_bundle && worldFreshnessSuspendedCommandMayResume(
+                  suspended_generation,
+                  recertified_bundle->bundle_generation,
+                  recertified_bundle->localization_epoch,
+                  recertified_bundle->goal_epoch,
+                  active_localization_epoch_.load(std::memory_order_acquire),
+                  recertified_bundle->goal_epoch,
+                  recertified_bundle->valid_until_ns,
+                  now_ns,
+                  recertified_bundle->valid(),
+                  recertified_state.lifecycle.exposure ==
+                      navigation_execution::ExecutionExposure::kFailed,
+                  command_execution_lease_failure_latch_.allowsCommandExposure())) {
+            std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+            std::lock_guard<std::mutex> input_lock(input_mutex_);
+            std::lock_guard<std::mutex> command_lock(
+                command_execution_lease_failure_latch_.transitionMutex());
+            const auto current_executing_goal = executingGoalSnapshot();
+            const auto current_execution = command_store->snapshot();
+            const auto current_suspended_generation =
+                current_execution.lifecycle.exposure ==
+                        navigation_execution::ExecutionExposure::kSuspended &&
+                        current_execution.active
+                    ? current_execution.active->bundle_generation : 0U;
+            if (current_executing_goal &&
+                (execution_authority_.matchesActive(*current_executing_goal, recertified_bundle->goal_epoch, recertified_bundle->localization_epoch, recertified_bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (recertified_bundle->localization_epoch)) &&
+                worldFreshnessSuspendedCommandMayResume(
+                    current_suspended_generation,
+                    recertified_bundle->bundle_generation,
+                    recertified_bundle->localization_epoch,
+                    recertified_bundle->goal_epoch,
+                    active_localization_epoch_.load(std::memory_order_acquire),
+                    recertified_bundle->goal_epoch,
+                    recertified_bundle->valid_until_ns,
+                    now_ns,
+                    recertified_bundle->valid(),
+                    current_execution.lifecycle.exposure ==
+                        navigation_execution::ExecutionExposure::kFailed,
+                    command_execution_lease_failure_latch_.allowsCommandExposure())) {
+              execution_authority_.observeRetainedCommand(
+                  *recertified_bundle,
+                  current_execution.lifecycle.safety ==
+                      navigation_execution::ExecutionSafetyOwnership::kSafetySuffix);
+              resumed_from_execution = current_execution;
+              ++world_freshness_command_recovery_count_;
+              RCLCPP_INFO(
+                  this->get_logger(),
+                  "fresh world recertified suspended command generation=%lu; "
+                  "command publication resumed without replacing the bundle",
+                  static_cast<unsigned long>(recertified_bundle->bundle_generation));
+            }
+          }
+        }
+        if (expected_bundle && !retain_validated_bundle) {
+          publishWorldTransactionWitness(
+              "WORLD_RECERTIFICATION_REJECTED", expected_bundle->world_identity,
+              result.snapshot->identity(), execution_timeline,
+              command_store->snapshot(),
+              invalidated_current ? "ACTIVE_CERTIFICATE_REJECTED"
+                                  : "SUPERSEDED_BEFORE_OWNER_MUTATION",
+              active_validation_path, pending_validation_path);
+        }
+        if (resumed_from_execution && expected_bundle && expected_bundle->valid()) {
+          publishWorldTransactionWitness(
+              "WORLD_COMMAND_RESUMED", expected_bundle->world_identity,
+              result.snapshot->identity(), *resumed_from_execution,
+              command_store->snapshot(), "RECERTIFIED_AND_RESUMED",
+              active_validation_path, pending_validation_path);
+        }
+        if (expected_bundle && !retain_validated_bundle) {
+          if (invalidated_current) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "world revision=%lu invalidated active command generation=%lu; "
+                "entering PX4 Hold because no latest-world-certified brake remains",
+                static_cast<unsigned long>(result.world_revision),
+                static_cast<unsigned long>(expected_bundle->bundle_generation));
+          } else {
+            RCLCPP_DEBUG(
+                this->get_logger(),
+                "world invalidation became stale before lifecycle transition; preserving newer goal");
+          }
+        }
+        next.world_generation = result.world_generation;
+        next.world_revision = result.world_revision;
+        next.observation_stamp_ns = result.observation_stamp_ns;
+        next.snapshot_bytes = result.snapshot_metrics.bytes;
+        next.snapshot_owned_bytes = result.snapshot_metrics.owned_bytes;
+        next.snapshot_shared_metadata_bytes = result.snapshot_metrics.shared_metadata_bytes;
+        next.snapshot_live_count = result.snapshot_metrics.live_count;
+        next.snapshot_peak_live_count = result.snapshot_metrics.peak_live_count;
+        next.snapshot_live_owned_bytes = result.snapshot_metrics.live_owned_bytes;
+        next.snapshot_peak_live_owned_bytes = result.snapshot_metrics.peak_live_owned_bytes;
+      }
+      next.map_update_us = result.map_update_us;
+      // Include backend processing, snapshot construction, certificate
+      // revalidation and publication finalization in the callback envelope.
+      next.mapping_callback_total_us =
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - callback_started).count();
+      telemetry->recordUpdate(std::move(next));
+    } catch (...) {
+      telemetry->recordCallbackFailure(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - callback_started).count());
+      throw;
+    }
+  };
+  auto validate_mapping = [ros_clock, telemetry = mapping_telemetry_,
+                           active_epoch = &active_localization_epoch_,
+                           maximum_age_ns = data_freshness_window_ns_](
+      const PendingRegisteredScan& pending) {
+    if (!pending.message) {
+      telemetry->recordDiscard(false, false, true);
+      return false;
+    }
+    const auto& pose = pending.message->corrected_pose.pose;
+    const Eigen::Quaterniond q{
+        pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z};
+    const auto freshness = navigation_execution::classifyTimestampFreshness(
+        ros_clock->now().nanoseconds(), pending.stamp_ns, maximum_age_ns);
+    const auto sensor_origin_reason = classifySensorOriginContract(
+        pending.message->sensor_origin_valid, pending.message->sensor_origin_pose);
+    const bool missing_sensor_origin =
+        sensor_origin_reason ==
+        navigation_mapping::MappingObservationRejectionReason::kMissingSensorOrigin;
+    const bool invalid_sensor_origin =
+        sensor_origin_reason ==
+        navigation_mapping::MappingObservationRejectionReason::kSensorOriginContractMismatch;
+    const bool invalid = pending.message->points.width == 0U ||
+                         pending.localization_epoch !=
+                             active_epoch->load(std::memory_order_acquire) ||
+                         pending.localization_epoch == 0U ||
+                         pending.stamp_ns <= 0 ||
+                         navigation_common::rosTimeToNanoseconds(
+                             pending.message->header.stamp).value_or(0) !=
+                             pending.stamp_ns ||
+                         !std::isfinite(pose.position.x) ||
+                         !std::isfinite(pose.position.y) ||
+                         !std::isfinite(pose.position.z) || !q.coeffs().allFinite() ||
+                         !finiteNonzeroQuaternion(q) ||
+                         missing_sensor_origin || invalid_sensor_origin ||
+                         freshness == navigation_execution::TimestampFreshness::INVALID;
+    const bool stale = freshness == navigation_execution::TimestampFreshness::STALE;
+    const bool future = freshness == navigation_execution::TimestampFreshness::FUTURE;
+    const auto rejection_reason = missing_sensor_origin
+        ? navigation_mapping::MappingObservationRejectionReason::kMissingSensorOrigin
+        : invalid_sensor_origin
+            ? navigation_mapping::MappingObservationRejectionReason::kSensorOriginContractMismatch
+            : invalid
+                ? navigation_mapping::MappingObservationRejectionReason::kMalformedObservation
+                : navigation_mapping::MappingObservationRejectionReason::kNone;
+    if (invalid || stale || future) {
+      telemetry->recordDiscard(stale, future, invalid, rejection_reason);
+    }
+    return !invalid && !stale && !future;
+  };
+  mapping_worker_ = std::make_unique<navigation_mapping::MappingWorker<PendingRegisteredScan>>(
+      observation_accounting_, std::move(process_mapping),
+      mappingFailStop, std::move(validate_mapping),
+      [publisher = diagnostics_publisher_, ros_clock,
+       telemetry = mapping_telemetry_, accounting = &observation_accounting_,
+       world_event_sequence = &world_transaction_event_sequence_,
+       freshness_rejection_count = &world_snapshot_freshness_rejection_count_]() {
+        const auto mapping = telemetry->snapshot();
+        const auto lifecycle = accounting->snapshot();
+        diagnostic_msgs::msg::DiagnosticArray diagnostics;
+        diagnostics.header.stamp = ros_clock->now();
+        diagnostic_msgs::msg::DiagnosticStatus status;
+        status.name = "navigation_mapping/world_model";
+        status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+        status.message = std::string("PUBLISHED_") +
+            std::string(navigation_mapping::worldUpdateOutcomeName(mapping.map.update_outcome));
+        const auto add_value = [&status](const std::string& key, std::uint64_t value) {
+          diagnostic_msgs::msg::KeyValue item;
+          item.key = key;
+          item.value = std::to_string(value);
+          status.values.push_back(std::move(item));
+        };
+        const auto add_duration = [&status](const std::string& key, std::int64_t value) {
+          diagnostic_msgs::msg::KeyValue item;
+          item.key = key;
+          item.value = std::to_string(std::max<std::int64_t>(0, value));
+          status.values.push_back(std::move(item));
+        };
+        const auto add_signed_value = [&status](const std::string& key,
+                                                std::int64_t value) {
+          diagnostic_msgs::msg::KeyValue item;
+          item.key = key;
+          item.value = std::to_string(value);
+          status.values.push_back(std::move(item));
+        };
+        const auto add_text = [&status](const std::string& key, const std::string& value) {
+          diagnostic_msgs::msg::KeyValue item;
+          item.key = key;
+          item.value = value;
+          status.values.push_back(std::move(item));
+        };
+        const auto& map = mapping.map;
+        add_value("world_generation", mapping.world_generation);
+        add_value("world_revision", mapping.world_revision);
+        add_value("observation_stamp_ns", mapping.observation_stamp_ns);
+        add_value("last_update_attempt_stamp_ns", mapping.last_update_attempt_stamp_ns);
+        add_value("world_snapshot_published", mapping.world_snapshot_published ? 1U : 0U);
+        add_value("world_snapshot_published_count", mapping.world_snapshot_published_count);
+        add_value("world_snapshot_deferred_count", mapping.world_snapshot_deferred_count);
+        add_value("world_snapshot_full_export_count", mapping.world_snapshot_full_export_count);
+        add_value("world_snapshot_patch_export_count", mapping.world_snapshot_patch_export_count);
+        add_value("world_snapshot_full_reason_no_current_count",
+                  mapping.snapshot_full_reason_no_current_count);
+        add_value("world_snapshot_full_reason_whole_world_count",
+                  mapping.snapshot_full_reason_whole_world_count);
+        add_value("world_snapshot_full_reason_invalid_region_count",
+                  mapping.snapshot_full_reason_invalid_region_count);
+        add_value("world_snapshot_full_reason_patch_depth_count",
+                  mapping.snapshot_full_reason_patch_depth_count);
+        add_value("world_snapshot_full_reason_empty_patch_count",
+                  mapping.snapshot_full_reason_empty_patch_count);
+        add_value("world_snapshot_full_reason_patch_too_large_count",
+                  mapping.snapshot_full_reason_patch_too_large_count);
+        add_value("world_snapshot_export_mode", mapping.snapshot_export_mode);
+        add_value("world_snapshot_full_export_reason", mapping.snapshot_full_export_reason);
+        add_value("world_snapshot_export_base_cells", mapping.snapshot_export_base_cells);
+        add_value("world_snapshot_export_inflated_cells",
+                  mapping.snapshot_export_inflated_cells);
+        add_value("world_snapshot_patch_depth", mapping.snapshot_patch_depth);
+        addObservationAccountingValues(status, lifecycle);
+        add_text("mapping_update_outcome",
+                 std::string(navigation_mapping::worldUpdateOutcomeName(map.update_outcome)));
+        add_value("mapping_outcome_updated_count", mapping.outcome_updated);
+        add_value("mapping_outcome_accumulated_count", mapping.outcome_accumulated);
+        add_value("mapping_outcome_slide_only_count", mapping.outcome_slide_only);
+        add_value("mapping_outcome_empty_cloud_count", mapping.outcome_empty_cloud);
+        add_value("mapping_outcome_callback_owned_count", mapping.outcome_callback_owned);
+        add_value("mapping_outcome_below_ground_count", mapping.outcome_below_ground);
+        add_value("mapping_outcome_above_ceiling_count", mapping.outcome_above_ceiling);
+        add_value("command_revalidation_fast_path_count",
+                  mapping.command_revalidation_fast_path_count);
+        add_value("command_revalidation_full_count",
+                  mapping.command_revalidation_full_count);
+        add_value("observation_accounting_valid",
+                  lifecycle.allInvariantsHold() ? 1U : 0U);
+        add_value("observation_accounting_violation_count", lifecycle.violation_count);
+        add_value("mapping_input_point_count", map.endpoint_count);
+        add_value("mapping_free_space_endpoint_count",
+                  map.free_space_endpoint_count);
+        add_value("mapping_free_space_processed_count",
+                  map.free_space_processed_count);
+        add_value("mapping_free_space_skipped_count",
+                  map.free_space_skipped_count);
+        add_value("mapping_allocated_voxel_count", map.allocated_voxel_count);
+        add_value("mapping_discarded_missing_sensor_origin",
+                  mapping.discarded_missing_sensor_origin);
+        add_value("mapping_discarded_sensor_origin_contract",
+                  mapping.discarded_sensor_origin_contract);
+        add_signed_value("mapping_sensor_origin_x_mm",
+                         std::isfinite(map.sensor_origin_world.x())
+                             ? static_cast<std::int64_t>(std::llround(
+                                 map.sensor_origin_world.x() * 1000.0)) : 0);
+        add_signed_value("mapping_sensor_origin_y_mm",
+                         std::isfinite(map.sensor_origin_world.y())
+                             ? static_cast<std::int64_t>(std::llround(
+                                 map.sensor_origin_world.y() * 1000.0)) : 0);
+        add_signed_value("mapping_sensor_origin_z_mm",
+                         std::isfinite(map.sensor_origin_world.z())
+                             ? static_cast<std::int64_t>(std::llround(
+                                 map.sensor_origin_world.z() * 1000.0)) : 0);
+        add_signed_value("mapping_base_pose_x_mm",
+                         std::isfinite(map.base_pose_world.x())
+                             ? static_cast<std::int64_t>(std::llround(
+                                 map.base_pose_world.x() * 1000.0)) : 0);
+        add_signed_value("mapping_base_pose_y_mm",
+                         std::isfinite(map.base_pose_world.y())
+                             ? static_cast<std::int64_t>(std::llround(
+                                 map.base_pose_world.y() * 1000.0)) : 0);
+        add_signed_value("mapping_base_pose_z_mm",
+                         std::isfinite(map.base_pose_world.z())
+                             ? static_cast<std::int64_t>(std::llround(
+                                 map.base_pose_world.z() * 1000.0)) : 0);
+        add_value("world_snapshot_freshness_rejection_count",
+                  freshness_rejection_count->load());
+        add_value("world_transaction_events_produced", world_event_sequence->load());
+        add_text("world_transaction_runtime_instance_id", worldRuntimeInstanceId());
+        add_value("world_snapshot_bytes", mapping.snapshot_bytes);
+        add_value("world_snapshot_owned_bytes", mapping.snapshot_owned_bytes);
+        add_value("world_snapshot_shared_metadata_bytes",
+                  mapping.snapshot_shared_metadata_bytes);
+        add_value("world_snapshot_live_count", mapping.snapshot_live_count);
+        add_value("world_snapshot_peak_live_count", mapping.snapshot_peak_live_count);
+        add_value("world_snapshot_live_owned_bytes", mapping.snapshot_live_owned_bytes);
+        add_value("world_snapshot_peak_live_owned_bytes", mapping.snapshot_peak_live_owned_bytes);
+        add_duration("ros_pointcloud_decode_us", mapping.pointcloud_decode_us);
+        add_duration("mapping_observation_decode_us", mapping.observation_decode_us);
+        add_duration("observation_decode_us", mapping.observation_decode_us);
+        add_duration("mapping_raycast_us", map.raycast_us);
+        add_duration("rog_raycast_us", map.raycast_us);
+        add_duration("mapping_probability_update_us", map.probability_update_us);
+        add_duration("rog_probability_update_us", map.probability_update_us);
+        add_duration("mapping_inflation_us", map.inflation_us);
+        add_duration("rog_inflation_us", map.inflation_us);
+        add_duration("mapping_slide_us", map.slide_us);
+        add_duration("rog_slide_us", map.slide_us);
+        add_duration("mapping_dirty_region_build_us", mapping.dirty_region_build_us);
+        add_duration("dirty_region_build_us", mapping.dirty_region_build_us);
+        add_duration("mapping_total_update_us", map.map_update_us);
+        add_duration("world_snapshot_export_us", mapping.snapshot_export_us);
+        add_duration("snapshot_export_us", mapping.snapshot_export_us);
+        add_duration("world_snapshot_object_build_us", mapping.snapshot_object_build_us);
+        add_duration("snapshot_object_build_us", mapping.snapshot_object_build_us);
+        add_duration("pending_revalidation_us", mapping.pending_revalidation_us);
+        add_duration("active_revalidation_us", mapping.active_revalidation_us);
+        add_duration("world_publication_finalize_us",
+                     mapping.world_publication_finalize_us);
+        add_value("mapping_dirty_aabb_voxel_count", mapping.dirty_aabb_voxel_count);
+        add_value("mapping_dirty_chunk_count", mapping.dirty_chunk_count);
+        add_value("mapping_base_planning_state_change_count",
+                  mapping.base_planning_state_change_count);
+        add_value("mapping_inflated_planning_state_change_count",
+                  mapping.inflated_planning_state_change_count);
+        add_value("mapping_inflated_planning_state_change_count_valid",
+                  mapping.inflated_planning_state_change_count_valid ? 1U : 0U);
+        add_value("world_snapshot_full_bytes", mapping.full_snapshot_bytes);
+        add_value("world_snapshot_copied_bytes", mapping.copied_snapshot_bytes);
+        add_value("world_snapshot_reused_bytes", mapping.reused_snapshot_bytes);
+        add_duration("mapping_callback_total_us", mapping.mapping_callback_total_us);
+        diagnostics.status.push_back(std::move(status));
+        publisher->publish(diagnostics);
+      });
+  auto planner = std::make_unique<navigation_planning_backend::PlannerFacade>(
+      planner_config_path_, world_snapshot_store_.load().view, mission_limits,
+      world_snapshot_store_, [this]() { return now().seconds(); });
+  planner_ = planner.get();
+  const auto control_envelope = planner_->controlEnvelope();
+  RCLCPP_INFO(get_logger(),
+      "RUNTIME_CONFIG_EFFECTIVE dynamics velocity=%.17g acceleration=%.17g jerk=%.17g",
+      control_envelope.maximum_velocity_mps,
+      control_envelope.maximum_acceleration_mps2,
+      control_envelope.maximum_jerk_mps3);
+  const double solve_deadline_s = planner_->solveDeadlineSeconds();
+  if (!plannerSolveDeadlineMatchesContract(solve_deadline_s) ||
+      !plannerPeriodCoversSolveBudget(
+          navigation_planning::PlanningTimingContract::kPlannerRateHz, solve_deadline_s)) {
+    throw std::invalid_argument(
+        "planner.solve_deadline_s must match the typed product timing contract "
+        "and fit inside one planner period");
+  }
+  planning_worker_ = std::make_unique<
+      PlanningWorker<navigation_planning_backend::PlannerFacade>>(
+      std::move(planner), [this](std::exception_ptr failure) {
+        std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+        std::lock_guard<std::mutex> input_lock(input_mutex_);
+        std::lock_guard<std::mutex> command_lock(
+            command_execution_lease_failure_latch_.transitionMutex());
+        failClosedLocked();
+        try {
+          if (failure) std::rethrow_exception(failure);
+        } catch (const std::exception& error) {
+          RCLCPP_ERROR(get_logger(), "planning worker failed: %s", error.what());
+        } catch (...) {
+          RCLCPP_ERROR(get_logger(), "planning worker failed with unknown exception");
+        }
+      });
+  heading_rebind_worker_ = std::make_unique<HeadingRebindWorker>();
+  mapping_worker_->setStrictlyIncreasingOrderKey(
+      [](const PendingRegisteredScan& pending) { return pending.stamp_ns; });
+  mapping_worker_->start();
+  planning_worker_->start();
+  heading_rebind_worker_->start();
+
+  const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
+  propagated_state_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+  rclcpp::SubscriptionOptions propagated_state_options;
+  propagated_state_options.callback_group = propagated_state_callback_group_;
+  registered_scan_subscription_ = create_subscription<
+      navigation_contracts::msg::RegisteredScan>(
+      registered_scan_topic_, qos,
+      std::bind(&NavigationRuntimeNode::onRegisteredScan, this, std::placeholders::_1));
+  estimator_health_subscription_ = create_subscription<
+      navigation_contracts::msg::EstimatorHealth>(
+      "/lio/health", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort(),
+      std::bind(&NavigationRuntimeNode::onEstimatorHealth, this, std::placeholders::_1));
+  propagated_odometry_subscription_ = create_subscription<
+      navigation_contracts::msg::PropagatedOdometry>(
+      propagated_odometry_topic_, qos,
+      std::bind(&NavigationRuntimeNode::onPropagatedOdometry, this, std::placeholders::_1),
+      propagated_state_options);
+  goal_subscription_ = create_subscription<navigation_contracts::msg::NavigationGoal>(
+      goal_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable(),
+      std::bind(&NavigationRuntimeNode::onGoal, this, std::placeholders::_1));
+  status_subscription_ =
+      create_subscription<navigation_contracts::msg::NavigationModeStatus>(
+          status_topic_,
+          rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
+          std::bind(&NavigationRuntimeNode::onModeStatus, this, std::placeholders::_1));
+  command_publisher_ = create_publisher<navigation_contracts::msg::NavigationCommand>(
+      command_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  execution_diagnostics_publisher_ = create_publisher<
+      navigation_contracts::msg::NavigationExecutionDiagnostics>(
+      "/navigation/execution_diagnostics",
+      rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
+  if (mission_progress_) {
+    command_admission_subscription_ = create_subscription<
+        navigation_contracts::msg::NavigationCommandAdmission>(
+        "/navigation/command_admission", rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
+        std::bind(&NavigationRuntimeNode::onCommandAdmission, this, std::placeholders::_1));
+    mission_progress_publisher_ = create_publisher<
+        navigation_contracts::msg::NavigationMissionProgress>(
+        "/navigation/mission_progress", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+    mission_complete_publisher_ = create_publisher<std_msgs::msg::Bool>(
+        "/navigation/mission_complete", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  }
+  end_to_end_samples_ms_.reserve(256);
+
+  // The timer is a non-blocking scheduler. Mutable solve execution is owned by
+  // the bounded planning worker; command sampling reads only the immutable
+  // committed bundle store.
+  planning_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  command_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+  planning_period_us_ =
+      std::chrono::duration_cast<std::chrono::microseconds>(*planning_period).count();
+  planning_timer_ = create_wall_timer(
+      *planning_period, std::bind(&NavigationRuntimeNode::schedulePlanningCycle, this),
+      planning_callback_group_);
+  command_timer_ = create_wall_timer(
+      *command_period, std::bind(&NavigationRuntimeNode::publishCommand, this),
+      command_callback_group_);
+  if (mission_progress_) {
+    mission_timer_ = create_wall_timer(
+        std::chrono::milliseconds{50},
+        std::bind(&NavigationRuntimeNode::tickMissionProgress, this),
+        planning_callback_group_);
+  }
+  RCLCPP_INFO(get_logger(),
+              "planner backend runtime ready: registered_scan=%s propagated_odom=%s goal=%s "
+              "output=%s planner=%.1fHz command=%.1fHz snapshot=%.2fs "
+              "planning_input_source_receive=%.2fs command_stream=%.2fs "
+              "stopped_recovery=%.1fs",
+              registered_scan_topic_.c_str(),
+              propagated_odometry_topic_.c_str(), goal_topic_.c_str(),
+              command_topic_.c_str(),
+              navigation_planning::PlanningTimingContract::kPlannerRateHz,
+              navigation_planning::PlanningTimingContract::kCommandRateHz,
+              navigation_planning::PlanningTimingContract::kSnapshotPeriodS,
+              data_freshness_window_s_,
+              navigation_planning::PlanningTimingContract::kCommandStreamTimeoutS,
+              navigation_planning::PlanningTimingContract::kStoppedRecoveryTimeoutS);
+}
+
+NavigationRuntimeNode::~NavigationRuntimeNode() {
+  accepting_observations_.store(false);
+  if (planning_timer_) planning_timer_->cancel();
+  if (command_timer_) command_timer_->cancel();
+  if (mission_timer_) mission_timer_->cancel();
+  if (planning_worker_) planning_worker_->shutdown();
+  if (heading_rebind_worker_) heading_rebind_worker_->shutdown();
+  planner_ = nullptr;
+  registered_scan_subscription_.reset();
+  estimator_health_subscription_.reset();
+  propagated_odometry_subscription_.reset();
+  goal_subscription_.reset();
+  status_subscription_.reset();
+  if (mapping_worker_) mapping_worker_->shutdown();
+  if (mapping_lifecycle_observer_) {
+    mapping_lifecycle_observer_->onShutdownComplete(observation_accounting_.snapshot());
+  }
+}
+
+bool NavigationRuntimeNode::decodeCloud(const sensor_msgs::msg::PointCloud2& message,
+                                      navigation_mapping::PointCloud& output,
+                                      const bool require_nonempty) {
+  constexpr std::uint64_t kMaximumPointCount = 2'000'000U;
+  const std::uint64_t row_payload_bytes =
+      static_cast<std::uint64_t>(message.point_step) * message.width;
+  const std::uint64_t storage_bytes =
+      static_cast<std::uint64_t>(message.row_step) * message.height;
+  const std::uint64_t point_count =
+      static_cast<std::uint64_t>(message.width) * message.height;
+  // PointCloud2Iterator reads native-endian float storage.  This transport
+  // boundary has no byte-swap implementation, so accepting a big-endian
+  // cloud would turn valid bytes into plausible but incorrect geometry.
+  if (message.is_bigendian || !hasFloatField(message, "x") ||
+      !hasFloatField(message, "y") ||
+      !hasFloatField(message, "z") || message.point_step == 0U ||
+      message.row_step < row_payload_bytes || storage_bytes > message.data.size() ||
+      point_count > kMaximumPointCount) {
+    return false;
+  }
+  output.clear();
+  output.reserve(static_cast<std::size_t>(point_count));
+  try {
+    sensor_msgs::PointCloud2ConstIterator<float> x(message, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> y(message, "y");
+    sensor_msgs::PointCloud2ConstIterator<float> z(message, "z");
+    if (hasFloatField(message, "intensity")) {
+      sensor_msgs::PointCloud2ConstIterator<float> intensity(message, "intensity");
+      for (; x != x.end(); ++x, ++y, ++z, ++intensity) {
+        if (std::isfinite(*x) && std::isfinite(*y) && std::isfinite(*z) &&
+            std::isfinite(*intensity)) {
+          output.emplace_back(*x, *y, *z, *intensity);
+        }
+      }
+    } else {
+      // PointCloud2 does not require an intensity channel.  Zero is the
+      // neutral product value for an absent channel; when the channel exists,
+      // preserve its measured value so the configured backend filter remains
+      // meaningful.  The mapping contract rejects non-finite values below.
+      for (; x != x.end(); ++x, ++y, ++z) {
+        if (std::isfinite(*x) && std::isfinite(*y) && std::isfinite(*z)) {
+          output.emplace_back(*x, *y, *z, 0.0F);
+        }
+      }
+    }
+  } catch (const std::exception&) {
+    output.clear();
+    return false;
+  }
+  return !require_nonempty || !output.empty();
+}
+
+bool NavigationRuntimeNode::applyExecutionRecoveryEventLocked(
+    const ExecutionRecoveryEvent event,
+    const navigation_planning::CandidateBundle& bundle) noexcept {
+  return execution_authority_.applyRecoveryEvent(event, bundle);
+}
+
+void NavigationRuntimeNode::failClosedLocked() noexcept {
+  trajectory_completion_witness_.reset();
+  trajectory_reaches_goal_.store(false, std::memory_order_release);
+  terminal_bundle_generation_.store(0U, std::memory_order_release);
+  execution_authority_.failClosed();
+}
+
+std::optional<navigation_contracts::msg::NavigationGoal>
+NavigationRuntimeNode::executingGoalSnapshot() const {
+  const auto goal = execution_authority_.executingGoal();
+  if (!goal) return std::nullopt;
+  return *goal;
+}
+
+std::uint64_t NavigationRuntimeNode::executionGoalEpoch() const noexcept {
+  return execution_authority_.executingGoalEpoch();
+}
+
+void NavigationRuntimeNode::resetForLocalizationEpochLocked(
+    const std::uint64_t localization_epoch,
+    std::unique_lock<std::mutex>& localization_lock) {
+  if (localization_epoch == 0U) return;
+  const auto current = active_localization_epoch_.load(std::memory_order_acquire);
+  if (localization_epoch <= current) return;
+
+  localization_epoch_ready_.store(false, std::memory_order_release);
+  // Complete canonical reset before releasing the owner lock for mapping's
+  // drain. New goal/status transitions during that gap must not be erased by
+  // late cleanup; serialized sensor ingress cannot admit new-epoch work yet.
+  if (planning_worker_) planning_worker_->cancelActive();
+  active_localization_epoch_.store(localization_epoch, std::memory_order_release);
+  execution_trace_store_.advanceLocalizationEpoch(localization_epoch);
+  last_propagated_state_stamp_ns_.store(0, std::memory_order_release);
+  last_propagated_state_sequence_.store(0U, std::memory_order_release);
+  {
+    std::lock_guard<std::mutex> derivative_lock(propagated_derivative_mutex_);
+    propagated_derivative_estimator_.reset();
+  }
+  execution_state_store_.resetForLocalizationEpoch(localization_epoch);
+  execution_authority_.reset(localization_epoch);
+  last_registered_scan_epoch_.store(localization_epoch, std::memory_order_release);
+  last_registered_scan_sequence_.store(0U, std::memory_order_release);
+  bool foreign_hold = false;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    // A localization epoch invalidates every goal identity, including a
+    // request waiting behind a certified safety suffix.
+    pending_goal_owner_.clearGoal();
+    deferred_terminal_status_.reset();
+    foreign_hold = foreign_mission_hold_after_stop_;
+    const auto next_goal_epoch = desired_intent_.advanceRevision();
+    if (next_goal_epoch) {
+      (void)execution_authority_.setAdmissionGoalEpoch(*next_goal_epoch, false);
+    } else {
+      desired_intent_.clearGoal();
+
+      pending_goal_owner_.clearGoal();
+      deferred_terminal_status_.reset();
+      execution_authority_.invalidate();
+      RCLCPP_ERROR(get_logger(), "desired planning revision exhausted during localization reset");
+    }
+    if (foreign_hold) {
+      // A localization reset must not revive the old mission after a foreign
+      // control-authority violation. Keep the latch and discard its identity.
+      desired_intent_.clearGoal();
+
+    }
+    mission_start_position_world_.reset();
+    mission_start_mission_id_.clear();
+    mission_start_route_revision_ = 0U;
+    mission_start_localization_epoch_ = 0U;
+    desired_intent_.rearmAfterLocalizationReset();
+    execution_authority_.clearRestartFromRest();
+    skip_replan_once_.store(false, std::memory_order_release);
+    trajectory_completion_witness_.reset();
+    trajectory_reaches_goal_.store(false);
+    terminal_bundle_generation_.store(0U);
+    // Keep the command path fail-closed until the new epoch publishes its
+    // first valid world snapshot. This evidence barrier is recoverable: the
+    // active goal may be planned again after that snapshot arrives.
+    command_execution_lease_failure_latch_.resetForNewGoalWithinTransition();
+    if (foreign_hold) {
+      failClosedLocked();
+    }
+
+  }
+  if (mapping_worker_) {
+    drainMappingForLocalizationReset(localization_lock, [this] {
+      mapping_worker_->reset();
+    });
+  }
+  RCLCPP_WARN(get_logger(),
+              "Localization epoch changed to %lu; old mapping and command state invalidated",
+              static_cast<unsigned long>(localization_epoch));
+}
+
+void NavigationRuntimeNode::onRegisteredScan(
+    const navigation_contracts::msg::RegisteredScan::ConstSharedPtr& message) {
+  if (!message) {
+    observation_accounting_.recordRejectedBeforeInbox();
+    return;
+  }
+  const auto sensor_origin_reason = classifySensorOriginContract(
+      message->sensor_origin_valid, message->sensor_origin_pose);
+  if (sensor_origin_reason !=
+      navigation_mapping::MappingObservationRejectionReason::kNone) {
+    observation_accounting_.recordRejectedBeforeInbox();
+    mapping_telemetry_->recordDiscard(false, false, true, sensor_origin_reason);
+    return;
+  }
+  const auto observation_stamp_ns = navigation_common::rosTimeToNanoseconds(
+      message->header.stamp).value_or(0);
+  const auto& free_space = message->free_space_endpoints;
+  const bool has_free_space_payload =
+      free_space.width != 0U || free_space.height != 0U || !free_space.data.empty();
+  const bool visibility_contract_valid = message->visibility_observation_present
+      ? message->visibility_no_return_count ==
+            free_space.width * free_space.height &&
+          message->visibility_selected_no_return_count ==
+            free_space.width * free_space.height &&
+          message->visibility_no_return_count <=
+            message->visibility_detected_no_return_count &&
+          message->visibility_detected_no_return_count <=
+            message->visibility_source_ray_count &&
+          message->visibility_no_return_count <=
+            message->visibility_sampling_cap &&
+          (message->visibility_sampling_policy == "full" ||
+           message->visibility_sampling_policy == "stratified_2d") &&
+          message->visibility_provenance_error.empty() &&
+          (message->visibility_sampling_policy == "full"
+               ? message->visibility_no_return_count ==
+                     message->visibility_detected_no_return_count
+               : message->visibility_no_return_count <=
+                     message->visibility_detected_no_return_count) &&
+            message->visibility_stamp_skew_ns == 0
+      : !has_free_space_payload && message->visibility_source_ray_count == 0U &&
+            message->visibility_no_return_count == 0U &&
+            message->visibility_selected_no_return_count == 0U &&
+            message->visibility_detected_no_return_count == 0U &&
+            message->visibility_sampling_cap == 0U &&
+            message->visibility_sampling_policy.empty() &&
+            (message->visibility_provenance_error.empty() ||
+             message->visibility_provenance_error == "MALFORMED_METADATA") &&
+            message->visibility_stamp_skew_ns == 0;
+  if (!accepting_observations_.load(std::memory_order_acquire) ||
+      message->localization_epoch == 0U ||
+      message->scan_sequence == 0U ||
+      message->header.frame_id != planning_frame_ ||
+      message->points.header.frame_id != message->header.frame_id ||
+      !visibility_contract_valid ||
+      navigation_common::rosTimeToNanoseconds(message->points.header.stamp).value_or(0) !=
+          observation_stamp_ns ||
+      (message->visibility_observation_present &&
+       (free_space.header.frame_id != message->header.frame_id ||
+        navigation_common::rosTimeToNanoseconds(free_space.header.stamp).value_or(0) !=
+            observation_stamp_ns)) ||
+      message->body_frame_id != body_frame_id_) {
+    observation_accounting_.recordRejectedBeforeInbox();
+    return;
+  }
+  const auto& pose = message->corrected_pose.pose;
+  const Eigen::Quaterniond quaternion{
+      pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z};
+  if (observation_stamp_ns <= 0 ||
+      !std::isfinite(pose.position.x) || !std::isfinite(pose.position.y) ||
+      !std::isfinite(pose.position.z) || !finiteNonzeroQuaternion(quaternion)) {
+    observation_accounting_.recordRejectedBeforeInbox();
+    return;
+  }
+  std::lock_guard<std::mutex> ingress_lock(localization_epoch_ingress_mutex_);
+  std::unique_lock<std::mutex> transition_lock(localization_transition_mutex_);
+  const auto active_epoch = active_localization_epoch_.load(std::memory_order_acquire);
+  if (message->localization_epoch < active_epoch) {
+    observation_accounting_.recordRejectedBeforeInbox();
+    return;
+  }
+  if (message->localization_epoch > active_epoch) {
+    resetForLocalizationEpochLocked(message->localization_epoch, transition_lock);
+  }
+  const auto sequence_epoch = last_registered_scan_epoch_.load(std::memory_order_acquire);
+  const auto previous_scan_sequence =
+      last_registered_scan_sequence_.load(std::memory_order_acquire);
+  if (sequence_epoch == message->localization_epoch &&
+      message->scan_sequence <= previous_scan_sequence) {
+    observation_accounting_.recordRejectedBeforeInbox();
+    return;
+  }
+  last_registered_scan_epoch_.store(message->localization_epoch, std::memory_order_release);
+  last_registered_scan_sequence_.store(message->scan_sequence, std::memory_order_release);
+  observation_accounting_.recordAcceptedToInbox();
+  (void)mapping_worker_->submitFromWaiting(PendingRegisteredScan{
+      message, observation_stamp_ns, message->localization_epoch,
+      message->scan_sequence});
+}
+
+void NavigationRuntimeNode::onEstimatorHealth(
+    const navigation_contracts::msg::EstimatorHealth::ConstSharedPtr& message) {
+  if (!message || message->localization_epoch == 0U) return;
+  std::lock_guard<std::mutex> ingress_lock(localization_epoch_ingress_mutex_);
+  std::unique_lock<std::mutex> transition_lock(localization_transition_mutex_);
+  const auto active_epoch = active_localization_epoch_.load(std::memory_order_acquire);
+  if (message->localization_epoch <= active_epoch) return;
+  // Health announces the public-frame transition early; command exposure stays
+  // disabled until a RegisteredScan of this epoch is accepted and mapped.
+  resetForLocalizationEpochLocked(message->localization_epoch, transition_lock);
+}
+
+void NavigationRuntimeNode::onPropagatedOdometry(
+    const navigation_contracts::msg::PropagatedOdometry::ConstSharedPtr& message) {
+  if (!message || message->localization_epoch == 0U || message->sequence == 0U) {
+    ++invalid_execution_state_count_;
+    return;
+  }
+  const auto& odometry = message->odometry;
+  if (odometry.header.frame_id != planning_frame_) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                         "Dropping propagated odometry frame '%s'; expected '%s'",
+                         odometry.header.frame_id.c_str(), planning_frame_.c_str());
+    return;
+  }
+  std::lock_guard<std::mutex> ingress_lock(localization_epoch_ingress_mutex_);
+  std::unique_lock<std::mutex> transition_lock(localization_transition_mutex_);
+  const auto active_epoch = active_localization_epoch_.load(std::memory_order_acquire);
+  if (message->localization_epoch > active_epoch) {
+    resetForLocalizationEpochLocked(message->localization_epoch, transition_lock);
+  }
+  if (message->localization_epoch !=
+          active_localization_epoch_.load(std::memory_order_acquire) ||
+      message->sequence <=
+          last_propagated_state_sequence_.load(std::memory_order_acquire)) {
+    ++invalid_execution_state_count_;
+    return;
+  }
+  const auto stamp_ns =
+      navigation_common::rosTimeToNanoseconds(odometry.header.stamp).value_or(0);
+  const auto previous_stamp_ns =
+      last_propagated_state_stamp_ns_.load(std::memory_order_acquire);
+  if (stamp_ns <= 0 || !propagatedOdometryFinite(odometry) ||
+      (previous_stamp_ns > 0 && stamp_ns <= previous_stamp_ns)) {
+    ++invalid_execution_state_count_;
+    return;
+  }
+  const Eigen::Quaterniond orientation{
+      odometry.pose.pose.orientation.w, odometry.pose.pose.orientation.x,
+      odometry.pose.pose.orientation.y, odometry.pose.pose.orientation.z};
+  if (!finiteNonzeroQuaternion(orientation) ||
+      odometry.child_frame_id != body_frame_id_) {
+    ++invalid_execution_state_count_;
+    return;
+  }
+  navigation_planning::KinematicState typed_state;
+  typed_state.position_world = Eigen::Vector3d{
+      odometry.pose.pose.position.x, odometry.pose.pose.position.y,
+      odometry.pose.pose.position.z};
+  const double orientation_scale = orientation.coeffs().cwiseAbs().maxCoeff();
+  typed_state.orientation_world_body = Eigen::Quaterniond(
+      orientation.w() / orientation_scale, orientation.x() / orientation_scale,
+      orientation.y() / orientation_scale, orientation.z() / orientation_scale).normalized();
+  const auto rotation = typed_state.orientation_world_body.toRotationMatrix();
+  typed_state.yaw_rad = std::atan2(rotation(1, 0), rotation(0, 0));
+  typed_state.velocity_world = typed_state.orientation_world_body * Eigen::Vector3d{
+      odometry.twist.twist.linear.x, odometry.twist.twist.linear.y,
+      odometry.twist.twist.linear.z};
+  {
+    std::lock_guard<std::mutex> derivative_lock(propagated_derivative_mutex_);
+    const auto derivative = propagated_derivative_estimator_.update(
+        stamp_ns, message->localization_epoch, typed_state.velocity_world);
+    typed_state.acceleration_world = derivative.acceleration_world;
+    typed_state.jerk_world = derivative.jerk_world;
+    typed_state.acceleration_estimated = derivative.acceleration_estimated;
+    typed_state.jerk_estimated = derivative.jerk_estimated;
+  }
+  typed_state.source_stamp_ns = stamp_ns;
+  typed_state.receive_stamp_ns = navigation_common::steadyClockNowNanoseconds();
+  typed_state.localization_epoch = message->localization_epoch;
+  typed_state.world_frame_id = odometry.header.frame_id;
+  typed_state.body_frame_id = odometry.child_frame_id;
+  if (execution_state_store_.publish(std::move(typed_state))) {
+    last_propagated_state_stamp_ns_.store(stamp_ns, std::memory_order_release);
+    last_propagated_state_sequence_.store(message->sequence, std::memory_order_release);
+  }
+}
+
+void NavigationRuntimeNode::onGoal(
+    const navigation_contracts::msg::NavigationGoal::ConstSharedPtr& message) {
+  if (mission_progress_) {
+    RCLCPP_ERROR(get_logger(),
+                 "external NavigationGoal rejected: Core owns mission goal progression");
+    return;
+  }
+  if (!message) {
+    RCLCPP_ERROR(get_logger(), "rejected null navigation goal");
+    return;
+  }
+  const auto route = decodeRouteSnapshot(*message);
+  const bool route_mirrors_valid =
+      route.has_value() && routeSnapshotMatchesGoalMirrors(*route, *message);
+  if (!route.has_value() || !route_mirrors_valid) {
+    // This message was never accepted as a lifecycle event.  It must not
+    // revoke a certified active command or a newer pending goal.
+    RCLCPP_ERROR(get_logger(), "rejected navigation goal: immutable route snapshot is invalid");
+    return;
+  }
+  {
+    std::unique_lock<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    applyValidatedGoalLocked(message);
+  }
+        if (consumeForeignMissionCancelIfCurrent() && planning_worker_) {
+          planning_worker_->cancelActive();
+        }
+}
+
+void NavigationRuntimeNode::transitionForeignMissionLocked(
+    const bool defer_until_certified_stop) {
+  // This helper is called only with input_mutex_ -> transitionMutex() held.
+  // A foreign mission is not ordered by request_id: it is a control-authority
+  // violation.  While moving, preserve the certified suffix and defer the
+  // same complete transition until measured stop; otherwise fail closed now.
+  if (defer_until_certified_stop) {
+    foreign_mission_hold_after_stop_ = true;
+    pending_goal_owner_.clearGoal();
+    deferred_terminal_status_.reset();
+    return;
+  }
+  // The worker interrupt is deliberately post-action: cancelActive() may
+  // enter backend code and must not run while lifecycle locks are held.
+  foreign_cancel_target_epoch_ = desired_intent_.revision();
+  foreign_cancel_localization_epoch_ =
+      active_localization_epoch_.load(std::memory_order_acquire);
+  foreign_mission_cancel_pending_.store(true, std::memory_order_release);
+  pending_goal_owner_.clearGoal();
+  deferred_terminal_status_.reset();
+  foreign_mission_hold_after_stop_ = false;
+  const auto next_goal_epoch = desired_intent_.advanceRevision();
+  if (next_goal_epoch) {
+    foreign_cancel_transition_epoch_ = *next_goal_epoch;
+    (void)execution_authority_.setAdmissionGoalEpoch(*next_goal_epoch, false);
+  } else {
+    execution_authority_.invalidate();
+  }
+  desired_intent_.clearGoal();
+
+  execution_authority_.invalidate();
+  (void)desired_intent_.consumeNewIntent();
+  (void)desired_intent_.consumeHotRetarget();
+  execution_authority_.clearRestartFromRest();
+  failClosedLocked();
+  mission_start_position_world_.reset();
+  mission_start_mission_id_.clear();
+  mission_start_route_revision_ = 0U;
+  mission_start_localization_epoch_ = 0U;
+  plan_from_rest_first_failure_steady_ns_ = 0;
+  skip_replan_once_.store(false, std::memory_order_release);
+  trajectory_reaches_goal_.store(false, std::memory_order_release);
+  terminal_bundle_generation_.store(0U, std::memory_order_release);
+
+}
+
+bool NavigationRuntimeNode::consumeForeignMissionCancelIfCurrentLocked() {
+  if (!foreign_mission_cancel_pending_.load(std::memory_order_acquire)) return false;
+  const bool unchanged = !desired_intent_.goal().has_value() &&
+      desired_intent_.revision() ==
+          foreign_cancel_transition_epoch_ &&
+      active_localization_epoch_.load(std::memory_order_acquire) ==
+          foreign_cancel_localization_epoch_;
+  foreign_mission_cancel_pending_.store(false, std::memory_order_release);
+  return unchanged;
+}
+
+bool NavigationRuntimeNode::consumeForeignMissionCancelIfCurrent() {
+  std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+  std::lock_guard<std::mutex> input_lock(input_mutex_);
+  return consumeForeignMissionCancelIfCurrentLocked();
+}
+
+void NavigationRuntimeNode::applyValidatedGoalLocked(
+    const navigation_contracts::msg::NavigationGoal::ConstSharedPtr& message,
+    const bool execution_transition_held) {
+  // All command-lifecycle decisions are serialized after input_mutex_.  This
+  // prevents a publisher from clearing suffix ownership between the suffix
+  // read and pending-goal mutation.
+  std::unique_lock<std::mutex> command_lock(
+      command_execution_lease_failure_latch_.transitionMutex(), std::defer_lock);
+  if (!execution_transition_held) command_lock.lock();
+  if (foreign_mission_hold_after_stop_) {
+    // A foreign mission latch is terminal for the current control authority.
+    // No inbound goal may replace the cleared/held identity until an explicit
+    // authority reset resolves the latch after measured-stop evidence.
+    RCLCPP_ERROR(get_logger(),
+                 "rejected navigation goal while foreign mission Hold latch is active");
+    return;
+  }
+  // A planner backend plan is owned by the mission waypoint identity.  The
+  // continuation point is only look-ahead metadata; treating it as the
+  // desired goal makes a repeated waypoint publication look like a new
+  // request (or, conversely, hides the actual waypoint transition).
+  const bool same_checkpoint = desired_intent_.goal().has_value() &&
+      desired_intent_.goal()->mission_id == message->mission_id &&
+      desired_intent_.goal()->waypoint_index == message->waypoint_index;
+  const bool same_logical_goal = same_checkpoint &&
+      desired_intent_.goal()->request_id == message->request_id;
+  if (desired_intent_.goal().has_value() && !same_logical_goal) {
+    if (message->mission_id == desired_intent_.goal()->mission_id &&
+        !goalIdentityNewer(*message, *desired_intent_.goal())) {
+      RCLCPP_WARN(get_logger(), "rejected stale/non-newer navigation goal request=%lu",
+                  static_cast<unsigned long>(message->request_id));
+      return;
+    }
+  }
+  const auto episode = execution_authority_.snapshot();
+  const bool previous_safety_suffix_active = episode.safetySuffixActive();
+  const bool can_hot_retarget = canHotRetargetAtWaypointTransition(
+      same_logical_goal,
+      desired_intent_.goal().has_value() &&
+          desired_intent_.goal()->behavior ==
+              navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH,
+      episode.commandAvailable(), episode.failed(),
+      episode.safetySuffixActive());
+  if (!same_logical_goal && desired_intent_.goal()) {
+    const auto timeline = execution_authority_.snapshot();
+    RCLCPP_INFO(get_logger(),
+                "mission_handoff H4 stamp_ns=%lld mission=%s from_wp=%u from_req=%lu "
+                "to_wp=%u to_req=%lu desired_epoch=%lu execution_epoch=%lu "
+                "active_generation=%lu episode_generation=%lu available=%d failure=%d "
+                "suffix=%d recovery=%u hot_eligible=%d",
+                static_cast<long long>(now().nanoseconds()),
+                message->mission_id.c_str(), desired_intent_.goal()->waypoint_index,
+                static_cast<unsigned long>(desired_intent_.goal()->request_id),
+                message->waypoint_index,
+                static_cast<unsigned long>(message->request_id),
+                static_cast<unsigned long>(desired_intent_.revision()),
+                static_cast<unsigned long>(executionGoalEpoch()),
+                static_cast<unsigned long>(timeline.active ? timeline.active->bundle_generation : 0U),
+                static_cast<unsigned long>(episode.activeGeneration()),
+                episode.commandAvailable() ? 1 : 0, episode.failed() ? 1 : 0,
+                episode.safetySuffixActive() ? 1 : 0,
+                static_cast<unsigned>(episode.lifecycle.recovery), can_hot_retarget ? 1 : 0);
+  }
+  bool effective_hot_retarget = can_hot_retarget;
+  if (!same_logical_goal) {
+    if (previous_safety_suffix_active) {
+      // A moving BACKUP/EMERGENCY suffix owns the command until certified
+      // stop. External Mode publishes a goal once, so returning here would
+      // lose the request permanently. Keep one validated, monotonic pending
+      // request without rebinding or revoking the suffix.
+      if (message->mission_id != desired_intent_.goal()->mission_id) {
+        // A new mission has no ordering relation to the moving suffix. Keep
+        // the certified suffix, but remember one control-authority violation
+        // for the measured-stop transaction; do not queue or require retry.
+        transitionForeignMissionLocked(true);
+        RCLCPP_ERROR(get_logger(),
+                     "foreign mission observed while safety suffix drains; "
+                     "holding after certified stop active=%s incoming=%s",
+                     desired_intent_.goal()->mission_id.c_str(), message->mission_id.c_str());
+        return;
+      }
+      const bool accepted_pending = pending_goal_owner_.enqueueGoal(
+          message, desired_intent_.goal(),
+          episode.safetySuffixActive());
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "retaining pending navigation goal request=%lu while safety suffix drains accepted=%d",
+          static_cast<unsigned long>(message->request_id), accepted_pending ? 1 : 0);
+      return;
+    }
+    if (desired_intent_.goal().has_value() &&
+        message->mission_id != desired_intent_.goal()->mission_id) {
+      // Cross-mission transition is one atomic fail-closed boundary. The
+      // previous command is not a certified moving suffix here, so invalidate
+      // every owner (worker, store, pending slot, active identity, recovery).
+      transitionForeignMissionLocked(false);
+      RCLCPP_ERROR(get_logger(),
+                   "rejected cross-mission goal and entered PX4 Hold");
+      return;
+    }
+    // Cancel before exposing the new waypoint identity. The planner commit gate
+    // guarantees that a solve for the previous waypoint cannot publish a new
+    // candidate after this callback has invalidated it. A hot-retarget may keep
+    // the current bundle only until a newer world identity invalidates it; the
+    // execution store never relabels a stale-world certificate as current.
+    if (planning_worker_) planning_worker_->cancelActive();
+    const auto next_goal_epoch = desired_intent_.advanceRevision();
+    if (!next_goal_epoch) {
+      execution_authority_.invalidate();
+      pending_goal_owner_.clearGoal();
+      deferred_terminal_status_.reset();
+      desired_intent_.clearGoal();
+
+      failClosedLocked();
+      RCLCPP_ERROR(get_logger(), "rejected navigation goal: desired planning revision exhausted");
+      return;
+    }
+    const bool retain_bundle = can_hot_retarget;
+    const auto execution_before_goal = execution_authority_.snapshot();
+    const bool began_goal = execution_authority_.beginGoal(
+            active_localization_epoch_.load(std::memory_order_acquire),
+            *next_goal_epoch, retain_bundle);
+    if (!began_goal) {
+      effective_hot_retarget = false;
+    } else if (execution_before_goal.pending) {
+      const auto execution_after_goal = execution_authority_.snapshot();
+      if (execution_after_goal.pending.get() != execution_before_goal.pending.get() &&
+          execution_after_goal.active.get() != execution_before_goal.pending.get()) {
+        // beginGoal() clears the exact pending candidate as part of the
+        // admission-revision transaction. Emit its terminal outcome from the
+        // producer boundary; the recorder cannot infer this from goal order.
+        try {
+          const auto& displaced = execution_before_goal.pending;
+          diagnostic_msgs::msg::DiagnosticArray event;
+          event.header.stamp = navigation_common::nanosecondsToRosTime(
+              now().nanoseconds()).value_or(builtin_interfaces::msg::Time{});
+          diagnostic_msgs::msg::DiagnosticStatus status;
+          status.name = "navigation_runtime/execution_pending_superseded_witness";
+          status.hardware_id = "execution_authority";
+          status.message = "diagnostic_only; admission revision cleared pending candidate";
+          const auto add = [&status](const char* name, const auto value) {
+            diagnostic_msgs::msg::KeyValue field;
+            field.key = name;
+            field.value = std::to_string(value);
+            status.values.push_back(std::move(field));
+          };
+          add("bundle_generation", displaced->bundle_generation);
+          add("bundle_source", static_cast<unsigned>(displaced->source));
+          add("bundle_owner_cycle_id", displaced->producer_planning_cycle_id);
+          add("request_id", displaced->request_id);
+          add("goal_epoch", displaced->goal_epoch);
+          add("localization_epoch", displaced->localization_epoch);
+          add("replacement_bundle_generation", 0U);
+          add("admission_goal_epoch", *next_goal_epoch);
+          add("previous_snapshot_version", execution_before_goal.version);
+          add("current_snapshot_version", execution_after_goal.version);
+          event.status.push_back(std::move(status));
+          diagnostics_publisher_->publish(event);
+        } catch (const std::exception& error) {
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                               "pending goal supersession witness publish failed: %s", error.what());
+        }
+      }
+    }
+  }
+  desired_intent_.install(*message, same_logical_goal ? std::nullopt :
+      std::optional<PlanningIntentTransition>{effective_hot_retarget ?
+          PlanningIntentTransition::kHotRetarget : PlanningIntentTransition::kNewIntent});
+  const auto mission_start_epoch = active_localization_epoch_.load(std::memory_order_acquire);
+  const bool mission_scope_changed = mission_start_mission_id_ != message->mission_id ||
+      mission_start_localization_epoch_ != mission_start_epoch ||
+      mission_start_route_revision_ != message->route.route_revision ||
+      mission_start_mission_id_.empty();
+  if (mission_scope_changed) {
+    // The first-leg origin is a measured mission-activation pose, never the
+    // first waypoint. If no fresh state is available here, publishCommand()
+    // may fill it from the same validated execution-state lease later.
+    mission_start_mission_id_ = message->mission_id;
+    mission_start_route_revision_ = message->route.route_revision;
+    mission_start_localization_epoch_ = mission_start_epoch;
+    mission_start_position_world_.reset();
+    const auto activation_state = execution_state_store_.load();
+    if (activation_state && activation_state->state.finite() &&
+        activation_state->state.localization_epoch == mission_start_epoch &&
+        activation_state->state.world_frame_id == planning_frame_ &&
+        activation_state->state.position_world.allFinite()) {
+      const auto freshness = navigation_contracts::evaluateExecutionStateFreshness(
+          now().nanoseconds(), activation_state->state.source_stamp_ns,
+          navigation_common::steadyClockNowNanoseconds(),
+          activation_state->state.receive_stamp_ns, data_freshness_window_s_);
+      if (freshness.valid()) {
+        mission_start_position_world_ = activation_state->state.position_world;
+      }
+    }
+  }
+  if (!same_logical_goal) {
+    // Global order is input_mutex_ -> execution transition. Command sampling
+    // snapshots input and releases it before taking the transition lock.
+    command_execution_lease_failure_latch_.resetForNewGoalWithinTransition();
+    // The active predecessor remains in ExecutionAuthority during a hot retarget.
+    plan_from_rest_first_failure_steady_ns_ = 0;
+    execution_authority_.clearRestartFromRest();
+    skip_replan_once_.store(false, std::memory_order_release);
+    trajectory_completion_witness_.reset();
+    trajectory_reaches_goal_.store(false);
+    terminal_bundle_generation_.store(0U);
+    if (same_checkpoint || effective_hot_retarget) {
+      const auto timeline = execution_authority_.snapshot();
+      RCLCPP_INFO(get_logger(),
+                  "mission_handoff H5 stamp_ns=%lld to_wp=%u to_req=%lu "
+                  "desired_epoch=%lu execution_epoch=%lu active_generation=%lu "
+                  "hot_retained=%d new_goal=%d",
+                  static_cast<long long>(now().nanoseconds()), message->waypoint_index,
+                  static_cast<unsigned long>(message->request_id),
+                  static_cast<unsigned long>(desired_intent_.revision()),
+                  static_cast<unsigned long>(executionGoalEpoch()),
+                  static_cast<unsigned long>(timeline.active ? timeline.active->bundle_generation : 0U),
+                  effective_hot_retarget ? 1 : 0, desired_intent_.isNewIntent() ? 1 : 0);
+    }
+  }
+}
+
+void NavigationRuntimeNode::onModeStatus(
+    const navigation_contracts::msg::NavigationModeStatus::ConstSharedPtr& message) {
+  if (!message) {
+    RCLCPP_ERROR(get_logger(), "rejected null navigation mode status");
+    return;
+  }
+  if (message->header.frame_id != planning_frame_) return;
+  if (message->state == navigation_contracts::msg::NavigationModeStatus::ACTIVE &&
+      message->activation_id > 0U) {
+    auto observed = mode_activation_id_seen_.load(std::memory_order_acquire);
+    while (observed < message->activation_id &&
+           !mode_activation_id_seen_.compare_exchange_weak(
+               observed, message->activation_id, std::memory_order_acq_rel)) {}
+  }
+  if (mission_progress_) {
+    const auto source_ns = navigation_common::rosTimeToNanoseconds(
+        message->header.stamp).value_or(0);
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    const auto current_activation = mission_activation_applied_.value_or(
+        mode_mission_boundary_ ? mode_mission_boundary_->activation_id : 0U);
+    if ((message->activation_id > 0U &&
+         message->activation_id < current_activation) ||
+        (mode_mission_boundary_ &&
+         message->activation_id == mode_mission_boundary_->activation_id &&
+         source_ns > 0 && source_ns < mode_mission_boundary_->source_stamp_ns)) {
+      return;
+    }
+    if (message->state == navigation_contracts::msg::NavigationModeStatus::ACTIVE &&
+        message->activation_id > last_terminal_mode_activation_id_ && source_ns > 0) {
+      mode_mission_boundary_ = ModeMissionBoundary{
+          message->activation_id, source_ns,
+          navigation_common::steadyClockNowNanoseconds(), message->airborne};
+    } else if (message->state != navigation_contracts::msg::NavigationModeStatus::BRAKING) {
+      if (message->state != navigation_contracts::msg::NavigationModeStatus::ACTIVE) {
+        last_terminal_mode_activation_id_ = std::max(
+            last_terminal_mode_activation_id_, message->activation_id);
+      }
+      mode_mission_boundary_.reset();
+      mission_activation_applied_.reset();
+      issued_mission_commands_.clear();
+      mission_progress_->deactivate();
+    }
+  }
+  if (message->state == navigation_contracts::msg::NavigationModeStatus::ACTIVE ||
+      message->state == navigation_contracts::msg::NavigationModeStatus::BRAKING) {
+    return;
+  }
+  std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+  std::lock_guard<std::mutex> lock(input_mutex_);
+  std::unique_lock<std::mutex> command_lock(
+      command_execution_lease_failure_latch_.transitionMutex());
+  const auto status_pending_goal = pending_goal_owner_.goalSnapshot();
+  const bool matches_pending = status_pending_goal &&
+      status_pending_goal->mission_id == message->mission_id &&
+      status_pending_goal->waypoint_index == message->waypoint_index &&
+      status_pending_goal->request_id == message->request_id;
+  const bool matches_active = desired_intent_.goal().has_value() &&
+      ((mission_progress_ && message->mission_id.empty()) ||
+       (desired_intent_.goal()->mission_id == message->mission_id &&
+        desired_intent_.goal()->waypoint_index == message->waypoint_index &&
+        desired_intent_.goal()->request_id == message->request_id));
+  const bool safety_suffix_active =
+      execution_authority_.snapshot().safetySuffixActive();
+  if (pendingGoalTerminalStatusMayClear(matches_pending, safety_suffix_active)) {
+    // A terminal status for a queued request consumes exactly that request;
+    // it may never clear the active suffix unless the active identity is the
+    // same complete {mission, waypoint, request} tuple.
+    (void)pending_goal_owner_.clearIfCurrent(status_pending_goal);
+  } else if (matches_pending) {
+    // External Mode may report a terminal status for the already-published
+    // next request before the current BACKUP/EMERGENCY suffix reaches its
+    // measured stop. Keep that request in the sole pending owner; otherwise
+    // the stop boundary has nothing to promote.
+    RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "retaining terminal status for pending request=%lu while safety suffix drains",
+        static_cast<unsigned long>(message->request_id));
+  }
+  if (!matches_active) {
+    return;
+  }
+  if (safety_suffix_active) {
+    // Preserve command identity while BACKUP/EMERGENCY drains. The terminal
+    // transition is applied by the certified-stop boundary below.
+    deferred_terminal_status_ = *desired_intent_.goal();
+    return;
+  }
+  const auto episode = execution_authority_.snapshot();
+  const auto timeline = execution_authority_.snapshot();
+  const auto current_bundle = timeline.active;
+  const auto localization_epoch =
+      active_localization_epoch_.load(std::memory_order_acquire);
+  const auto goal_epoch = desired_intent_.revision();
+  const auto command_goal_epoch =
+      executionGoalEpoch();
+  const auto now_ns = now().nanoseconds();
+  const bool successful_terminal_status =
+      message->state == navigation_contracts::msg::NavigationModeStatus::COMPLETE &&
+      message->reason == navigation_contracts::msg::NavigationModeStatus::NONE &&
+      message->waypoint_accepted &&
+      message->accepted_waypoint_index == message->waypoint_index;
+  const bool outgoing_route_exists = desired_intent_.goal() && desired_intent_.goal()->has_next_target &&
+      desired_intent_.goal()->waypoint_index < desired_intent_.goal()->route.waypoint_positions.size() &&
+      desired_intent_.goal()->waypoint_index + 1U < desired_intent_.goal()->route.waypoint_positions.size() &&
+      desired_intent_.goal()->waypoint_index + 1U < desired_intent_.goal()->route.waypoint_behaviors.size();
+  const bool command_lease_valid = current_bundle && now_ns > 0 &&
+      current_bundle->valid_from_ns <= now_ns && now_ns <= current_bundle->valid_until_ns;
+  const bool execution_identity_current = current_bundle && executingGoalSnapshot() &&
+      (execution_authority_.matchesActive(*executingGoalSnapshot(), command_goal_epoch, localization_epoch, current_bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch));
+  const bool certified_main_command = current_bundle && current_bundle->valid() &&
+      current_bundle->role == navigation_planning::CandidateRole::kMain &&
+      episode.commandAvailable();
+  const bool certified_continuation_boundary = current_bundle && desired_intent_.goal() &&
+      [&]() {
+        const auto continuation_window = certifiedMainContinuationWindow(
+            *current_bundle, *desired_intent_.goal(), localization_epoch, goal_epoch, false);
+        return continuation_window.has_value() &&
+            certifiedMainContinuationHandoffReady(*continuation_window, now_ns);
+      }();
+  const PassThroughTerminalAckFacts retention_facts{
+      successful_terminal_status,
+      matches_active,
+      desired_intent_.goal() && desired_intent_.goal()->behavior ==
+          navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH,
+      outgoing_route_exists,
+      certified_main_command,
+      certified_continuation_boundary,
+      execution_identity_current,
+      episode.failed(),
+      episode.safetySuffixActive(),
+      command_execution_lease_failure_latch_.allowsCommandExposure(),
+      command_lease_valid};
+  if (passThroughTerminalAckMayRetainCommand(retention_facts)) {
+    // The acknowledgement records successful checkpoint progress, but the
+    // predecessor remains the physical command owner until a certified
+    // successor activation or the existing finite lease/stop path closes it.
+    RCLCPP_INFO_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "retaining certified MAIN command across PASS_THROUGH terminal acknowledgement "
+        "mission=%s waypoint=%u request=%lu",
+        message->mission_id.c_str(), message->waypoint_index,
+        static_cast<unsigned long>(message->request_id));
+    return;
+  }
+  RCLCPP_INFO(get_logger(),
+              "Cancelling planner backend goal after terminal mission status state=%u reason=%u "
+              "mission=%s waypoint=%u request=%lu",
+              message->state, message->reason, message->mission_id.c_str(),
+              message->waypoint_index, static_cast<unsigned long>(message->request_id));
+  if (planning_worker_) planning_worker_->cancelActive();
+  const auto next_goal_epoch = desired_intent_.advanceRevision();
+  if (next_goal_epoch) {
+    (void)execution_authority_.setAdmissionGoalEpoch(*next_goal_epoch, false);
+  } else {
+    execution_authority_.invalidate();
+    RCLCPP_ERROR(get_logger(), "desired planning revision exhausted while clearing terminal goal");
+  }
+  desired_intent_.clearGoal();
+
+  pending_goal_owner_.clearGoal();
+  deferred_terminal_status_.reset();
+  execution_authority_.clearGoal(
+      active_localization_epoch_.load(std::memory_order_acquire));
+  foreign_mission_hold_after_stop_ = false;
+  (void)desired_intent_.consumeNewIntent();
+  (void)desired_intent_.consumeHotRetarget();
+  execution_authority_.clearRestartFromRest();
+  skip_replan_once_.store(false, std::memory_order_release);
+
+  plan_from_rest_first_failure_steady_ns_ = 0;
+  trajectory_completion_witness_.reset();
+  trajectory_reaches_goal_.store(false);
+  terminal_bundle_generation_.store(0U);
+}
+
+void NavigationRuntimeNode::applyMissionDecisionLocked(
+    const MissionProgressDecision& decision) {
+  if (!mission_progress_ || decision.kind == MissionProgressDecision::Kind::None) return;
+  const auto stamp = navigation_common::nanosecondsToRosTime(
+      now().nanoseconds()).value_or(builtin_interfaces::msg::Time{});
+  navigation_contracts::msg::NavigationMissionProgress receipt;
+  receipt.header.stamp = stamp;
+  receipt.header.frame_id = planning_frame_;
+  receipt.mission_id = mission_progress_->routeIdentity().mission_id;
+  receipt.route_revision = mission_progress_->routeIdentity().revision;
+  receipt.localization_epoch = mission_progress_->routeIdentity().localization_epoch;
+  receipt.mode_activation_id = mission_activation_applied_.value_or(0U);
+  receipt.waypoint_index = decision.gate.waypoint_index;
+  receipt.request_id = decision.gate.request_id;
+  receipt.waypoint_accepted = decision.accepted.has_value();
+  receipt.accepted_waypoint_index = decision.accepted
+      ? decision.accepted->waypoint_index : 0U;
+  receipt.acceptance_position_error_m = decision.acceptance_error_m;
+  receipt.acceptance_speed_mps = decision.acceptance_speed_mps;
+  if (decision.kind == MissionProgressDecision::Kind::Goal) {
+    const auto goal = makeMissionGoal(*mission_progress_, stamp);
+    if (!goal) {
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      execution_authority_.invalidate();
+      failClosedLocked();
+      RCLCPP_ERROR(get_logger(), "Core mission goal has invalid route snapshot");
+      return;
+    }
+    applyValidatedGoalLocked(
+        std::make_shared<const navigation_contracts::msg::NavigationGoal>(*goal));
+    const bool active_matches = desired_intent_.goal() &&
+        desired_intent_.goal()->mission_id == goal->mission_id &&
+        desired_intent_.goal()->waypoint_index == goal->waypoint_index &&
+        desired_intent_.goal()->request_id == goal->request_id;
+    const bool pending_matches = pending_goal_owner_.goalMatchesStatus(
+        goal->mission_id, goal->waypoint_index, goal->request_id);
+    if (!active_matches && !pending_matches) {
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      execution_authority_.invalidate();
+      failClosedLocked();
+      RCLCPP_ERROR(get_logger(), "Core mission successor intent was not admitted");
+      return;
+    }
+    receipt.event = navigation_contracts::msg::NavigationMissionProgress::GOAL;
+  } else {
+    receipt.event = navigation_contracts::msg::NavigationMissionProgress::COMPLETE;
+    std_msgs::msg::Bool complete;
+    complete.data = true;
+    mission_complete_publisher_->publish(complete);
+  }
+  mission_progress_publisher_->publish(receipt);
+}
+
+void NavigationRuntimeNode::tickMissionProgress() {
+  if (!mission_progress_) return;
+  const auto execution = execution_state_store_.load();
+  const auto now_ros_ns = now().nanoseconds();
+  const auto now_steady_ns = navigation_common::steadyClockNowNanoseconds();
+  std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+  std::lock_guard<std::mutex> input_lock(input_mutex_);
+  const auto epoch = active_localization_epoch_.load(std::memory_order_acquire);
+  if (epoch == 0U) return;
+  if (mission_progress_->routeIdentity().localization_epoch != epoch) {
+    mission_progress_->resetIdentity(1U, epoch);
+    mission_activation_applied_.reset();
+    mode_mission_boundary_.reset();
+    issued_mission_commands_.clear();
+    return;
+  }
+  const bool established_activation = mode_mission_boundary_ &&
+      mission_activation_applied_ == mode_mission_boundary_->activation_id;
+  if (!mode_mission_boundary_ || !mode_mission_boundary_->airborne ||
+      mode_mission_boundary_->activation_id == 0U ||
+      mode_mission_boundary_->source_stamp_ns > now_ros_ns ||
+      now_steady_ns < mode_mission_boundary_->receive_steady_ns ||
+      (!established_activation &&
+       (now_ros_ns - mode_mission_boundary_->source_stamp_ns > 200'000'000 ||
+        now_steady_ns - mode_mission_boundary_->receive_steady_ns > 200'000'000)) ||
+      !execution || !execution->state.finite() ||
+      execution->state.localization_epoch != epoch ||
+      execution->state.world_frame_id != planning_frame_) {
+    return;
+  }
+  const auto freshness = navigation_contracts::evaluateExecutionStateFreshness(
+      now_ros_ns, execution->state.source_stamp_ns, now_steady_ns,
+      execution->state.receive_stamp_ns, data_freshness_window_s_);
+  if (!freshness.valid()) return;
+  const MissionMeasuredSample measured{
+      execution->state.position_world, execution->state.velocity_world,
+      execution->state.source_stamp_ns, execution->ingress_sequence, epoch};
+  if (mission_activation_applied_ != mode_mission_boundary_->activation_id) {
+    mission_progress_->deactivate();
+    issued_mission_commands_.clear();
+    (void)mission_progress_->observeMeasured(measured, now_ros_ns);
+    mission_activation_applied_ = mode_mission_boundary_->activation_id;
+    std_msgs::msg::Bool complete;
+    complete.data = false;
+    mission_complete_publisher_->publish(complete);
+    applyMissionDecisionLocked(mission_progress_->activate());
+    return;
+  }
+  applyMissionDecisionLocked(mission_progress_->observeMeasured(measured, now_ros_ns));
+}
+
+void NavigationRuntimeNode::rememberMissionCommandIssued(
+    const navigation_contracts::msg::NavigationCommand& command,
+    bool execution_authorized) {
+  if (!mission_progress_ ||
+      !execution_authorized ||
+      !navigation_contracts::commandValidAt(command, now().nanoseconds())) {
+    return;
+  }
+  if (!mission_activation_applied_ ||
+      command.localization_epoch != mission_progress_->routeIdentity().localization_epoch ||
+      command.mission_id != mission_progress_->routeIdentity().mission_id ||
+      command.waypoint_index != mission_progress_->currentGate().waypoint_index ||
+      command.request_id != mission_progress_->currentGate().request_id) {
+    return;
+  }
+  const auto valid_until = navigation_common::rosTimeToNanoseconds(command.valid_until);
+  if (!valid_until) return;
+  while (!issued_mission_commands_.empty()) {
+    const auto old_expiry = navigation_common::rosTimeToNanoseconds(
+        issued_mission_commands_.front().valid_until).value_or(0);
+    if (old_expiry >= now().nanoseconds() && issued_mission_commands_.size() < 16U) break;
+    issued_mission_commands_.pop_front();
+  }
+  issued_mission_commands_.push_back(command);
+}
+
+void NavigationRuntimeNode::onCommandAdmission(
+    const navigation_contracts::msg::NavigationCommandAdmission::ConstSharedPtr& message) {
+  if (!mission_progress_ || !message) return;
+  std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+  std::lock_guard<std::mutex> input_lock(input_mutex_);
+  if (!mission_activation_applied_ ||
+      message->mode_activation_id != *mission_activation_applied_ ||
+      message->header.frame_id != planning_frame_ ||
+      message->localization_epoch != mission_progress_->routeIdentity().localization_epoch ||
+      message->mission_id != mission_progress_->routeIdentity().mission_id ||
+      message->waypoint_index != mission_progress_->currentGate().waypoint_index ||
+      message->request_id != mission_progress_->currentGate().request_id) return;
+  const auto admission_ns = navigation_common::rosTimeToNanoseconds(
+      message->header.stamp).value_or(0);
+  const auto now_ns = now().nanoseconds();
+  const auto now_steady_ns = navigation_common::steadyClockNowNanoseconds();
+  // The exact finite admission receipt proves this sampled command passed the
+  // adapter's local boundary. The recurring ModeStatus heartbeat is needed to
+  // establish a session, not to reauthorize each waypoint in that session.
+  if (admission_ns <= 0 || admission_ns > now_ns ||
+      !mode_mission_boundary_ || !mode_mission_boundary_->airborne ||
+      mode_mission_boundary_->activation_id != message->mode_activation_id ||
+      mode_mission_boundary_->source_stamp_ns > now_ns ||
+      now_steady_ns < mode_mission_boundary_->receive_steady_ns ||
+      !mission_activation_applied_ ||
+      *mission_activation_applied_ != message->mode_activation_id) return;
+  const auto it = std::find_if(issued_mission_commands_.begin(),
+                               issued_mission_commands_.end(),
+                               [&](const auto& command) {
+    return command.mission_id == message->mission_id &&
+        command.mode_activation_id == message->mode_activation_id &&
+        command.localization_epoch == message->localization_epoch &&
+        command.goal_epoch == message->goal_epoch &&
+        command.waypoint_index == message->waypoint_index &&
+        command.request_id == message->request_id &&
+        command.bundle_generation == message->bundle_generation &&
+        command.sample_id == message->sample_id;
+  });
+  if (it == issued_mission_commands_.end()) return;
+  const auto command = *it;
+  issued_mission_commands_.erase(it);
+  const auto command_stamp = navigation_common::rosTimeToNanoseconds(
+      command.header.stamp).value_or(0);
+  if (admission_ns < command_stamp ||
+      !navigation_contracts::commandValidAt(command, now_ns)) return;
+  std::optional<MissionContinuationWitness::Kind> kind;
+  if (command.certified_main_continuation &&
+      navigation_contracts::certifiedMainContinuationFieldsValid(command)) {
+    kind = MissionContinuationWitness::Kind::Main;
+  } else if (command.status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
+             command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP) {
+    kind = MissionContinuationWitness::Kind::SafetySuffixStop;
+  } else if (command.status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
+             command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN) {
+    kind = MissionContinuationWitness::Kind::TerminalHold;
+  }
+  if (!kind) return;
+  if (*kind != MissionContinuationWitness::Kind::Main) {
+    const auto gate = mission_progress_->currentGate();
+    if (gate.waypoint_index >= mission_progress_->mission().waypoints.size()) return;
+    const auto& waypoint = mission_progress_->mission().waypoints[gate.waypoint_index];
+    const Eigen::Vector3d endpoint{
+        command.position.x, command.position.y, command.position.z};
+    if (!endpoint.allFinite() ||
+        (endpoint - waypoint.position_enu).norm() > waypoint.acceptance_radius_m) return;
+  }
+  const auto valid_until = navigation_common::rosTimeToNanoseconds(command.valid_until);
+  if (!valid_until) return;
+  const MissionContinuationWitness witness{
+      mission_progress_->routeIdentity(), mission_progress_->currentGate(), *kind,
+      command.bundle_generation,
+      command.certified_main_continuation
+          ? static_cast<std::int64_t>(command.continuation_boundary_stamp_ns)
+          : navigation_common::rosTimeToNanoseconds(command.header.stamp).value_or(0),
+      *valid_until};
+  applyMissionDecisionLocked(
+      mission_progress_->observeContinuation(witness, now_ns));
+}
+
+navigation_execution::CommitDecision NavigationRuntimeNode::admitImmediateCandidate(
+    const navigation_contracts::msg::NavigationGoal& goal,
+    const navigation_execution::CommitToken& token,
+    const std::shared_ptr<const navigation_planning::CandidateBundle>& candidate,
+    const navigation_execution::ExecutionAuthoritySnapshot& predecessor,
+    const PlanningKey& key,
+    const std::shared_ptr<const navigation_execution::ExecutionStateLease>& measured_state,
+    const std::int64_t maximum_world_age_ns,
+    const std::optional<TerminalMonitorBoundary>& terminal_monitor) {
+  if (!candidate || !key.valid() ||
+      (terminal_monitor &&
+       candidate->kind != navigation_planning::CandidateBundleKind::kEmergencyBrake)) {
+    return navigation_execution::CommitDecision::kInvalidCandidate;
+  }
+  // Allocate the desired-goal copy before taking owners; retire the old goal
+  // after their guards release. Backend ACK and world validation stay outside.
+  auto prepared_goal =
+      std::make_shared<const navigation_contracts::msg::NavigationGoal>(goal);
+  // Prepared validation stays outside this owner transaction. The admission
+  // predicate reads only clocks/captured metadata and never re-enters owners.
+  std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+  std::lock_guard<std::mutex> input_lock(input_mutex_);
+  std::lock_guard<std::mutex> command_lock(
+      command_execution_lease_failure_latch_.transitionMutex());
+  const auto current_episode = execution_authority_.snapshot();
+  const auto current_world = world_snapshot_store_.load();
+  const bool owner_current = !current_episode.failed() &&
+      (desired_intent_.matches(goal, token.goal_epoch) && active_localization_epoch_.load(std::memory_order_acquire) == (candidate->localization_epoch)) &&
+      desired_intent_.goal()->route.route_revision == key.route_revision &&
+      key.localization_epoch == candidate->localization_epoch &&
+      key.goal_epoch == token.goal_epoch && key.request_id == candidate->request_id &&
+      key.dynamics_hash == dynamics_hash_ &&
+      key.committed_bundle_generation ==
+          (predecessor.active ? predecessor.active->bundle_generation : 0U) &&
+      current_world && current_world.identity.generation == key.pinned_world_generation &&
+      navigation_world_model::sameWorldSnapshotIdentity(
+          current_world.identity, candidate->world_identity) &&
+      command_execution_lease_failure_latch_.allowsCommandExposure();
+  const bool terminal_owner_current = !terminal_monitor ||
+      (predecessor.active && !desired_intent_.isNewIntent() && !desired_intent_.isHotRetarget() &&
+       (execution_authority_.matchesActive(goal, token.goal_epoch, candidate->localization_epoch, predecessor.active->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (candidate->localization_epoch)) &&
+       executionLifecycleSnapshotsEqual(current_episode, terminal_monitor->snapshot) &&
+       !terminalHoldIsPending(
+          current_episode.commandAvailable(), trajectory_reaches_goal_.load(std::memory_order_acquire),
+          true, terminal_bundle_generation_.load(std::memory_order_acquire)));
+  const auto decision = owner_current && terminal_owner_current
+      ? execution_authority_.tryCommitIfCurrent(token, predecessor, prepared_goal, candidate, [&] {
+          const auto admission_now_ns = now().nanoseconds();
+          return (!terminal_monitor || terminalMainMonitorPhaseIsOpen(
+                      *predecessor.active, current_episode, admission_now_ns)) &&
+              admission_now_ns >= candidate->valid_from_ns &&
+              admission_now_ns <= candidate->valid_until_ns &&
+              admission_now_ns < candidate->declared_end_ns &&
+              measured_state && measured_state->state.finite() &&
+              measured_state->state.localization_epoch == candidate->localization_epoch &&
+              measured_state->state.world_frame_id == planning_frame_ &&
+              measured_state->state.body_frame_id == body_frame_id_ &&
+              navigation_contracts::evaluateExecutionStateFreshness(
+                  admission_now_ns, measured_state->state.source_stamp_ns,
+                  navigation_common::steadyClockNowNanoseconds(), measured_state->state.receive_stamp_ns,
+                  data_freshness_window_s_).valid() &&
+              assessWorldTemporal(true, candidate->world_identity, admission_now_ns,
+                                  maximum_world_age_ns).sourceCurrent();
+        })
+      : navigation_execution::CommitDecision::kPredecessorAdvanced;
+  return decision;
+}
+
+bool NavigationRuntimeNode::commitPlannerCandidate(
+    const navigation_contracts::msg::NavigationGoal& goal,
+    const std::uint64_t goal_epoch,
+    const std::uint64_t localization_epoch,
+    const std::int64_t now_ns,
+    const PlanningKey& scheduled_key,
+    const std::optional<navigation_planning::CandidateBundle>& planned_candidate,
+    bool* const candidate_admitted,
+    const std::optional<TerminalMonitorBoundary>& terminal_monitor) {
+  if (candidate_admitted) *candidate_admitted = false;
+  // Keep rejection evidence in the same structured cycle record as planner
+  // evidence. These codes are diagnostics only: every non-success path below
+  // remains fail-closed and leaves the execution-owned active timeline in
+  // place.
+  enum : int {
+    kBoundaryAccepted = 0,
+    kInvalidArguments = 1,
+    kStaleIdentity = 2,
+    kInvalidFreshnessWindow = 3,
+    kCandidateExportFailed = 4,
+    kWorldNotFresh = 5,
+    kActivationWindow = 6,
+    kNonExactSuccessorStart = 7,
+    kInvalidCandidate = 8,
+    kAnchorUnavailable = 9,
+    kAnchorMismatch = 10,
+    kEndpointMetadata = 11,
+    kRouteBoundary = 12,
+    kMainReserve = 13,
+    kExecutionState = 14,
+    kTransactionIdExhausted = 15,
+    kStageOrCommitRejected = 16,
+  };
+  last_execution_boundary_rejection_.store(
+      kBoundaryAccepted, std::memory_order_release);
+  const auto reject = [this](const int reason) {
+    last_execution_boundary_rejection_.store(reason, std::memory_order_release);
+    return false;
+  };
+  if (now_ns <= 0 || goal_epoch == 0U || localization_epoch == 0U ||
+      goal.request_id == 0U) {
+    return reject(kInvalidArguments);
+  }
+  const auto timeline_before_commit = execution_authority_.snapshot();
+  const auto latest_bundle_before_commit = timeline_before_commit.active;
+  const auto latest_world_before_commit = world_snapshot_store_.load();
+  const auto latest_bundle_generation = latest_bundle_before_commit
+      ? latest_bundle_before_commit->bundle_generation
+      : 0U;
+  bool route_identity_current = false;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    route_identity_current = desired_intent_.goal() &&
+        desired_intent_.goal()->request_id == scheduled_key.request_id &&
+        desired_intent_.goal()->route.route_revision == scheduled_key.route_revision;
+  }
+  if (!scheduled_key.valid() || !route_identity_current ||
+      scheduled_key.localization_epoch != localization_epoch ||
+      scheduled_key.goal_epoch != goal_epoch ||
+      scheduled_key.request_id != goal.request_id ||
+      active_localization_epoch_.load(std::memory_order_acquire) != localization_epoch ||
+      desired_intent_.revision() != goal_epoch ||
+      latest_bundle_generation != scheduled_key.committed_bundle_generation ||
+      !latest_world_before_commit ||
+      latest_world_before_commit.identity.generation !=
+          scheduled_key.pinned_world_generation) {
+    planner_->discardCommandCandidate();
+    RCLCPP_WARN(get_logger(),
+                "execution boundary rejected stale planning result request=%lu "
+                "route_revision=%lu committed_generation=%lu world_generation=%lu",
+                static_cast<unsigned long>(scheduled_key.request_id),
+                static_cast<unsigned long>(scheduled_key.route_revision),
+                static_cast<unsigned long>(scheduled_key.committed_bundle_generation),
+                static_cast<unsigned long>(scheduled_key.pinned_world_generation));
+    return reject(kStaleIdentity);
+  }
+  const auto maximum_age_ns = data_freshness_window_ns_;
+  if (maximum_age_ns <= 0 || now_ns > std::numeric_limits<std::int64_t>::max() - maximum_age_ns) {
+    return reject(kInvalidFreshnessWindow);
+  }
+  // Successors are admitted for a future splice. The active command remains
+  // the only executable object until this activation boundary is reached.
+  // Measured-state emergency braking is different: it is the fail-closed
+  // replacement for an already invalid/exceeded command and must take effect
+  // immediately from its measured boundary.
+  const bool has_active_bundle = static_cast<bool>(latest_bundle_before_commit);
+  if (now_ns > std::numeric_limits<std::int64_t>::max() - maximum_age_ns) {
+    planner_->discardCommandCandidate();
+    return reject(kInvalidFreshnessWindow);
+  }
+  auto candidate = planned_candidate.has_value()
+      ? planned_candidate
+      : planner_->exportCommandCandidate(
+            localization_epoch, goal_epoch, goal.request_id, now_ns,
+            now_ns + maximum_age_ns);
+  if (!candidate) {
+    RCLCPP_WARN(get_logger(),
+                "execution boundary rejected candidate export mission=%s waypoint=%u "
+                "request=%lu now_ns=%lld",
+                goal.mission_id.c_str(), goal.waypoint_index,
+                static_cast<unsigned long>(goal.request_id),
+                static_cast<long long>(now_ns));
+    return reject(kCandidateExportFailed);
+  }
+  const auto latest_world = world_snapshot_store_.load();
+  const auto world_freshness = assessWorldTemporal(
+      static_cast<bool>(latest_world), latest_world.identity, now_ns, maximum_age_ns);
+  if (!world_freshness.sourceCurrent()) {
+    ++world_snapshot_freshness_rejection_count_;
+    planner_->discardCommandCandidate();
+    RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "execution boundary rejected candidate because the world snapshot is not fresh");
+    return reject(kWorldNotFresh);
+  }
+  const bool emergency_candidate = candidate->kind ==
+      navigation_planning::CandidateBundleKind::kEmergencyBrake;
+  if (terminal_monitor && !emergency_candidate) {
+    planner_->discardCommandCandidate();
+    return reject(kInvalidArguments);
+  }
+  const auto execution_recovery_state =
+      execution_authority_.snapshot().lifecycle.recovery;
+  // An expired recovery endpoint is a bounded STOPPED_HOLD, not a future
+  // execution timeline. A measured-state replacement must cut over now and
+  // validate its first sample against measured state; reserving an anchor on
+  // the expired polynomial would reject the recovery that resumes the mission.
+  const bool replacing_stopped_recovery =
+      execution_recovery_state == ExecutionRecoveryState::kStoppedRecovery;
+  const bool schedule_successor = has_active_bundle && !emergency_candidate &&
+                                  !replacing_stopped_recovery;
+  const auto activation_ns = schedule_successor
+      ? candidate->declared_start_ns
+      : now_ns;
+  const auto activation_guard_ns = static_cast<std::int64_t>(
+      navigation_planning::PlanningTimingContract::kCommitGuardS * 1.0e9);
+  if (activation_ns <= 0 ||
+      activation_ns > std::numeric_limits<std::int64_t>::max() - maximum_age_ns ||
+      (schedule_successor &&
+       (activation_guard_ns <= 0 ||
+        now_ns > std::numeric_limits<std::int64_t>::max() - activation_guard_ns ||
+        activation_ns <= now_ns + activation_guard_ns)) ||
+      candidate->valid_from_ns > activation_ns || candidate->declared_end_ns < activation_ns) {
+    planner_->discardCommandCandidate();
+    return reject(kActivationWindow);
+  }
+  candidate->valid_from_ns = activation_ns;
+  candidate->valid_until_ns = std::min(
+      candidate->declared_end_ns, activation_ns + maximum_age_ns);
+  candidate->activation_stamp_ns = activation_ns;
+  const auto candidate_start_ns = navigation_common::secondsToNanoseconds(
+      candidate->start_wall_time_s);
+  if (schedule_successor &&
+      (!candidate_start_ns || *candidate_start_ns != activation_ns ||
+       candidate->declared_start_ns != activation_ns)) {
+    planner_->discardCommandCandidate();
+    RCLCPP_WARN(
+        get_logger(),
+        "execution boundary rejected successor with non-exact declared start "
+        "declared=%lld rounded=%lld activation=%lld",
+        static_cast<long long>(candidate->declared_start_ns),
+        candidate_start_ns ? static_cast<long long>(*candidate_start_ns) : 0LL,
+        static_cast<long long>(activation_ns));
+    return reject(kNonExactSuccessorStart);
+  }
+  if (!candidate->valid()) {
+    planner_->discardCommandCandidate();
+    return reject(kInvalidCandidate);
+  }
+  const auto candidate_ptr = std::make_shared<const navigation_planning::CandidateBundle>(
+      *candidate);
+  // The execution timeline owns the future-state handoff. Analytic matching
+  // and lease admission are separate contracts; a boolean late gate must not
+  // conflate a polynomial mismatch with an expired old command.
+  std::optional<navigation_execution::ExecutionAnchor> anchor;
+  if (schedule_successor) {
+    anchor = execution_authority_.reserveAnchor(now_ns, activation_ns);
+    if (!anchor) {
+      planner_->discardCommandCandidate();
+      RCLCPP_WARN(get_logger(),
+                  "execution boundary rejected successor: active command cannot reach activation "
+                  "now_ns=%lld activation_ns=%lld",
+                  static_cast<long long>(now_ns), static_cast<long long>(activation_ns));
+      return reject(kAnchorUnavailable);
+    }
+    const auto anchor_match = navigation_execution::candidateMatchesAnchor(
+        *candidate_ptr, *anchor);
+    if (anchor_match != navigation_execution::AnchorMatchResult::kMatch) {
+      planner_->discardCommandCandidate();
+      RCLCPP_WARN(get_logger(),
+                  "execution boundary rejected successor anchor match result=%d "
+                  "active_generation=%lu candidate_generation=%lu activation_ns=%lld",
+                  static_cast<int>(anchor_match),
+                  static_cast<unsigned long>(anchor->active_bundle_generation),
+                  static_cast<unsigned long>(candidate_ptr->bundle_generation),
+                  static_cast<long long>(activation_ns));
+      return reject(kAnchorMismatch);
+    }
+  }
+  const bool stop_goal = goal.behavior ==
+      navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP;
+  const bool pass_through_goal = goal.behavior ==
+      navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
+  // Endpoint metadata is an execution contract for both terminal STOP and
+  // finite PASS_THROUGH bundles. A missing/unsampleable declared endpoint must
+  // reject the candidate; warning and committing it would leave downstream
+  // waypoint completion dependent on an unavailable sample. PASS_THROUGH's
+  // outgoing lookahead is not itself compared with the requested waypoint.
+  if ((stop_goal || pass_through_goal) &&
+      (!candidate_ptr->hasDeclaredEndpointMetadata() ||
+       !candidate_ptr->sampleAtDeclaredEnd())) {
+    planner_->discardCommandCandidate();
+    RCLCPP_WARN(
+        get_logger(),
+        "execution boundary rejected candidate without a valid declared endpoint "
+        "for waypoint behavior=%s",
+        stop_goal ? "STOP" : "PASS_THROUGH");
+    return reject(kEndpointMetadata);
+  }
+  if (pass_through_goal && candidate_ptr->route_boundary_event.has_value()) {
+    const auto& boundary = *candidate_ptr->route_boundary_event;
+    const auto& constraint = candidate_ptr->route_boundary_constraint;
+    const auto endpoint = candidate_ptr->sampleAtDeclaredEnd();
+    const auto route_snapshot = decodeRouteSnapshot(goal);
+    const bool coincident_terminal_pass_through = route_snapshot.has_value() &&
+        navigation_mission::passThroughNextWaypointIsCoincidentStop(
+            *route_snapshot);
+    const bool constraint_valid = constraint && constraint->valid();
+    const bool boundary_valid = boundary.valid();
+    // A PASS_THROUGH immediately followed by a STOP at the same physical
+    // point is one terminal mission boundary. The planner intentionally emits
+    // a terminal event there to suppress outgoing velocity; accepting it here
+    // keeps the runtime and route-progress semantic contract aligned.
+    const auto expected_boundary_kind = coincident_terminal_pass_through
+        ? navigation_planning::RouteBoundaryEventKind::kTerminalStop
+        : navigation_planning::RouteBoundaryEventKind::kPassThrough;
+    const bool boundary_kind_valid =
+        boundary.kind == expected_boundary_kind;
+    const bool boundary_junction_valid = route_snapshot.has_value() &&
+        boundary.junction_index == route_snapshot->active_waypoint_index &&
+        constraint_valid &&
+        constraint->junction_index == route_snapshot->active_waypoint_index;
+    const bool boundary_stamp_valid =
+        boundary.boundary_stamp_ns >= candidate_ptr->declared_start_ns &&
+        boundary.boundary_stamp_ns <= candidate_ptr->declared_end_ns;
+    const auto boundary_sample = boundary_stamp_valid
+        ? candidate_ptr->sampleAtDeclaredStamp(boundary.boundary_stamp_ns)
+        : std::nullopt;
+    const bool endpoint_valid = endpoint && endpoint->finite();
+    const bool boundary_sample_valid = boundary_sample && boundary_sample->finite();
+    const bool boundary_crossing_contained = constraint_valid &&
+        boundary_sample_valid && constraint->contains(boundary_sample->position_world);
+    const bool boundary_position_matches = boundary_sample_valid &&
+        (boundary_sample->position_world - boundary.position_world).norm() <= 1.0e-4;
+    const bool boundary_role_valid = boundary_sample_valid &&
+        boundary_sample->role == navigation_planning::CandidateRole::kMain;
+    if (!constraint_valid || !boundary_valid || !boundary_kind_valid ||
+        !boundary_junction_valid ||
+        !boundary_stamp_valid || !endpoint_valid || !boundary_crossing_contained ||
+        !boundary_position_matches || !boundary_role_valid) {
+      planner_->discardCommandCandidate();
+      RCLCPP_WARN(get_logger(),
+                  "execution boundary rejected pass-through without a hard route boundary "
+                  "junction=%zu endpoint=(%.3f,%.3f,%.3f) constraint_valid=%d "
+                  "boundary_valid=%d kind=%d expected_kind=%d stamp_valid=%d endpoint_valid=%d "
+                  "contained=%d boundary_stamp=%lld declared_end=%lld "
+                  "boundary_sample=(%.9f,%.9f,%.9f) boundary_event=(%.9f,%.9f,%.9f) "
+                  "volume_min=(%.3f,%.3f,%.3f) volume_max=(%.3f,%.3f,%.3f)",
+                  boundary.junction_index,
+                  endpoint ? endpoint->position_world.x() : 0.0,
+                  endpoint ? endpoint->position_world.y() : 0.0,
+                  endpoint ? endpoint->position_world.z() : 0.0,
+                  constraint_valid ? 1 : 0, boundary_valid ? 1 : 0,
+                  static_cast<int>(boundary.kind),
+                  static_cast<int>(expected_boundary_kind),
+                  boundary_stamp_valid ? 1 : 0,
+                  endpoint_valid ? 1 : 0, boundary_crossing_contained ? 1 : 0,
+                  static_cast<long long>(boundary.boundary_stamp_ns),
+                  static_cast<long long>(candidate_ptr->declared_end_ns),
+                  boundary_sample ? boundary_sample->position_world.x() : 0.0,
+                  boundary_sample ? boundary_sample->position_world.y() : 0.0,
+                  boundary_sample ? boundary_sample->position_world.z() : 0.0,
+                  boundary.position_world.x(), boundary.position_world.y(),
+                  boundary.position_world.z(),
+                  constraint ? constraint->admissible_volume.minimum.x() : 0.0,
+                  constraint ? constraint->admissible_volume.minimum.y() : 0.0,
+                  constraint ? constraint->admissible_volume.minimum.z() : 0.0,
+                  constraint ? constraint->admissible_volume.maximum.x() : 0.0,
+                  constraint ? constraint->admissible_volume.maximum.y() : 0.0,
+                  constraint ? constraint->admissible_volume.maximum.z() : 0.0);
+      return reject(kRouteBoundary);
+    }
+    const bool outgoing_route_exists = route_snapshot.has_value() &&
+        route_snapshot->active_waypoint_index + 1U <
+            route_snapshot->waypoints.size();
+    if (outgoing_route_exists && !coincident_terminal_pass_through &&
+        !certifiedMainContinuationWindow(
+            *candidate_ptr, goal, localization_epoch, goal_epoch, false)
+             .has_value()) {
+      planner_->discardCommandCandidate();
+      RCLCPP_WARN(
+          get_logger(),
+          "execution boundary rejected pass-through candidate without the required "
+          "MAIN handoff reserve boundary_ns=%lld declared_start_ns=%lld "
+          "declared_end_ns=%lld required_reserve_ns=%lld",
+          static_cast<long long>(boundary.boundary_stamp_ns),
+          static_cast<long long>(candidate_ptr->declared_start_ns),
+          static_cast<long long>(candidate_ptr->declared_end_ns),
+          static_cast<long long>(minimumMainContinuationReserveNs()));
+      return reject(kMainReserve);
+    }
+  }
+  const double activation_wall_time_s = static_cast<double>(activation_ns) * 1.0e-9;
+  if (!navigation_planning::candidateHasRequiredMainReserve(
+          *candidate_ptr, activation_wall_time_s)) {
+    planner_->discardCommandCandidate();
+    const double commit_wall_time_s = now().seconds();
+    RCLCPP_WARN(
+        get_logger(),
+        "execution boundary rejected candidate with insufficient MAIN reserve: "
+        "kind=%d start=%.6f duration=%.3f backup_start=%.3f commit=%.6f "
+        "candidate_age=%.3f remaining=%.3f required=%.3f",
+        static_cast<int>(candidate_ptr->kind),
+        candidate_ptr->start_wall_time_s, candidate_ptr->duration_s,
+        candidate_ptr->backup_start_time_s, commit_wall_time_s,
+        commit_wall_time_s - candidate_ptr->start_wall_time_s,
+        navigation_planning::remainingMainHorizonAtCommit(
+            *candidate_ptr, activation_wall_time_s),
+        navigation_planning::PlanningTimingContract::kMinimumMainReserveS);
+    return reject(kMainReserve);
+  }
+  // A solve can finish after the state that seeded it has been replaced. Do
+  // not admit a candidate whose first executable sample is detached from the
+  // latest propagated vehicle state. This reuses the same product geometric
+  // envelope consumed by PX4; it is not a second tunable tracking parameter.
+  const auto measured_state = execution_state_store_.load();
+  const auto state_freshness = measured_state
+      ? navigation_execution::classifyTimestampFreshness(
+            now_ns, measured_state->state.source_stamp_ns, data_freshness_window_ns_)
+      : navigation_execution::TimestampFreshness::INVALID;
+  const auto candidate_sample = candidate_ptr->sample(activation_ns);
+  const bool candidate_awaiting_activation =
+      candidate_ptr->valid() && now_ns < candidate_ptr->valid_from_ns;
+  const double candidate_anchor_error_m = measured_state && candidate_sample
+      ? (candidate_sample->position_world - measured_state->state.position_world).norm()
+      : std::numeric_limits<double>::infinity();
+  if (!measured_state || state_freshness != navigation_execution::TimestampFreshness::VALID ||
+      !measured_state->state.finite() ||
+      (!candidate_sample && !candidate_awaiting_activation) ||
+      (!candidate_awaiting_activation &&
+       (!std::isfinite(candidate_anchor_error_m) ||
+        candidate_anchor_error_m > navigation_contracts::kCommandAnchorErrorLimitM))) {
+    planner_->discardCommandCandidate();
+    const char* rejection_reason = !measured_state
+        ? "MISSING_EXECUTION_STATE"
+        : state_freshness != navigation_execution::TimestampFreshness::VALID
+        ? "EXECUTION_STATE_NOT_FRESH"
+        : !measured_state->state.finite()
+        ? "EXECUTION_STATE_NONFINITE"
+        : !candidate_sample && !candidate_awaiting_activation
+        ? "CANDIDATE_SAMPLE_INVALID"
+        : !candidate_awaiting_activation && !std::isfinite(candidate_anchor_error_m)
+        ? "ANCHOR_ERROR_NONFINITE"
+        : "ANCHOR_ERROR_OVER_LIMIT";
+    RCLCPP_WARN(get_logger(),
+                "execution boundary rejected candidate reason=%s anchor_error=%.3f m "
+                "state_present=%d state_finite=%d state_freshness=%d candidate_valid=%d "
+                "candidate_sample=%d now_ns=%lld valid_from_ns=%lld valid_until_ns=%lld "
+                "start_wall_time=%.9f duration=%.9f measured=(%.3f,%.3f,%.3f) "
+                "candidate=(%.3f,%.3f,%.3f)",
+                rejection_reason, candidate_anchor_error_m,
+                measured_state ? 1 : 0,
+                measured_state && measured_state->state.finite() ? 1 : 0,
+                static_cast<int>(state_freshness), candidate_ptr->valid() ? 1 : 0,
+                candidate_sample ? 1 : 0, static_cast<long long>(now_ns),
+                static_cast<long long>(candidate_ptr->valid_from_ns),
+                static_cast<long long>(candidate_ptr->valid_until_ns),
+                candidate_ptr->start_wall_time_s, candidate_ptr->duration_s,
+                measured_state ? measured_state->state.position_world.x() : 0.0,
+                measured_state ? measured_state->state.position_world.y() : 0.0,
+                measured_state ? measured_state->state.position_world.z() : 0.0,
+                candidate_sample ? candidate_sample->position_world.x() : 0.0,
+                candidate_sample ? candidate_sample->position_world.y() : 0.0,
+                candidate_sample ? candidate_sample->position_world.z() : 0.0);
+    return reject(kExecutionState);
+  }
+  const auto transaction_id = advanceMonotonicId(execution_transaction_id_);
+  if (!transaction_id) {
+    planner_->discardCommandCandidate();
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+    command_execution_lease_failure_latch_.transitionMutex());
+    execution_authority_.invalidate();
+    failClosedLocked();
+    RCLCPP_ERROR(get_logger(), "execution transaction id exhausted");
+    return reject(kTransactionIdExhausted);
+  }
+  const navigation_execution::CommitToken token{
+      candidate_ptr->world_identity, goal_epoch, *transaction_id};
+  int stage_decision;
+  const auto prepared_execution_goal =
+      std::make_shared<const navigation_contracts::msg::NavigationGoal>(goal);
+  stage_decision = anchor
+      ? static_cast<int>(execution_authority_.stagePending(
+            token, *anchor, prepared_execution_goal, candidate_ptr))
+      : static_cast<int>(admitImmediateCandidate(
+            goal, token, candidate_ptr,
+            terminal_monitor ? terminal_monitor->snapshot : timeline_before_commit,
+            scheduled_key, measured_state, maximum_age_ns, terminal_monitor));
+  const bool staged = stage_decision == 0;
+  if (!staged) {
+    planner_->discardCommandCandidate();
+    last_execution_boundary_rejection_.store(
+        kStageOrCommitRejected * 100 + stage_decision, std::memory_order_release);
+    RCLCPP_WARN(get_logger(),
+                "execution successor generation=%lu was not admitted; active command remains authoritative "
+                "store_decision=%d",
+                static_cast<unsigned long>(candidate_ptr->bundle_generation), stage_decision);
+    return false;
+  }
+  // Factual admission receipt, not another active/pending authority. Later
+  // ACK checks can still return false after this atomic authority cutover; the
+  // exported backend owner must survive those paths until its activation ACK.
+  if (candidate_admitted) *candidate_admitted = true;
+  const auto committed_timeline = execution_authority_.snapshot();
+  if (timeline_before_commit.pending &&
+      timeline_before_commit.pending.get() != committed_timeline.pending.get() &&
+      timeline_before_commit.pending.get() != committed_timeline.active.get()) {
+    // Exact pending generation displaced by this successful owner transaction.
+    // This diagnostic is emitted after the atomic store mutation; it never
+    // authorizes execution or changes the replacement decision.
+    try {
+      const auto& displaced = timeline_before_commit.pending;
+      diagnostic_msgs::msg::DiagnosticArray event;
+      event.header.stamp = navigation_common::nanosecondsToRosTime(now_ns).value_or(
+          builtin_interfaces::msg::Time{});
+      diagnostic_msgs::msg::DiagnosticStatus status;
+      status.name = "navigation_runtime/execution_pending_superseded_witness";
+      status.hardware_id = "execution_authority";
+      status.message = "diagnostic_only; exact pending candidate displaced";
+      const auto add = [&status](const char* name, const auto value) {
+        diagnostic_msgs::msg::KeyValue field;
+        field.key = name;
+        field.value = std::to_string(value);
+        status.values.push_back(std::move(field));
+      };
+      add("bundle_generation", displaced->bundle_generation);
+      add("bundle_source", static_cast<unsigned>(displaced->source));
+      add("bundle_owner_cycle_id", displaced->producer_planning_cycle_id);
+      add("request_id", displaced->request_id);
+      add("goal_epoch", displaced->goal_epoch);
+      add("localization_epoch", displaced->localization_epoch);
+      add("replacement_bundle_generation", candidate_ptr->bundle_generation);
+      add("previous_snapshot_version", timeline_before_commit.version);
+      add("current_snapshot_version", committed_timeline.version);
+      event.status.push_back(std::move(status));
+      diagnostics_publisher_->publish(event);
+    } catch (const std::exception& error) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                           "pending supersession witness publish failed: %s", error.what());
+    }
+  }
+  if (!anchor) {
+    // The execution store is the sole command-authority cutover. Emergency
+    // replacement is already committed synchronously at this worker-owned
+    // measured boundary, so synchronize planner warm-start history before the
+    // next PlanFromRest attempt. Future successors still use the activation
+    // queue and remain pending until their exact producer boundary.
+    bool planner_activation_queued = true;
+    if (emergency_candidate) {
+      planner_->onExecutionTimelineActivated(candidate_ptr->bundle_generation);
+      planner_timeline_activation_generation_.store(
+          candidate_ptr->bundle_generation, std::memory_order_release);
+    } else {
+      planner_activation_queued = queueExecutionTimelineActivation(
+          candidate_ptr->bundle_generation);
+    }
+    if (!planner_activation_queued) {
+      if (committed_timeline.active.get() == candidate_ptr.get()) {
+        if (clearCommandForCurrentIdentity(
+                goal, goal_epoch, localization_epoch, committed_timeline)) {
+          // This exact candidate was positively revoked, and its ACK was
+          // never queued. Do not strand its retained registry owner when a
+          // subsequent goal arrives; snapshot absence alone cannot prove this.
+          (void)planner_->discardRetainedPositionHeadingCandidate(
+              candidate_ptr->bundle_generation);
+        }
+      }
+      planner_->discardCommandCandidate();
+      return false;
+    }
+    // Immediate admission already delivered runtime identity atomically with
+    // the store. ACK cannot replay it or revoke a same-G world copy H'.
+  }
+  return true;
+}
+
+bool NavigationRuntimeNode::clearCommandForCurrentIdentity(
+    const navigation_contracts::msg::NavigationGoal& command_goal,
+    const std::uint64_t goal_epoch_at_command,
+    const std::uint64_t localization_epoch_at_command,
+    const navigation_execution::ExecutionAuthoritySnapshot& expected) {
+  std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+  std::lock_guard<std::mutex> input_lock(input_mutex_);
+  std::lock_guard<std::mutex> command_lock(
+      command_execution_lease_failure_latch_.transitionMutex());
+  const bool goal_current = desired_intent_.goal() &&
+      desired_intent_.goal()->mission_id == command_goal.mission_id &&
+      desired_intent_.goal()->waypoint_index == command_goal.waypoint_index &&
+      desired_intent_.goal()->request_id == command_goal.request_id &&
+      desired_intent_.revision() == goal_epoch_at_command &&
+      active_localization_epoch_.load(std::memory_order_acquire) ==
+          localization_epoch_at_command;
+  if (!goal_current || !execution_authority_.invalidateIfCurrent(expected)) return false;
+  const auto failed_pending = pending_goal_owner_.goalSnapshot();
+  (void)pending_goal_owner_.clearIfCurrent(failed_pending);
+
+  failClosedLocked();
+  return true;
+}
+
+void NavigationRuntimeNode::suspendCommandForWorldFreshness(
+    const navigation_execution::ExecutionAuthoritySnapshot& expected) {
+  std::unique_lock<std::mutex> command_lock(
+      command_execution_lease_failure_latch_.transitionMutex());
+  if (!expected.active || !execution_authority_.isCurrentSnapshot(expected)) return;
+  const auto current_world = world_snapshot_store_.load();
+  const auto current_ros_ns = now().nanoseconds();
+  const auto active_freshness = assessWorldTemporal(
+      true, expected.active->world_identity, current_ros_ns, data_freshness_window_ns_);
+  const auto source_freshness = assessWorldTemporal(
+      static_cast<bool>(current_world), current_world.identity, current_ros_ns,
+      data_freshness_window_ns_);
+  if (source_freshness.sourceCurrent() && active_freshness.sourceCurrent()) return;
+  // Keep the execution identity while publication is suspended.  A fresh
+  // world may recertify and resume this exact bundle, including across a
+  // desired pass-through transition whose successor is still pending.
+  if (execution_authority_.suspendIfCurrentSnapshot(expected)) {
+    ++world_freshness_command_suspend_count_;
+    const auto current_timeline = execution_authority_.snapshot();
+    command_lock.unlock();
+    const auto failed_assessment = source_freshness.sourceCurrent()
+        ? active_freshness : source_freshness;
+    publishWorldTransactionWitness(
+        "WORLD_COMMAND_SUSPENDED", expected.active->world_identity,
+        current_world.identity, expected, current_timeline,
+        "SUSPENDED_WORLD_NOT_CURRENT", 0, 0,
+        worldTemporalReasonName(failed_assessment.reason));
+  }
+}
+
+void NavigationRuntimeNode::publishWorldTransactionWitness(
+    const std::string& event_kind,
+    const navigation_world_model::WorldSnapshotIdentity& prior_world,
+    const navigation_world_model::WorldSnapshotIdentity& next_world,
+    const navigation_execution::ExecutionAuthoritySnapshot& before,
+    const navigation_execution::ExecutionAuthoritySnapshot& after,
+    const std::string& disposition,
+    const int active_validation_path,
+    const int pending_validation_path,
+    const std::string& temporal_assessment_reason) {
+  const auto publisher = diagnostics_publisher_;
+  if (!publisher) return;
+  diagnostic_msgs::msg::DiagnosticArray message;
+  const auto ros_now = now();
+  message.header.stamp = ros_now;
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = "navigation_runtime/world_transaction_witness";
+  status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+  status.message = event_kind + ":" + disposition;
+  const auto add = [&status](const std::string& key, const std::uint64_t value) {
+    diagnostic_msgs::msg::KeyValue field;
+    field.key = key;
+    field.value = std::to_string(value);
+    status.values.push_back(std::move(field));
+  };
+  const auto add_signed = [&status](const std::string& key, const std::int64_t value) {
+    diagnostic_msgs::msg::KeyValue field;
+    field.key = key;
+    field.value = std::to_string(value);
+    status.values.push_back(std::move(field));
+  };
+  const auto add_text = [&status](const std::string& key, const std::string& value) {
+    diagnostic_msgs::msg::KeyValue field;
+    field.key = key;
+    field.value = value;
+    status.values.push_back(std::move(field));
+  };
+  const auto put_world = [&add, &add_signed](const std::string& prefix,
+                                const navigation_world_model::WorldSnapshotIdentity& world) {
+    add(prefix + "_localization_epoch", world.localization_epoch);
+    add(prefix + "_generation", world.generation);
+    add(prefix + "_revision", world.revision);
+    add_signed(prefix + "_source_stamp_ns", world.observation_stamp_ns);
+  };
+  const auto put_execution = [&add](const std::string& prefix,
+                                    const navigation_execution::ExecutionAuthoritySnapshot& snapshot) {
+    add(prefix + "_timeline_version", snapshot.version);
+    add(prefix + "_active_generation",
+        snapshot.active ? snapshot.active->bundle_generation : 0U);
+    add(prefix + "_active_goal_epoch",
+        snapshot.active ? snapshot.active->goal_epoch : 0U);
+    add(prefix + "_active_request_id",
+        snapshot.active ? snapshot.active->request_id : 0U);
+    add(prefix + "_pending_generation",
+        snapshot.pending ? snapshot.pending->bundle_generation : 0U);
+    add(prefix + "_pending_goal_epoch",
+        snapshot.pending ? snapshot.pending->goal_epoch : 0U);
+    add(prefix + "_pending_request_id",
+        snapshot.pending ? snapshot.pending->request_id : 0U);
+  };
+  const auto event_sequence = world_transaction_event_sequence_.fetch_add(
+      1U, std::memory_order_relaxed) + 1U;
+  add("producer_event_sequence", event_sequence);
+  add_text("runtime_instance_id", worldRuntimeInstanceId());
+  add("event_ros_stamp_ns", static_cast<std::uint64_t>(
+      std::max<std::int64_t>(0, ros_now.nanoseconds())));
+  add("event_steady_stamp_ns", static_cast<std::uint64_t>(
+      std::max<std::int64_t>(0, navigation_common::steadyClockNowNanoseconds())));
+  add("execution_localization_epoch",
+      before.active ? before.active->localization_epoch :
+      before.pending ? before.pending->localization_epoch : 0U);
+  put_world("prior_world", prior_world);
+  put_world("next_world", next_world);
+  put_execution("before", before);
+  put_execution("after", after);
+  add("active_validation_path", static_cast<std::uint64_t>(
+      std::max(active_validation_path, 0)));
+  add("pending_validation_path", static_cast<std::uint64_t>(
+      std::max(pending_validation_path, 0)));
+  add_text("event_kind", event_kind);
+  add_text("disposition", disposition);
+  add_text("temporal_assessment_reason", temporal_assessment_reason);
+  add_text("transaction_key",
+      std::to_string(before.version) + ":" +
+      std::to_string(next_world.localization_epoch) + ":" +
+      std::to_string(next_world.generation) + ":" +
+      std::to_string(next_world.revision) + ":" +
+      std::to_string(next_world.observation_stamp_ns));
+  message.status.push_back(std::move(status));
+  publisher->publish(message);
+}
+
+std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
+  std::optional<navigation_contracts::msg::NavigationGoal> goal;
+  std::optional<navigation_contracts::msg::NavigationGoal> executing_goal;
+  navigation_execution::ExecutionAuthoritySnapshot episode;
+  ExecutionRecoveryState recovery_state = ExecutionRecoveryState::kPx4Hold;
+  std::shared_ptr<const navigation_planning::CandidateBundle> bundle;
+  bool pending_bundle = false;
+  PlanningIntentTransition planning_transition = PlanningIntentTransition::kNone;
+  std::uint64_t goal_epoch = 0U;
+  std::uint64_t localization_epoch = 0U;
+  std::uint64_t command_goal_epoch = 0U;
+  {
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    goal = desired_intent_.goal();
+    executing_goal = this->executingGoalSnapshot();
+    episode = execution_authority_.snapshot();
+    recovery_state = episode.lifecycle.recovery;
+    goal_epoch = desired_intent_.revision();
+    localization_epoch = active_localization_epoch_.load(std::memory_order_acquire);
+    command_goal_epoch = executionGoalEpoch();
+    planning_transition = desired_intent_.transition();
+    const auto timeline = execution_authority_.snapshot();
+    bundle = timeline.active;
+    pending_bundle = static_cast<bool>(timeline.pending);
+  }
+  const auto execution = execution_state_store_.load();
+  const auto world = world_snapshot_store_.load();
+  if (!goal || !execution || !world || goal_epoch == 0U ||
+      goal->route.route_revision == 0U) {
+    return std::nullopt;
+  }
+  // A successor already staged owns the next activation slot. Do not start a
+  // second solve against the same active generation while that slot is
+  // waiting; after activation the next timer observes the new generation and
+  // creates a fresh execution anchor.
+  if (pending_bundle) return std::nullopt;
+  if (!executionRecoveryStateKnown(recovery_state) ||
+      recovery_state == ExecutionRecoveryState::kPx4Hold ||
+      episode.failed()) {
+    return std::nullopt;
+  }
+  const bool recovery_requires_command =
+      recovery_state == ExecutionRecoveryState::kTrackBackup ||
+      recovery_state == ExecutionRecoveryState::kEmergencyBrake;
+  const bool command_identity_current = bundle && executing_goal &&
+      command_goal_epoch != 0U &&
+      episode.activeGeneration() == bundle->bundle_generation &&
+      bundle->localization_epoch == localization_epoch &&
+      bundle->goal_epoch == command_goal_epoch &&
+      bundle->request_id == executing_goal->request_id;
+  if ((episode.commandAvailable() || recovery_requires_command) &&
+      !command_identity_current) {
+    // A desired hot-retarget may coexist with an older executing bundle, but
+    // the executing bundle itself must never be relabeled or partially read.
+    return std::nullopt;
+  }
+  bool safety_renewal = episode.restartFromRest() || episode.safetySuffixActive();
+  const auto route_snapshot = decodeRouteSnapshot(*goal);
+  const bool coincident_pass_through_stop = route_snapshot.has_value() &&
+      navigation_mission::passThroughNextWaypointIsCoincidentStop(*route_snapshot);
+  const bool effective_terminal_stop =
+      goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP ||
+      coincident_pass_through_stop;
+  const bool committed_terminal_hold = bundle &&
+      committedTerminalBundleHoldIsPending(
+          episode.commandAvailable(),
+          effective_terminal_stop,
+          bundle->kind == navigation_planning::CandidateBundleKind::kTerminalStop &&
+              bundle->terminal_stop,
+          bundle->role == navigation_planning::CandidateRole::kMain,
+          bundle->request_id == goal->request_id && bundle->goal_epoch == goal_epoch,
+          bundle->bundle_generation);
+  const bool terminal_monitor_open = bundle && !(planning_transition == PlanningIntentTransition::kNewIntent) && !(planning_transition == PlanningIntentTransition::kHotRetarget) &&
+      effective_terminal_stop && command_identity_current &&
+      sameGoalIdentity(goal, executing_goal) && command_goal_epoch == goal_epoch &&
+      terminalMainMonitorPhaseIsOpen(*bundle, episode, now().nanoseconds());
+  if (terminalHoldIsPending(
+          episode.commandAvailable(),
+          trajectory_reaches_goal_.load(std::memory_order_acquire),
+          effective_terminal_stop,
+          terminal_bundle_generation_.load(std::memory_order_acquire)) ||
+      (committed_terminal_hold && !terminal_monitor_open)) {
+    // A certified terminal endpoint is the execution timeline's final
+    // command for this request. Do not let the periodic timer create a
+    // replacement solve while PX4 is settling or acknowledging the hold.
+    return std::nullopt;
+  }
+  safety_renewal = safety_renewal ||
+      recovery_state == ExecutionRecoveryState::kTrackBackup ||
+      recovery_state == ExecutionRecoveryState::kEmergencyBrake;
+  PlanningKey key;
+  key.localization_epoch = localization_epoch;
+  key.goal_epoch = goal_epoch;
+  key.request_id = goal->request_id;
+  key.route_revision = goal->route.route_revision;
+  key.committed_bundle_generation = bundle ? bundle->bundle_generation : 0U;
+  key.pinned_world_generation = world.identity.generation;
+  key.pinned_world_revision = world.identity.revision;
+  key.start_mode = bundle &&
+          episode.commandAvailable() &&
+          !safety_renewal
+      ? PlanningStartMode::kCommittedFutureState
+      : PlanningStartMode::kStoppedMeasuredState;
+  key.anchor_stamp_ns = execution->state.source_stamp_ns;
+  key.dynamics_hash = dynamics_hash_;
+  if (!key.valid() || execution->state.localization_epoch != key.localization_epoch ||
+      world.identity.localization_epoch != key.localization_epoch) {
+    return std::nullopt;
+  }
+  return key;
+}
+
+navigation_planning::PlanningHistory NavigationRuntimeNode::makePlanningHistory(
+    const navigation_execution::ExecutionAuthoritySnapshot& execution,
+    const navigation_planning::KinematicState& measured_state) {
+  navigation_planning::PlanningHistory history;
+  const auto& predecessor_bundle = execution.active;
+  history.previous_bundle_generation = predecessor_bundle
+      ? predecessor_bundle->bundle_generation : 0U;
+  // PlanningHistory describes a prior executable bundle, not the measured
+  // start state. Keep it empty for an initial stopped-state request.
+  history.previous_velocity_world = predecessor_bundle
+      ? measured_state.velocity_world : Eigen::Vector3d::Zero();
+  if (!predecessor_bundle) return history;
+
+  navigation_planning::PlanningPredecessorEvidence predecessor;
+  predecessor.bundle_generation = predecessor_bundle->bundle_generation;
+  predecessor.localization_epoch = predecessor_bundle->localization_epoch;
+  predecessor.goal_epoch = predecessor_bundle->goal_epoch;
+  predecessor.request_id = predecessor_bundle->request_id;
+  predecessor.kind = predecessor_bundle->kind;
+  predecessor.role = predecessor_bundle->role;
+  if (predecessor_bundle->kind ==
+      navigation_planning::CandidateBundleKind::kEmergencyBrake) {
+    const auto endpoint = predecessor_bundle->sampleAtDeclaredEnd();
+    if (endpoint && endpoint->finished && endpoint->finite()) {
+      predecessor.declared_endpoint_position_world = endpoint->position_world;
+    }
+  }
+  history.predecessor = std::move(predecessor);
+  return history;
+}
+
+void NavigationRuntimeNode::schedulePlanningCycle() {
+  const auto callback_start = std::chrono::steady_clock::now();
+  const auto callback_start_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      callback_start.time_since_epoch()).count();
+  last_planning_callback_start_steady_ns_ = callback_start_ns;
+  if (last_planning_timer_expected_steady_ns_ == 0) {
+    last_planning_timer_expected_steady_ns_ = callback_start_ns;
+  } else {
+    last_planning_timer_expected_steady_ns_ +=
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::microseconds(planning_period_us_)).count();
+  }
+  if (!accepting_observations_.load(std::memory_order_acquire) || !planning_worker_) return;
+  if (!execution_authority_.invariantHolds()) {
+    // The store already enforces this invariant transactionally. Keep this
+    // boundary fail-closed if a future mutation path ever violates it rather
+    // than allowing an orphan pending successor to reach the worker.
+    execution_timeline_invariant_violation_count_.fetch_add(
+        1, std::memory_order_relaxed);
+    execution_authority_.invalidate();
+    return;
+  }
+  const auto key = currentPlanningKey();
+  if (!key) {
+    planning_key_unavailable_count_.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  planning_key_success_count_.fetch_add(1, std::memory_order_relaxed);
+  bool goal_transition = false;
+  bool safety_renewal = false;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    goal_transition = desired_intent_.isNewIntent() || desired_intent_.isHotRetarget();
+    const auto episode = execution_authority_.snapshot();
+    safety_renewal = episode.restartFromRest() || episode.safetySuffixActive();
+  }
+  if (goal_transition && !safety_renewal &&
+      key->start_mode == PlanningStartMode::kCommittedFutureState) {
+    scheduleHeadingRebind(*key);
+  }
+  const auto priority = PlanningSupervisor::classifyPriority(
+      false, false, goal_transition, safety_renewal);
+  const auto disposition = planning_worker_->submit(
+      *key, priority,
+      [this, scheduled_key = *key, handoff = goal_transition](
+          navigation_planning_backend::PlannerFacade& planner, std::stop_token stop) {
+        if (stop.stop_requested()) return;
+        applyQueuedExecutionTimelineActivations(planner);
+        if (stop.stop_requested()) return;
+        const auto current = currentPlanningKey();
+        if (!current || !PlanningSupervisor::resultStillCurrent(scheduled_key, *current)) {
+          return;
+        }
+        if (handoff) {
+          RCLCPP_INFO(get_logger(),
+                      "mission_handoff H7 stamp_ns=%lld request=%lu desired_epoch=%lu "
+                      "predecessor_generation=%lu",
+                      static_cast<long long>(now().nanoseconds()),
+                      static_cast<unsigned long>(scheduled_key.request_id),
+                      static_cast<unsigned long>(scheduled_key.goal_epoch),
+                      static_cast<unsigned long>(scheduled_key.committed_bundle_generation));
+        }
+        runCycle(scheduled_key, stop);
+        if (handoff) {
+          RCLCPP_INFO(get_logger(),
+                      "mission_handoff H8 stamp_ns=%lld request=%lu desired_epoch=%lu "
+                      "boundary_rejection=%d",
+                      static_cast<long long>(now().nanoseconds()),
+                      static_cast<unsigned long>(scheduled_key.request_id),
+                      static_cast<unsigned long>(scheduled_key.goal_epoch),
+                      last_execution_boundary_rejection_.load(std::memory_order_acquire));
+        }
+      });
+  (void)disposition;
+  if (goal_transition) {
+    RCLCPP_INFO(get_logger(),
+                "mission_handoff H6 stamp_ns=%lld request=%lu desired_epoch=%lu "
+                "predecessor_generation=%lu start_mode=%u submit=%u",
+                static_cast<long long>(now().nanoseconds()),
+                static_cast<unsigned long>(key->request_id),
+                static_cast<unsigned long>(key->goal_epoch),
+                static_cast<unsigned long>(key->committed_bundle_generation),
+                static_cast<unsigned>(key->start_mode),
+                static_cast<unsigned>(disposition));
+  }
+  planning_submit_count_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void NavigationRuntimeNode::scheduleHeadingRebind(const PlanningKey& key) {
+  if (!heading_rebind_worker_ || !planner_ || !key.valid()) return;
+  const auto execution = execution_state_store_.load();
+  const auto world = world_snapshot_store_.load();
+  const auto timeline = execution_authority_.snapshot();
+  if (!execution || !world.view || !timeline.active ||
+      timeline.active->bundle_generation != key.committed_bundle_generation) {
+    return;
+  }
+  std::optional<navigation_contracts::msg::NavigationGoal> goal;
+  std::optional<Eigen::Vector3d> mission_start;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    goal = desired_intent_.goal();
+    mission_start = mission_start_position_world_;
+  }
+  if (!goal || goal->request_id != key.request_id ||
+      goal->waypoint_index != goal->route.active_waypoint_index) {
+    return;
+  }
+  const auto route = decodeRouteSnapshot(*goal);
+  if (!route || route->route_revision != key.route_revision ||
+      route->active_waypoint_index != goal->waypoint_index) {
+    return;
+  }
+  const auto committed = planner_->committedSnapshot();
+  if (committed.empty() || committed.generation != key.committed_bundle_generation ||
+      committed.certificate.validated_world.localization_epoch !=
+          key.localization_epoch) {
+    return;
+  }
+  const auto now_ns = now().nanoseconds();
+  // The candidate is produced off the planning timer and consumed by the
+  // command timer. Reserve two command periods plus two ordinary commit
+  // guards so commitPlannerCandidate's now+guard admission remains strict
+  // after one delayed command tick; this is a lead-time reservation, not a
+  // relaxed gate or an extended execution lease.
+  const double heading_lead_s =
+      2.0 * navigation_planning::PlanningTimingContract::kCommandPeriodS +
+      2.0 * navigation_planning::PlanningTimingContract::kCommitGuardS;
+  const auto heading_lead_ns = static_cast<std::int64_t>(heading_lead_s * 1.0e9);
+  if (now_ns <= 0 || heading_lead_ns <= 0 ||
+      now_ns > std::numeric_limits<std::int64_t>::max() - heading_lead_ns ||
+      data_freshness_window_ns_ <= 0 ||
+      now_ns > std::numeric_limits<std::int64_t>::max() -
+          data_freshness_window_ns_) {
+    return;
+  }
+  const auto activation_ns = now_ns + heading_lead_ns;
+  const double activation_wall_time_s =
+      static_cast<double>(activation_ns) * 1.0e-9;
+  const auto planner = planner_;
+  (void)heading_rebind_worker_->submit(
+      [this, planner, key, committed, route = *route, mission_start,
+       world_view = world.view, execution_state = execution->state,
+       activation_wall_time_s, activation_ns, now_ns,
+       valid_until_ns = now_ns + data_freshness_window_ns_](std::stop_token stop) {
+        if (stop.stop_requested()) return;
+        auto candidate = planner->buildImmediateHeadingRebindCandidate(
+            world_view, route, execution_state.position_world,
+            execution_state.velocity_world, execution_state.yaw_rad,
+            mission_start, activation_wall_time_s, key.localization_epoch,
+            key.goal_epoch, key.request_id, activation_ns,
+            valid_until_ns);
+        if (!candidate) return;
+        const auto generation = candidate->bundle_generation;
+        if (stop.stop_requested() || !candidate->valid()) {
+          (void)planner->discardRetainedPositionHeadingCandidate(generation);
+          return;
+        }
+        try {
+          std::lock_guard<std::mutex> lock(heading_rebind_mutex_);
+          pending_heading_rebind_ = PendingHeadingRebind{key, std::move(*candidate)};
+        } catch (...) {
+          // This export never reached the consumer/admission boundary.
+          (void)planner->discardRetainedPositionHeadingCandidate(generation);
+          throw;
+        }
+      });
+}
+
+void NavigationRuntimeNode::consumeHeadingRebind(const std::int64_t now_ns) {
+  if (!planner_ || now_ns <= 0) return;
+  std::optional<PendingHeadingRebind> pending;
+  {
+    std::lock_guard<std::mutex> lock(heading_rebind_mutex_);
+    pending.swap(pending_heading_rebind_);
+  }
+  if (!pending) return;
+  const auto generation = pending->candidate.bundle_generation;
+  bool admitted = false;
+  try {
+    std::optional<navigation_contracts::msg::NavigationGoal> goal;
+    {
+      std::lock_guard<std::mutex> lock(input_mutex_);
+      goal = desired_intent_.goal();
+    }
+    if (!goal || goal->request_id != pending->key.request_id) {
+      (void)planner_->discardRetainedPositionHeadingCandidate(generation);
+      return;
+    }
+    if (commitPlannerCandidate(
+            *goal, pending->key.goal_epoch, pending->key.localization_epoch,
+            now_ns, pending->key, pending->candidate, &admitted)) {
+      try {
+        diagnostic_msgs::msg::DiagnosticArray event;
+        event.header.stamp = navigation_common::nanosecondsToRosTime(now_ns).value_or(
+            builtin_interfaces::msg::Time{});
+        diagnostic_msgs::msg::DiagnosticStatus status;
+        status.name = "navigation_runtime/heading_rebind_admission_witness";
+        status.hardware_id = "execution_authority";
+        status.message = "diagnostic_only; exact heading candidate admitted";
+        const auto add = [&status](const char* name, const auto value) {
+          diagnostic_msgs::msg::KeyValue field;
+          field.key = name;
+          field.value = std::to_string(value);
+          status.values.push_back(std::move(field));
+        };
+        add("bundle_generation", generation);
+        add("bundle_source", static_cast<unsigned>(pending->candidate.source));
+        add("parent_bundle_generation", pending->key.committed_bundle_generation);
+        add("request_id", pending->candidate.request_id);
+        add("goal_epoch", pending->candidate.goal_epoch);
+        add("localization_epoch", pending->candidate.localization_epoch);
+        add("world_generation", pending->candidate.world_identity.generation);
+        add("world_revision", pending->candidate.world_identity.revision);
+        add("activation_stamp_ns", pending->candidate.activation_stamp_ns);
+        event.status.push_back(std::move(status));
+        diagnostics_publisher_->publish(event);
+      } catch (const std::exception& error) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                             "heading rebind witness publish failed: %s", error.what());
+      }
+      RCLCPP_INFO(
+          get_logger(),
+          "accepted out-of-band waypoint heading rebind generation=%lu activation_ns=%lld",
+          static_cast<unsigned long>(generation),
+          static_cast<long long>(pending->candidate.activation_stamp_ns));
+    } else if (!admitted) {
+      (void)planner_->discardRetainedPositionHeadingCandidate(generation);
+    }
+  } catch (...) {
+    if (!admitted) {
+      (void)planner_->discardRetainedPositionHeadingCandidate(generation);
+    }
+    throw;
+  }
+}
+
+bool NavigationRuntimeNode::queueExecutionTimelineActivation(
+    const std::uint64_t generation) noexcept {
+  if (generation == 0U ||
+      generation <= planner_timeline_activation_generation_.load(
+          std::memory_order_acquire)) {
+    return generation != 0U;
+  }
+  try {
+    std::lock_guard<std::mutex> lock(planner_timeline_activation_mutex_);
+    if (generation <= planner_timeline_activation_generation_.load(
+            std::memory_order_acquire)) {
+      return true;
+    }
+    if (std::find(queued_planner_timeline_activations_.begin(),
+                  queued_planner_timeline_activations_.end(), generation) ==
+        queued_planner_timeline_activations_.end()) {
+      queued_planner_timeline_activations_.push_back(generation);
+    }
+    return true;
+  } catch (...) {
+    // Losing planner-history synchronization is fail-closed: the immutable
+    // execution timeline remains authoritative and the next solve will not
+    // consume an unqueued activation.
+    RCLCPP_ERROR_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "failed to queue execution timeline activation generation=%lu",
+        static_cast<unsigned long>(generation));
+    return false;
+  }
+}
+
+void NavigationRuntimeNode::applyQueuedExecutionTimelineActivations(
+    navigation_planning_backend::PlannerFacade& planner) noexcept {
+  std::deque<std::uint64_t> activations;
+  {
+    std::lock_guard<std::mutex> lock(planner_timeline_activation_mutex_);
+    activations.swap(queued_planner_timeline_activations_);
+  }
+  std::sort(activations.begin(), activations.end());
+  for (const auto generation : activations) {
+    if (generation <= planner_timeline_activation_generation_.load(
+            std::memory_order_acquire)) {
+      continue;
+    }
+    planner.onExecutionTimelineActivated(generation);
+    planner_timeline_activation_generation_.store(
+        generation, std::memory_order_release);
+  }
+}
+
+void NavigationRuntimeNode::runCycle(
+    const PlanningKey& scheduled_key, const std::stop_token stop) {
+  if (stop.stop_requested()) return;
+  const auto cycle_started = std::chrono::steady_clock::now();
+  const auto cycle_started_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      cycle_started.time_since_epoch()).count();
+  if (last_cycle_started_steady_ns_ > 0) {
+    const auto interval_us = (cycle_started_ns - last_cycle_started_steady_ns_) / 1000;
+    last_planning_scheduling_gap_us_ =
+        std::max<std::int64_t>(0, interval_us - planning_period_us_);
+  }
+  last_cycle_started_steady_ns_ = cycle_started_ns;
+  ++cycle_count_;
+  std::shared_ptr<const navigation_execution::ExecutionStateLease> propagated_state;
+  std::optional<navigation_contracts::msg::NavigationGoal> goal;
+  std::optional<navigation_contracts::msg::NavigationGoal> cycle_goal;
+  std::optional<navigation_contracts::msg::NavigationGoal> executing_goal_at_cycle;
+  navigation_execution::ExecutionAuthoritySnapshot episode_at_cycle;
+  ExecutionRecoveryState recovery_state_at_cycle = ExecutionRecoveryState::kPx4Hold;
+  std::uint64_t command_goal_epoch_at_cycle = 0U;
+  PlanningIntentTransition planning_transition = PlanningIntentTransition::kNone;
+  bool restart_from_rest = false;
+  std::uint64_t goal_epoch = 0;
+  std::uint64_t goal_epoch_at_cycle = 0U;
+  std::uint64_t localization_epoch_at_cycle = 0U;
+  std::optional<TrajectoryCompletionWitness> completion_witness_at_cycle;
+  std::shared_ptr<const navigation_planning::CandidateBundle>
+      completed_bundle_at_cycle;
+  std::optional<navigation_contracts::msg::NavigationGoal>
+      completed_executing_goal_at_cycle;
+  bool completed_trajectory = false;
+  navigation_execution::ExecutionAuthoritySnapshot expected_timeline_at_cycle;
+  std::optional<Eigen::Vector3d> mission_start_position_at_cycle;
+  const auto input_lock_started = std::chrono::steady_clock::now();
+  {
+    // Capture the planner callback's ownership identity once.  The helper used
+    // by early failure paths rechecks this identity under the same lock order;
+    // it must never load a newer bundle at the failure site and clear it as if
+    // it belonged to this callback.
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    last_input_lock_wait_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - input_lock_started).count();
+    goal = desired_intent_.goal();
+    cycle_goal = goal;
+    executing_goal_at_cycle = executingGoalSnapshot();
+    episode_at_cycle = execution_authority_.snapshot();
+    recovery_state_at_cycle = episode_at_cycle.lifecycle.recovery;
+    command_goal_epoch_at_cycle = executionGoalEpoch();
+    planning_transition = desired_intent_.transition();
+    restart_from_rest = episode_at_cycle.restartFromRest();
+    goal_epoch = desired_intent_.revision();
+    goal_epoch_at_cycle = goal_epoch;
+    localization_epoch_at_cycle = active_localization_epoch_.load(
+        std::memory_order_acquire);
+    expected_timeline_at_cycle = episode_at_cycle;
+    mission_start_position_at_cycle = mission_start_position_world_;
+    if (trajectory_completion_witness_) {
+      const auto& witness = *trajectory_completion_witness_;
+      if (completionWitnessMatchesCurrentExecution(
+              witness, expected_timeline_at_cycle,
+              expected_timeline_at_cycle.active, executingGoalSnapshot(),
+              executionGoalEpoch(),
+              localization_epoch_at_cycle,
+              episode_at_cycle.failed(),
+              command_execution_lease_failure_latch_.allowsCommandExposure())) {
+        completion_witness_at_cycle = witness;
+        completed_bundle_at_cycle = expected_timeline_at_cycle.active;
+        completed_executing_goal_at_cycle = executingGoalSnapshot();
+        completed_trajectory = true;
+      } else {
+        trajectory_completion_witness_.reset();
+      }
+    }
+  }
+  // Do not acquire the state-store mutex while holding input_mutex_: the
+  // odometry callback publishes to the store before taking input_mutex_.
+  propagated_state = execution_state_store_.load();
+  const auto now_ns = now().nanoseconds();
+  const auto maximum_age_ns = data_freshness_window_ns_;
+  const auto mapping = mapping_telemetry_->snapshot();
+  const auto cloud_stamp_ns = mapping.observation_stamp_ns;
+  const auto corrected_stamp_ns = mapping.observation_stamp_ns;
+
+  diagnostic_msgs::msg::DiagnosticArray diagnostics;
+  diagnostics.header.stamp = now();
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = "navigation_runtime/planner";
+  status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+  status.message = goal ? "TRACKING" : "MAP_READY";
+  const auto add_value = [&status](const std::string& key, std::uint64_t value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = std::to_string(value);
+    status.values.push_back(std::move(item));
+  };
+  const auto add_text = [&status](const std::string& key, const std::string& value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = value;
+    status.values.push_back(std::move(item));
+  };
+  const auto add_signed_value = [&status](const std::string& key, std::int64_t value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = std::to_string(value);
+    status.values.push_back(std::move(item));
+  };
+  const auto add_duration = [&status](const std::string& key, std::int64_t value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = std::to_string(std::max<std::int64_t>(0, value));
+    status.values.push_back(std::move(item));
+  };
+  const auto add_double_value = [&status](const std::string& key, double value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = std::isfinite(value) ? std::to_string(value) : "invalid";
+    status.values.push_back(std::move(item));
+  };
+  const auto& map_diagnostics = mapping.map;
+  const auto accounting = observation_accounting_.snapshot();
+  const auto worker_snapshot = planning_worker_ ? planning_worker_->snapshot()
+                                                 : PlanningWorkerSnapshot{};
+  addObservationAccountingValues(status, accounting);
+  add_value("cycle_count", cycle_count_);
+  add_value("trajectory_publish_count", cycle_success_count_);
+  add_value("optimizer_deferred_count", optimizer_deferred_count_);
+  add_value("optimizer_renewal_due_count", optimizer_renewal_due_count_);
+  add_value("planning_worker_submitted", worker_snapshot.submitted);
+  add_value("planning_worker_started", worker_snapshot.started);
+  add_value("planning_worker_completed", worker_snapshot.completed);
+  add_value("planning_worker_cancelled", worker_snapshot.cancelled);
+  add_value("planning_worker_exact_duplicates", worker_snapshot.exact_duplicates);
+  add_value("planning_worker_replaced_pending", worker_snapshot.replaced_pending);
+  add_value("planning_worker_rejected_lower_priority",
+            worker_snapshot.rejected_lower_priority);
+  add_value("planning_worker_accepted", worker_snapshot.accepted);
+  add_value("planning_worker_rejected_invalid", worker_snapshot.rejected_invalid);
+  add_value("planning_worker_rejected_stopped", worker_snapshot.rejected_stopped);
+  add_value("planning_worker_last_submit_disposition",
+            worker_snapshot.last_submit_disposition);
+  add_value("planning_submit_count", planning_submit_count_.load());
+  add_value("planning_key_success_count", planning_key_success_count_.load());
+  add_value("planning_key_unavailable_count", planning_key_unavailable_count_.load());
+  add_value("execution_timeline_invariant_violation_count",
+            execution_timeline_invariant_violation_count_.load());
+  add_signed_value("planning_timer_expected_steady_ns",
+                   last_planning_timer_expected_steady_ns_);
+  add_signed_value("planning_callback_start_steady_ns",
+                   last_planning_callback_start_steady_ns_);
+  add_signed_value("planning_worker_enqueue_time_steady_ns",
+                   worker_snapshot.last_enqueue_time_steady_ns);
+  add_signed_value("planning_worker_start_steady_ns",
+                   worker_snapshot.last_worker_start_steady_ns);
+  add_signed_value("planning_backend_entry_steady_ns",
+                   worker_snapshot.last_backend_entry_steady_ns);
+  add_signed_value("planning_backend_exit_steady_ns",
+                   worker_snapshot.last_backend_exit_steady_ns);
+  add_duration("planning_worker_enqueue_wait_us", worker_snapshot.last_enqueue_wait_us);
+  add_duration("planning_worker_runtime_us", worker_snapshot.last_worker_runtime_us);
+  add_value("same_identity_renewal_target_ordinal",
+            same_identity_renewal_injection_.targetOrdinal());
+  add_value("same_identity_renewal_eligible_ordinal",
+            same_identity_renewal_injection_.eligibleOrdinal());
+  add_value("same_identity_renewal_injection_fired",
+            same_identity_renewal_injection_.injectionFired() ? 1U : 0U);
+  const auto diagnostic_episode = execution_authority_.snapshot();
+  add_value("execution_recovery_state", static_cast<std::uint64_t>(
+      diagnostic_episode.lifecycle.recovery));
+  add_value("stale_input_count", stale_input_count_);
+  add_value("stale_mapping_input_count",
+            stale_mapping_input_count_.load() + mapping.discarded_stale);
+  add_value("future_mapping_input_count",
+            future_mapping_input_count_.load() + mapping.discarded_future);
+  add_value("worker_discarded_stale_count", mapping.discarded_stale);
+  add_value("worker_discarded_future_count", mapping.discarded_future);
+  add_value("worker_discarded_invalid_count", mapping.discarded_invalid);
+  add_value("stale_execution_state_count", stale_execution_state_count_);
+  add_value("future_execution_state_count", future_execution_state_count_);
+  add_value("invalid_corrected_pose_count",
+            invalid_corrected_pose_count_.load() + mapping.discarded_invalid);
+  add_value("invalid_execution_state_count", invalid_execution_state_count_);
+  if (propagated_state) {
+    add_value("execution_acceleration_estimated",
+              propagated_state->state.acceleration_estimated ? 1U : 0U);
+    add_value("execution_jerk_estimated",
+              propagated_state->state.jerk_estimated ? 1U : 0U);
+  }
+  add_value("world_snapshot_freshness_rejection_count",
+            world_snapshot_freshness_rejection_count_.load());
+  add_value("world_transaction_events_produced",
+            world_transaction_event_sequence_.load(std::memory_order_relaxed));
+  add_text("world_transaction_runtime_instance_id", worldRuntimeInstanceId());
+  add_value("world_freshness_command_suspend_count",
+            world_freshness_command_suspend_count_.load());
+  add_value("world_freshness_command_recovery_count",
+            world_freshness_command_recovery_count_.load());
+  add_value("world_freshness_suspended_bundle_generation",
+            [&] {
+              const auto execution = execution_authority_.snapshot();
+              return execution.lifecycle.exposure ==
+                             navigation_execution::ExecutionExposure::kSuspended &&
+                         execution.active
+                  ? execution.active->bundle_generation : 0U;
+            }());
+  add_value("command_execution_lease_rejection_count",
+            command_execution_lease_rejection_count_);
+  add_value("command_execution_lease_terminal_latch_count",
+            command_execution_lease_terminal_latch_count_);
+  add_value("command_publication_deadline_miss_count",
+            command_publication_deadline_miss_count_);
+  add_value("command_execution_lease_failed",
+            command_execution_lease_failure_latch_.latched() ? 1U : 0U);
+  add_value("command_execution_lease_reason", command_execution_lease_reason_.load());
+  add_value("execution_episode_phase",
+            executionPhaseTelemetryCodeV1(diagnostic_episode.lifecycle.phase));
+  add_value("execution_episode_generation", diagnostic_episode.activeGeneration());
+  add_value("execution_episode_goal_epoch", diagnostic_episode.admission_goal_epoch);
+  add_value("execution_episode_command_available",
+            diagnostic_episode.commandAvailable() ? 1U : 0U);
+  add_value("execution_episode_failure_latched",
+            diagnostic_episode.failed() ? 1U : 0U);
+  add_value("planning_outcome", static_cast<std::uint64_t>(
+      last_planning_outcome_.load(std::memory_order_acquire)));
+  add_value("planning_failure_stage", static_cast<std::uint64_t>(
+      last_planning_failure_stage_.load(std::memory_order_acquire)));
+  add_value("planning_failure_reason", static_cast<std::uint64_t>(
+      last_planning_failure_reason_.load(std::memory_order_acquire)));
+  add_signed_value("command_execution_source_age_us",
+                   command_execution_source_age_us_.load());
+  add_signed_value("command_execution_receive_age_us",
+                   command_execution_receive_age_us_.load());
+  add_value("processing_exception_count", map_update_exception_count_);
+  add_value("mapping_input_point_count", map_diagnostics.endpoint_count);
+  add_value("mapping_free_space_endpoint_count",
+            map_diagnostics.free_space_endpoint_count);
+  add_value("mapping_free_space_processed_count",
+            map_diagnostics.free_space_processed_count);
+  add_value("mapping_free_space_skipped_count",
+            map_diagnostics.free_space_skipped_count);
+  add_value("mapping_allocated_voxel_count", map_diagnostics.allocated_voxel_count);
+  add_value("localization_epoch",
+            active_localization_epoch_.load(std::memory_order_acquire));
+  add_value("localization_epoch_ready",
+            localization_epoch_ready_.load(std::memory_order_acquire) ? 1U : 0U);
+  add_value("registered_scan_epoch",
+            last_registered_scan_epoch_.load(std::memory_order_acquire));
+  add_value("registered_scan_sequence",
+            last_registered_scan_sequence_.load(std::memory_order_acquire));
+  add_value("world_generation", mapping.world_generation);
+  add_value("world_revision", mapping.world_revision);
+  add_value("world_snapshot_published", mapping.world_snapshot_published ? 1U : 0U);
+  add_value("world_snapshot_published_count", mapping.world_snapshot_published_count);
+  add_value("world_snapshot_deferred_count", mapping.world_snapshot_deferred_count);
+  add_value("world_snapshot_full_export_count", mapping.world_snapshot_full_export_count);
+  add_value("world_snapshot_patch_export_count", mapping.world_snapshot_patch_export_count);
+  add_value("world_snapshot_full_reason_no_current_count",
+            mapping.snapshot_full_reason_no_current_count);
+  add_value("world_snapshot_full_reason_whole_world_count",
+            mapping.snapshot_full_reason_whole_world_count);
+  add_value("world_snapshot_full_reason_invalid_region_count",
+            mapping.snapshot_full_reason_invalid_region_count);
+  add_value("world_snapshot_full_reason_patch_depth_count",
+            mapping.snapshot_full_reason_patch_depth_count);
+  add_value("world_snapshot_full_reason_empty_patch_count",
+            mapping.snapshot_full_reason_empty_patch_count);
+  add_value("world_snapshot_full_reason_patch_too_large_count",
+            mapping.snapshot_full_reason_patch_too_large_count);
+  add_value("world_snapshot_export_mode", mapping.snapshot_export_mode);
+  add_value("world_snapshot_full_export_reason", mapping.snapshot_full_export_reason);
+  add_value("world_snapshot_export_base_cells", mapping.snapshot_export_base_cells);
+  add_value("world_snapshot_export_inflated_cells", mapping.snapshot_export_inflated_cells);
+  add_value("world_snapshot_patch_depth", mapping.snapshot_patch_depth);
+  add_value("world_snapshot_bytes", mapping.snapshot_bytes);
+  add_value("world_snapshot_owned_bytes", mapping.snapshot_owned_bytes);
+  add_value("world_snapshot_shared_metadata_bytes", mapping.snapshot_shared_metadata_bytes);
+  add_value("world_snapshot_live_count", mapping.snapshot_live_count);
+  add_value("world_snapshot_peak_live_count", mapping.snapshot_peak_live_count);
+  add_value("world_snapshot_live_owned_bytes", mapping.snapshot_live_owned_bytes);
+  add_value("world_snapshot_peak_live_owned_bytes", mapping.snapshot_peak_live_owned_bytes);
+  add_duration("mapping_input_lock_wait_us", last_input_lock_wait_us_);
+  add_duration("command_transition_lock_wait_us",
+               last_command_transition_lock_wait_us_.load(std::memory_order_acquire));
+  add_duration("command_store_publish_us",
+               last_command_store_publish_us_.load(std::memory_order_acquire));
+  add_duration("execution_owner_publish_lock_wait_us",
+               execution_authority_.lastPublishLockWaitUs());
+  add_duration("command_transport_publish_us",
+               last_publish_us_.load(std::memory_order_acquire));
+  add_duration("planning_scheduling_gap_us", last_planning_scheduling_gap_us_);
+  add_duration("mapping_observation_decode_us", mapping.observation_decode_us);
+  add_duration("observation_decode_us", mapping.observation_decode_us);
+  add_duration("mapping_raycast_us", map_diagnostics.raycast_us);
+  add_duration("rog_raycast_us", map_diagnostics.raycast_us);
+  add_duration("mapping_probability_update_us", map_diagnostics.probability_update_us);
+  add_duration("rog_probability_update_us", map_diagnostics.probability_update_us);
+  add_duration("mapping_inflation_us", map_diagnostics.inflation_us);
+  add_duration("rog_inflation_us", map_diagnostics.inflation_us);
+  add_duration("mapping_slide_us", map_diagnostics.slide_us);
+  add_duration("rog_slide_us", map_diagnostics.slide_us);
+  add_duration("dirty_region_build_us", mapping.dirty_region_build_us);
+  add_duration("snapshot_export_us", mapping.snapshot_export_us);
+  add_duration("snapshot_object_build_us", mapping.snapshot_object_build_us);
+  add_duration("pending_revalidation_us", mapping.pending_revalidation_us);
+  add_duration("active_revalidation_us", mapping.active_revalidation_us);
+  add_duration("world_publication_finalize_us", mapping.world_publication_finalize_us);
+  add_duration("planning_worker_enqueue_wait_us", worker_snapshot.last_enqueue_wait_us);
+  add_duration("planning_worker_runtime_us", worker_snapshot.last_worker_runtime_us);
+  if (goal.has_value()) {
+    const auto diagnostic_route = decodeRouteSnapshot(*goal);
+    const bool diagnostic_route_valid = diagnostic_route.has_value() &&
+        routeSnapshotMatchesGoalMirrors(*diagnostic_route, *goal);
+    add_value("route_snapshot_valid", diagnostic_route_valid ? 1U : 0U);
+    add_value("route_revision", goal->route.route_revision);
+    add_value("route_active_waypoint_index", goal->route.active_waypoint_index);
+    add_double_value("route_measured_progress_arc_m",
+                     goal->route.measured_progress_arc_m);
+    add_double_value("route_measured_projection_arc_m",
+                     goal->route.measured_projection_arc_m);
+    add_double_value("route_measured_lateral_error_m",
+                     goal->route.measured_lateral_error_m);
+  }
+  diagnostics.status.push_back(std::move(status));
+  diagnostics_publisher_->publish(diagnostics);
+
+  // A localization reset has invalidated the previous world and command
+  // epoch. Do not feed stale propagated state into planner backend until the mapping
+  // worker has published the first snapshot of the new epoch.
+  if (!localization_epoch_ready_.load(std::memory_order_acquire)) return;
+
+  // A fresh propagated state cannot make an old map safe. Require the
+  // published world snapshot to be fresh in the same ROS time domain before
+  // solving or retaining any executable trajectory. Candidate admission and
+  // command publication repeat this check because either boundary can race
+  // the mapping worker.
+  const auto latest_world = world_snapshot_store_.load();
+  const auto world_freshness = assessWorldTemporal(
+      static_cast<bool>(latest_world), latest_world.identity, now_ns, maximum_age_ns);
+  if (!world_freshness.sourceCurrent()) {
+    ++world_snapshot_freshness_rejection_count_;
+    if (planning_worker_) planning_worker_->cancelActive();
+    // A stale world is a recoverable evidence gap, not a terminal planner
+    // request failure. Preserve only the exact suspended generation so a
+    // later fresh-world certificate can restore it without a new solve.
+    suspendCommandForWorldFreshness(expected_timeline_at_cycle);
+    RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "planner cycle stopped because the world snapshot is not fresh");
+    return;
+  }
+
+  // Mapping runs independently in its sole-owner worker. Planner execution state is independently
+  // sourced from the latest propagated odometry and may be unavailable or
+  // invalid without suppressing a corrected observation from ROG-Map.
+  if (!propagated_state) return;
+  const auto execution_stamp_ns = propagated_state->state.source_stamp_ns;
+  const auto execution_freshness =
+      navigation_execution::classifyTimestampFreshness(now_ns, execution_stamp_ns, maximum_age_ns);
+  if (execution_freshness != navigation_execution::TimestampFreshness::VALID) {
+    ++stale_input_count_;
+    if (execution_freshness == navigation_execution::TimestampFreshness::STALE) ++stale_execution_state_count_;
+    if (execution_freshness == navigation_execution::TimestampFreshness::FUTURE) ++future_execution_state_count_;
+    if (execution_freshness == navigation_execution::TimestampFreshness::INVALID) ++invalid_execution_state_count_;
+    return;
+  }
+  const auto& execution_state = propagated_state->state;
+  if (!execution_state.finite()) {
+    ++invalid_execution_state_count_;
+    return;
+  }
+  if (!mission_start_position_at_cycle.has_value() && goal) {
+    // If activation raced the first valid propagated state, bind the first-leg
+    // origin to this same fresh state before the planner request is formed.
+    // This is still mission activation state, never waypoint geometry.
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    if (desired_intent_.goal() && sameGoalIdentity(goal, desired_intent_.goal()) &&
+        mission_start_mission_id_ == goal->mission_id &&
+        mission_start_localization_epoch_ == localization_epoch_at_cycle &&
+        mission_start_route_revision_ == goal->route.route_revision &&
+        execution_state.world_frame_id == planning_frame_) {
+      mission_start_position_world_ = execution_state.position_world;
+      mission_start_position_at_cycle = mission_start_position_world_;
+    }
+  }
+
+  // planner backend may produce a successful local trajectory ending at the current
+  // sensing frontier rather than at the mission goal. Once it finishes,
+  // restart PlanFromRest for the same logical goal so newly observed map
+  // cells can extend the route. Mapping has already published this cycle.
+  //
+  // This is deliberately a peek. A finished BACKUP endpoint can be sampled before
+  // the measured vehicle velocity has settled below the certified-stop threshold;
+  // consuming the witness in that interval loses the only event that can advance
+  // a pending handoff. The witness is cleared only after the recovery gate has
+  // accepted this cycle for processing.
+  bool completed_trajectory_for_planning = completed_trajectory;
+  std::shared_ptr<const navigation_contracts::msg::NavigationGoal>
+      pending_handoff_goal;
+  PlanningKey effective_scheduled_key = scheduled_key;
+  const double measured_speed_mps = execution_state.velocity_world.norm();
+  auto route_snapshot = goal ? decodeRouteSnapshot(*goal) : std::nullopt;
+  bool coincident_pass_through_stop = route_snapshot.has_value() &&
+      navigation_mission::passThroughNextWaypointIsCoincidentStop(*route_snapshot);
+  bool pass_through_goal = goal &&
+      goal->behavior ==
+          navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
+  bool stop_goal = goal &&
+      goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP;
+  bool effective_terminal_stop = stop_goal || coincident_pass_through_stop;
+  const auto refresh_goal_metadata = [&]() {
+    route_snapshot = goal ? decodeRouteSnapshot(*goal) : std::nullopt;
+    coincident_pass_through_stop = route_snapshot.has_value() &&
+        navigation_mission::passThroughNextWaypointIsCoincidentStop(*route_snapshot);
+    pass_through_goal = goal &&
+        goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
+    stop_goal = goal &&
+        goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP;
+    effective_terminal_stop = stop_goal || coincident_pass_through_stop;
+  };
+  if (completed_trajectory && completion_witness_at_cycle &&
+      completed_bundle_at_cycle) {
+    bool completion_identity_current = false;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const auto current_timeline = execution_authority_.snapshot();
+      const auto witness = completion_witness_at_cycle.value_or(
+          TrajectoryCompletionWitness{});
+      completion_identity_current = completionWitnessMatchesCurrentExecution(
+          witness, current_timeline, completed_bundle_at_cycle, executingGoalSnapshot(),
+          executionGoalEpoch(),
+          localization_epoch_at_cycle,
+          execution_authority_.snapshot().failed(),
+          command_execution_lease_failure_latch_.allowsCommandExposure());
+      if (!completion_identity_current && trajectory_completion_witness_ &&
+          *trajectory_completion_witness_ == witness) {
+        trajectory_completion_witness_.reset();
+      }
+    }
+    if (!completion_identity_current) {
+      completed_trajectory = false;
+      completed_trajectory_for_planning = false;
+      completion_witness_at_cycle.reset();
+      completed_bundle_at_cycle.reset();
+      completed_executing_goal_at_cycle.reset();
+    }
+  }
+  auto recovery_state = execution_authority_.snapshot().lifecycle.recovery;
+  if (recovery_state == ExecutionRecoveryState::kTrackBackup ||
+      recovery_state == ExecutionRecoveryState::kEmergencyBrake) {
+    const bool emergency_stop_completed =
+        recovery_state == ExecutionRecoveryState::kEmergencyBrake;
+    const auto episode = execution_authority_.snapshot();
+    const bool backup_terminal_hold_pending = terminalHoldIsPending(
+        episode.commandAvailable(),
+        trajectory_reaches_goal_.load(std::memory_order_acquire),
+        effective_terminal_stop,
+        terminal_bundle_generation_.load(std::memory_order_acquire));
+    const bool backup_stop_requires_restart = backupStopNeedsMeasuredRestart(
+        recovery_state, completed_trajectory, backup_terminal_hold_pending);
+    if (backup_stop_requires_restart) {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const auto stopped_bundle = execution_authority_.load();
+      const auto stopped_execution_goal = executingGoalSnapshot();
+      const auto stopped_goal_epoch = executionGoalEpoch();
+      if (!stopped_execution_goal || !stopped_bundle ||
+          !(execution_authority_.matchesActive(*stopped_execution_goal, stopped_goal_epoch, localization_epoch_at_cycle, stopped_bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_cycle))) {
+        return;
+      }
+      (void)execution_authority_.requestRestartFromRest(*stopped_bundle);
+      (void)desired_intent_.consumeHotRetarget();
+      restart_from_rest = true;
+      trajectory_reaches_goal_.store(false, std::memory_order_release);
+      terminal_bundle_generation_.store(0U, std::memory_order_release);
+      RCLCPP_INFO_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "certified BACKUP endpoint is outside waypoint acceptance; waiting for measured stop "
+          "before PlanFromRest");
+    }
+    if (!completed_trajectory || !std::isfinite(measured_speed_mps) ||
+        measured_speed_mps > 0.15) {
+      // BACKUP and emergency are one-way while moving. Do not let a queued or
+      // periodic nominal solve replace the braking command. A non-terminal
+      // BACKUP has already recorded the measured-stop restart above, so this
+      // return only waits for the velocity gate to settle.
+      return;
+    }
+    {
+      // Linearization order is input_mutex_ -> execution transition. The
+      // pending slot is selected and consumed while both locks are held, so a
+      // callback cannot arrive between extraction, suffix clearing, and goal
+      // activation. Do not call public onGoal recursively here.
+      std::unique_lock<std::mutex> localization_lock(localization_transition_mutex_);
+      std::unique_lock<std::mutex> input_lock(input_mutex_);
+      std::unique_lock<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const auto stopped_bundle = execution_authority_.load();
+      const auto stopped_execution_goal = executingGoalSnapshot();
+      const auto stopped_goal_epoch = executionGoalEpoch();
+      const bool stop_identity_current = stopped_execution_goal && stopped_bundle &&
+          (execution_authority_.matchesActive(*stopped_execution_goal, stopped_goal_epoch, localization_epoch_at_cycle, stopped_bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_cycle));
+      if (!stop_identity_current) return;
+      applyExecutionRecoveryEventLocked(
+          ExecutionRecoveryEvent::kCertifiedStopObserved, *stopped_bundle);
+      recovery_state = execution_authority_.snapshot().lifecycle.recovery;
+      if (foreign_mission_hold_after_stop_) {
+        // Foreign mission identity is a control-authority violation.  The
+        // certified suffix has now stopped, so perform one complete transition
+        // to PX4 Hold and revoke every goal owner atomically.
+        transitionForeignMissionLocked(false);
+        const bool cancel_foreign_worker = consumeForeignMissionCancelIfCurrentLocked();
+        command_lock.unlock();
+        input_lock.unlock();
+        localization_lock.unlock();
+        if (cancel_foreign_worker && planning_worker_) {
+          planning_worker_->cancelActive();
+        }
+        return;
+      }
+      if (auto pending = pending_goal_owner_.goalSnapshot(); pending) {
+
+        // Keep ownership of the pending request until the replacement
+        // candidate commits. Solving in this same cycle avoids the old
+        // promote-then-wait command-lease gap.
+        applyValidatedGoalLocked(pending, true);
+        pending_handoff_goal = pending;
+        goal = *pending;
+        refresh_goal_metadata();
+        goal_epoch = desired_intent_.revision();
+        planning_transition = PlanningIntentTransition::kNewIntent;
+        restart_from_rest = false;
+        completed_trajectory_for_planning = false;
+        recovery_state = execution_authority_.snapshot().lifecycle.recovery;
+      }
+      if (deferred_terminal_status_.has_value() && goal.has_value() &&
+          deferred_terminal_status_->mission_id == goal->mission_id &&
+          deferred_terminal_status_->waypoint_index == goal->waypoint_index &&
+          deferred_terminal_status_->request_id == goal->request_id) {
+        if (planning_worker_) planning_worker_->cancelActive();
+        desired_intent_.clearGoal();
+
+        pending_goal_owner_.clearGoal();
+        execution_authority_.clearGoal(
+            active_localization_epoch_.load(std::memory_order_acquire));
+        deferred_terminal_status_.reset();
+        execution_authority_.invalidate();
+
+        failClosedLocked();
+        return;
+      }
+      // A terminal status may have cleared the old active identity while this
+      // cycle was executing. Do not continue the stale local snapshot after
+      // certified stop; the next cycle must observe the cleared state.
+      if (!goal.has_value() || !desired_intent_.goal().has_value() ||
+          desired_intent_.goal()->mission_id != goal->mission_id ||
+          desired_intent_.goal()->waypoint_index != goal->waypoint_index ||
+          desired_intent_.goal()->request_id != goal->request_id) {
+        return;
+      }
+      if (emergency_stop_completed) {
+        // An emergency brake is a safety stop, not proof that the nominal
+        // waypoint was completed. Even when its endpoint happens to fall
+        // inside the acceptance ball, resume the same goal from the measured
+        // stopped state. Otherwise completion bookkeeping can turn a recovery
+        // endpoint into a terminal STOP hold and External Mode eventually
+        // hands over to PX4 Hold without another nominal solve.
+        if (!completed_bundle_at_cycle ||
+            !execution_authority_.requestRestartFromRest(*completed_bundle_at_cycle)) {
+          return;
+        }
+        (void)desired_intent_.consumeHotRetarget();
+        restart_from_rest = true;
+        trajectory_reaches_goal_.store(false, std::memory_order_release);
+        terminal_bundle_generation_.store(0U, std::memory_order_release);
+        RCLCPP_WARN(
+            get_logger(),
+            "emergency brake reached a certified stop; replanning the active waypoint "
+            "from measured state instead of treating the safety endpoint as terminal");
+      } else if (backup_stop_requires_restart) {
+        // The BACKUP suffix is complete but did not prove waypoint acceptance.
+        // Continue the same goal from the measured stop. This is distinct
+        // from MotionObserved: no new emergency command is inferred and no
+        // nominal command is exposed before the stop gate.
+        if (!completed_bundle_at_cycle ||
+            !execution_authority_.requestRestartFromRest(*completed_bundle_at_cycle)) {
+          return;
+        }
+        (void)desired_intent_.consumeHotRetarget();
+        restart_from_rest = true;
+        trajectory_reaches_goal_.store(false, std::memory_order_release);
+        terminal_bundle_generation_.store(0U, std::memory_order_release);
+        RCLCPP_INFO(
+            get_logger(),
+            "certified BACKUP stop did not reach waypoint acceptance; replanning active waypoint "
+            "from measured stop");
+      }
+    }
+  } else if (recovery_state == ExecutionRecoveryState::kStoppedRecovery &&
+             (!std::isfinite(measured_speed_mps) || measured_speed_mps > 0.15)) {
+    bool emergency_replan_pending = false;
+    {
+      std::lock_guard<std::mutex> lock(input_mutex_);
+      emergency_replan_pending = execution_authority_.snapshot().restartFromRest();
+    }
+    if (emergency_replan_pending) {
+      // The emergency endpoint may be sampled as completed before PX4's
+      // measured velocity has settled again. Keep the recovery episode alive
+      // and let the exact endpoint hold remain authoritative; the next cycle
+      // will run PlanFromRest once the measured stop gate is satisfied. Treating
+      // this short post-brake residual as a new violation would erase the
+      // recovery request and publish a stale STATUS_REJECTED command.
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "emergency recovery endpoint still settling speed=%.3f m/s; waiting for measured stop",
+          measured_speed_mps);
+      return;
+    }
+    const auto stopped_bundle = execution_authority_.load();
+    const bool stopped_bundle_identity_matches = stopped_bundle && goal &&
+        stopped_bundle->request_id == goal->request_id &&
+        stopped_bundle->goal_epoch == goal_epoch;
+    const bool committed_terminal_hold_pending = committedTerminalBundleHoldIsPending(
+        execution_authority_.snapshot().commandAvailable(),
+        effective_terminal_stop,
+        stopped_bundle && stopped_bundle->kind == navigation_planning::CandidateBundleKind::kTerminalStop &&
+            stopped_bundle->terminal_stop,
+        stopped_bundle && stopped_bundle->role == navigation_planning::CandidateRole::kMain,
+        stopped_bundle_identity_matches,
+        stopped_bundle ? stopped_bundle->bundle_generation : 0U);
+    const bool terminal_hold_pending = terminalHoldIsPending(
+        execution_authority_.snapshot().commandAvailable(),
+        trajectory_reaches_goal_.load(std::memory_order_acquire),
+        effective_terminal_stop,
+        terminal_bundle_generation_.load(std::memory_order_acquire)) ||
+        committed_terminal_hold_pending;
+    if (terminal_hold_pending) {
+      // A STOP bundle has an atomically committed, known-free terminal
+      // endpoint. PX4 can still report a small residual velocity during the
+      // first samples after the endpoint; keep replaying that exact endpoint
+      // until the vehicle settles. This does not authorize a new trajectory
+      // or an enum-only emergency transition. The normal terminal hold and
+      // mission acknowledgement path remains responsible for completion.
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "terminal STOP endpoint still settling speed=%.3f m/s; retaining exact endpoint hold",
+          measured_speed_mps);
+      return;
+    }
+    // Motion observed after a certified stop is not an authorization to enter
+    // EmergencyBrake by enum alone. There is no emergency candidate
+    // transaction in this branch, so fail closed to PX4 Hold; a future
+    // emergency request must create, certify and commit its command before the
+    // state can become kEmergencyBrake.
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      // Motion was observed on this immutable state lease. A newer odometry
+      // lease or execution cutover makes that observation stale for revocation.
+      if (!failedExecutionLeaseIsCurrent(
+              propagated_state, execution_state_store_.load()) ||
+          !execution_authority_.matchesAuthorityIdentity(expected_timeline_at_cycle) ||
+          execution_authority_.snapshot().lifecycle.recovery !=
+              ExecutionRecoveryState::kStoppedRecovery) return;
+      const auto stopped_bundle = execution_authority_.load();
+      const auto stopped_execution_goal = executingGoalSnapshot();
+      const auto stopped_goal_epoch = executionGoalEpoch();
+      if (!stopped_execution_goal || !stopped_bundle ||
+          !(execution_authority_.matchesActive(*stopped_execution_goal, stopped_goal_epoch, localization_epoch_at_cycle, stopped_bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_cycle))) {
+        return;
+      }
+      plan_from_rest_first_failure_steady_ns_ = 0;
+      execution_authority_.invalidate();
+
+      failClosedLocked();
+    }
+    RCLCPP_ERROR(
+        get_logger(),
+        "motion observed after certified stop without an atomically committed "
+        "emergency candidate; entering PX4 Hold");
+    return;
+  } else if (recovery_state == ExecutionRecoveryState::kStoppedRecovery) {
+    // A terminal STOP may have received the next waypoint while its certified
+    // safety suffix was still draining. Once the measured vehicle is
+    // stationary, linearize the stop boundary before the old terminal command
+    // can be sampled again: promote the newest pending goal and let its next
+    // cycle perform PlanFromRest. Without this transition the pending goal
+    // remains blocked behind safety_suffix_active forever and External Mode
+    // eventually hands over to PX4 Hold even though the vehicle is settled.
+    std::unique_lock<std::mutex> localization_lock(localization_transition_mutex_);
+    std::unique_lock<std::mutex> input_lock(input_mutex_);
+    std::unique_lock<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    if (foreign_mission_hold_after_stop_) {
+      transitionForeignMissionLocked(false);
+      const bool cancel_foreign_worker = consumeForeignMissionCancelIfCurrentLocked();
+      command_lock.unlock();
+      input_lock.unlock();
+      localization_lock.unlock();
+      if (cancel_foreign_worker && planning_worker_) {
+        planning_worker_->cancelActive();
+      }
+      return;
+    }
+    if (auto pending = pending_goal_owner_.goalSnapshot(); pending) {
+
+      // Keep the pending request until the replacement candidate commits in
+      // this cycle; a failed solve can then retry the same active identity.
+      applyValidatedGoalLocked(pending, true);
+      pending_handoff_goal = pending;
+      goal = *pending;
+      refresh_goal_metadata();
+      goal_epoch = desired_intent_.revision();
+      planning_transition = PlanningIntentTransition::kNewIntent;
+      restart_from_rest = false;
+      completed_trajectory_for_planning = false;
+      recovery_state = execution_authority_.snapshot().lifecycle.recovery;
+      RCLCPP_INFO(get_logger(),
+                  "preparing pending navigation goal after certified stop request=%lu",
+                  static_cast<unsigned long>(pending->request_id));
+    }
+    if (deferred_terminal_status_.has_value() && goal.has_value() &&
+        deferred_terminal_status_->mission_id == goal->mission_id &&
+        deferred_terminal_status_->waypoint_index == goal->waypoint_index &&
+        deferred_terminal_status_->request_id == goal->request_id) {
+      if (planning_worker_) planning_worker_->cancelActive();
+      desired_intent_.clearGoal();
+
+      pending_goal_owner_.clearGoal();
+      execution_authority_.clearGoal(
+          active_localization_epoch_.load(std::memory_order_acquire));
+      deferred_terminal_status_.reset();
+      execution_authority_.invalidate();
+
+      failClosedLocked();
+      return;
+    }
+  } else if (recovery_state == ExecutionRecoveryState::kPx4Hold) {
+    return;
+  }
+  if (pending_handoff_goal) {
+    // The pending goal was promoted under the recovery transition locks. The
+    // worker callback entered with the previous immutable key, so re-read the
+    // actual current key after promotion instead of passing the old request,
+    // bundle generation, or world pin into candidate admission.
+    const auto refreshed_key = currentPlanningKey();
+    if (!refreshed_key) {
+      planner_->discardCommandCandidate();
+      RCLCPP_WARN(get_logger(),
+                  "pending recovery handoff was promoted but no fresh planning key is valid");
+      return;
+    }
+    effective_scheduled_key = *refreshed_key;
+  }
+  if (completed_trajectory && completion_witness_at_cycle &&
+      completed_bundle_at_cycle) {
+    bool completion_identity_current = false;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const auto witness = completion_witness_at_cycle.value_or(
+          TrajectoryCompletionWitness{});
+      const auto current_timeline = execution_authority_.snapshot();
+      completion_identity_current = completionWitnessMatchesCurrentExecution(
+          witness, current_timeline, completed_bundle_at_cycle, executingGoalSnapshot(),
+          executionGoalEpoch(),
+          localization_epoch_at_cycle,
+          execution_authority_.snapshot().failed(),
+          command_execution_lease_failure_latch_.allowsCommandExposure());
+      if (completion_identity_current && trajectory_completion_witness_ &&
+          *trajectory_completion_witness_ == witness) {
+        trajectory_completion_witness_.reset();
+      }
+    }
+    if (!completion_identity_current) {
+      // A newer goal, execution epoch, or bundle owns the command now. The
+      // stale completion is deliberately a no-op and cannot trigger a solve
+      // against the replacement identity.
+      completed_trajectory = false;
+      completed_trajectory_for_planning = false;
+      completion_witness_at_cycle.reset();
+      completed_bundle_at_cycle.reset();
+      completed_executing_goal_at_cycle.reset();
+    }
+  }
+  bool completed_trajectory_reaches_goal = trajectory_reaches_goal_.load();
+  bool completed_terminal_handover_restart = false;
+  bool completed_terminal_successor_hold = false;
+  bool coincident_terminal_successor_route = false;
+  bool predecessor_successor_identity = false;
+  bool terminal_endpoint_matches_successor = false;
+  bool terminal_measured_inside_successor = false;
+  bool completed_old_terminal = false;
+  const bool has_outgoing_route = goal && !coincident_pass_through_stop &&
+      static_cast<std::size_t>(goal->route.active_waypoint_index + 1U) <
+      goal->route.waypoint_positions.size();
+  bool completed_endpoint_valid = false;
+  if (completed_trajectory_for_planning && goal) {
+    // The completion witness can be replaced by a concurrent replan before this
+    // callback observes the publisher's terminal sample. Recompute it from
+    // the immutable committed candidate so a terminal command is not
+    // mistaken for a frontier trajectory and restarted indefinitely.
+    const auto committed_bundle = completed_bundle_at_cycle;
+    const auto completion_witness = completion_witness_at_cycle.value_or(
+        TrajectoryCompletionWitness{});
+    const auto endpoint = committed_bundle &&
+        committed_bundle->hasDeclaredEndpointMetadata()
+        ? committed_bundle->sampleAtDeclaredEnd()
+        : std::nullopt;
+    completed_endpoint_valid = endpoint.has_value();
+    const auto completed_execution_goal = completed_executing_goal_at_cycle;
+    // Terminal intent is independent of the sampled role partition. A valid
+    // MAIN+BACKUP terminal bundle still owns a STOP endpoint emitted as BACKUP.
+    const bool completed_bundle_terminal_stop = committed_bundle &&
+        (committed_bundle->kind ==
+             navigation_planning::CandidateBundleKind::kTerminalStop ||
+         committed_bundle->kind ==
+             navigation_planning::CandidateBundleKind::kMainWithBackup) &&
+        committed_bundle->terminal_stop &&
+        committed_bundle->role == navigation_planning::CandidateRole::kMain;
+    bool desired_identity_current = false;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      desired_identity_current = goal && (desired_intent_.matches(*goal, goal_epoch) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_cycle));
+    }
+    const bool completion_goal_matches = desired_identity_current && goal &&
+        goal->request_id == completion_witness.request_id &&
+        goal_epoch == completion_witness.goal_epoch &&
+        localization_epoch_at_cycle == completion_witness.localization_epoch;
+    double endpoint_error = std::numeric_limits<double>::infinity();
+    double measured_goal_error = std::numeric_limits<double>::infinity();
+    double completion_tolerance = std::numeric_limits<double>::quiet_NaN();
+    bool terminal_endpoint_contract = false;
+    completed_old_terminal = completed_bundle_terminal_stop && endpoint && endpoint->finished &&
+        endpoint->finite() &&
+        completion_witness.valid() &&
+        terminalStopEndpointContractValid(
+            true, committed_bundle->kind, committed_bundle->role,
+            endpoint->role);
+    if (completion_goal_matches) {
+      const auto& target_message = plannerTarget(*goal);
+      const Eigen::Vector3d target_position{
+        pointFromMessage(target_message, 0),
+        pointFromMessage(target_message, 1),
+        pointFromMessage(target_message, 2)};
+      completion_tolerance = goalCompletionTolerance(*goal);
+      measured_goal_error = execution_state.finite()
+          ? (execution_state.position_world - target_position).norm()
+          : std::numeric_limits<double>::infinity();
+      // PASS_THROUGH endpoint completion is a route-boundary continuation event;
+      // only STOP owns a terminal waypoint comparison here.
+      endpoint_error = endpoint.has_value()
+          ? (endpoint->position_world - target_position).norm()
+          : std::numeric_limits<double>::infinity();
+      terminal_endpoint_contract = committed_bundle && endpoint &&
+          terminalStopEndpointContractValid(
+              effective_terminal_stop, committed_bundle->kind,
+              committed_bundle->role, endpoint->role);
+    }
+    completed_trajectory_reaches_goal = completion_goal_matches &&
+        terminalStopCompletionObserved(
+          effective_terminal_stop, terminal_endpoint_contract, completed_endpoint_valid,
+          endpoint_error, measured_goal_error, completion_tolerance);
+    bool completion_identity_current = false;
+    if (completion_goal_matches) {
+      RCLCPP_INFO(get_logger(),
+                  "planner backend trajectory completion observed reaches_goal=%d endpoint_error=%.3f "
+                  "measured_goal_error=%.3f goal=(%.2f,%.2f,%.2f)",
+                  completed_trajectory_reaches_goal ? 1 : 0,
+                  endpoint_error, measured_goal_error,
+                  pointFromMessage(plannerTarget(*goal), 0),
+                  pointFromMessage(plannerTarget(*goal), 1),
+                  pointFromMessage(plannerTarget(*goal), 2));
+    } else {
+      RCLCPP_INFO(
+          get_logger(),
+          "planner completion witness belongs to executing request=%lu; desired request=%lu "
+          "changed, so terminal comparison is suppressed",
+          static_cast<unsigned long>(completion_witness.request_id),
+          static_cast<unsigned long>(goal->request_id));
+      // A completed terminal STOP belongs to the executing predecessor.  A
+      // newer same-mission desired goal may already be coincident with that
+      // endpoint, so comparing the predecessor witness with the desired goal
+      // would incorrectly suppress the measured-state handover.  Keep the
+      // old completion proof separate; it never marks the desired goal done.
+      const auto predecessor_route = completed_execution_goal
+          ? decodeRouteSnapshot(*completed_execution_goal) : std::nullopt;
+      const auto successor_route = decodeRouteSnapshot(*goal);
+      coincident_terminal_successor_route = predecessor_route && successor_route &&
+          navigation_mission::passThroughNextWaypointIsCoincidentStop(*predecessor_route) &&
+          navigation_mission::stopHasCoincidentPassThroughPredecessor(*successor_route);
+      predecessor_successor_identity = completed_execution_goal &&
+          goal->mission_id == completed_execution_goal->mission_id &&
+          goal->waypoint_index == completed_execution_goal->waypoint_index + 1U &&
+          goalIdentityNewer(*goal, *completed_execution_goal);
+      const auto& successor_target = plannerTarget(*goal);
+      const Eigen::Vector3d successor_position{
+          pointFromMessage(successor_target, 0),
+          pointFromMessage(successor_target, 1),
+          pointFromMessage(successor_target, 2)};
+      terminal_endpoint_matches_successor = endpoint && successor_position.allFinite() &&
+          (endpoint->position_world - successor_position).norm() <=
+              goalCompletionTolerance(*goal);
+      terminal_measured_inside_successor = execution_state.finite() &&
+          successor_position.allFinite() &&
+          (execution_state.position_world - successor_position).norm() <=
+              goalCompletionTolerance(*goal);
+      completed_terminal_successor_hold =
+          completed_old_terminal &&
+          completed_execution_goal &&
+          completed_execution_goal->behavior ==
+              navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH &&
+          goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP &&
+          coincident_terminal_successor_route && predecessor_successor_identity &&
+          completed_endpoint_valid && terminal_endpoint_matches_successor &&
+          terminal_measured_inside_successor;
+      completed_terminal_handover_restart = completed_old_terminal &&
+          desired_identity_current && predecessor_successor_identity &&
+          !completed_terminal_successor_hold;
+    }
+    if (completed_trajectory_reaches_goal && completion_goal_matches) {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const auto committed_execution_goal = executingGoalSnapshot();
+      const auto committed_goal_epoch = executionGoalEpoch();
+      if (committed_bundle && committed_execution_goal &&
+          (execution_authority_.matchesActive(*committed_execution_goal, committed_goal_epoch, localization_epoch_at_cycle, committed_bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_cycle))) {
+        trajectory_reaches_goal_.store(completed_trajectory_reaches_goal,
+                                       std::memory_order_release);
+        terminal_bundle_generation_.store(
+            completed_trajectory_reaches_goal && effective_terminal_stop &&
+                terminal_endpoint_contract
+                ? committed_bundle->bundle_generation
+                : 0U,
+            std::memory_order_release);
+        completion_identity_current = true;
+        applyExecutionRecoveryEventLocked(
+            ExecutionRecoveryEvent::kTerminalStopCompleted, *committed_bundle);
+        recovery_state = execution_authority_.snapshot().lifecycle.recovery;
+      }
+    }
+    if (!completion_identity_current) completed_trajectory_reaches_goal = false;
+  }
+  if (completed_terminal_successor_hold) {
+    bool successor_hold_transferred = false;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const auto current_timeline = execution_authority_.snapshot();
+      const auto witness = completion_witness_at_cycle.value_or(
+          TrajectoryCompletionWitness{});
+      const bool execution_still_current = completed_bundle_at_cycle &&
+          completed_executing_goal_at_cycle &&
+          completionWitnessMatchesCurrentExecution(
+              witness, current_timeline, completed_bundle_at_cycle,
+              executingGoalSnapshot(), executionGoalEpoch(),
+              localization_epoch_at_cycle,
+              execution_authority_.snapshot().failed(),
+              command_execution_lease_failure_latch_.allowsCommandExposure());
+      const bool desired_still_current = goal &&
+          (desired_intent_.matches(*goal, goal_epoch) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_cycle));
+      successor_hold_transferred = terminalSuccessorHoldMayTransfer(
+          completed_old_terminal,
+          completed_executing_goal_at_cycle &&
+              completed_executing_goal_at_cycle->behavior ==
+                  navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH,
+          goal && goal->behavior ==
+              navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP,
+          coincident_terminal_successor_route, predecessor_successor_identity,
+          completed_endpoint_valid, terminal_endpoint_matches_successor,
+          terminal_measured_inside_successor, execution_still_current,
+          desired_still_current,
+          command_execution_lease_failure_latch_.allowsCommandExposure());
+      if (successor_hold_transferred) {
+        execution_authority_.clearRestartFromRest();
+        (void)desired_intent_.consumeHotRetarget();
+        (void)desired_intent_.consumeNewIntent();
+        trajectory_completion_witness_.reset();
+        trajectory_reaches_goal_.store(true, std::memory_order_release);
+        terminal_bundle_generation_.store(
+            completed_bundle_at_cycle->bundle_generation,
+            std::memory_order_release);
+        completed_trajectory = false;
+        completed_trajectory_for_planning = false;
+      }
+    }
+    if (!successor_hold_transferred) {
+      // The predecessor or successor changed while the handoff was being
+      // linearized. Do not turn a stale terminal witness into a new solve.
+      return;
+    }
+    RCLCPP_INFO(
+        get_logger(),
+        "retaining finite terminal endpoint across coincident PASS_THROUGH to STOP handoff "
+        "generation=%lu successor_request=%lu",
+        static_cast<unsigned long>(completed_bundle_at_cycle->bundle_generation),
+        static_cast<unsigned long>(goal->request_id));
+  }
+  const bool continue_completed_pass_through =
+      completedPassThroughRequiresContinuation(
+          completed_trajectory, completed_endpoint_valid,
+          pass_through_goal, has_outgoing_route);
+  if (completed_trajectory_for_planning && goal && !completed_terminal_handover_restart &&
+      completed_trajectory_reaches_goal &&
+      !continue_completed_pass_through) {
+    return;
+  }
+  if (completed_trajectory_for_planning && goal &&
+      (!completed_trajectory_reaches_goal || continue_completed_pass_through)) {
+    const auto& target_message = plannerTarget(*goal);
+    const double dx = pointFromMessage(target_message, 0) - execution_state.position_world.x();
+    const double dy = pointFromMessage(target_message, 1) - execution_state.position_world.y();
+    const double dz = pointFromMessage(target_message, 2) - execution_state.position_world.z();
+    if (completed_terminal_handover_restart || continue_completed_pass_through ||
+        std::sqrt(dx * dx + dy * dy + dz * dz) >
+            goalCompletionTolerance(*goal)) {
+      bool restart_requested = false;
+      {
+        std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+        std::lock_guard<std::mutex> input_lock(input_mutex_);
+        std::lock_guard<std::mutex> command_lock(
+            command_execution_lease_failure_latch_.transitionMutex());
+        const auto current_timeline = execution_authority_.snapshot();
+        const auto witness = completion_witness_at_cycle.value_or(
+            TrajectoryCompletionWitness{});
+        const bool completed_execution_still_current =
+            completed_terminal_handover_restart && completed_bundle_at_cycle &&
+            completed_executing_goal_at_cycle &&
+            completionWitnessMatchesCurrentExecution(
+                witness, current_timeline, completed_bundle_at_cycle,
+                executingGoalSnapshot(), executionGoalEpoch(),
+                localization_epoch_at_cycle,
+                execution_authority_.snapshot().failed(),
+                command_execution_lease_failure_latch_.allowsCommandExposure());
+        const bool desired_handover_still_current =
+            completed_terminal_handover_restart && goal &&
+            completed_executing_goal_at_cycle &&
+            goal->mission_id == completed_executing_goal_at_cycle->mission_id &&
+            goalIdentityNewer(*goal, *completed_executing_goal_at_cycle) &&
+            (desired_intent_.matches(*goal, goal_epoch) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_cycle));
+        const bool valid_terminal_handover =
+            !completed_terminal_handover_restart ||
+            (completed_execution_still_current && desired_handover_still_current);
+        if (valid_terminal_handover && (desired_intent_.matches(*goal, goal_epoch) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_cycle))) {
+          if (!completed_bundle_at_cycle ||
+              !execution_authority_.requestRestartFromRest(*completed_bundle_at_cycle)) {
+            return;
+          }
+          (void)desired_intent_.consumeHotRetarget();
+          restart_from_rest = true;
+          skip_replan_once_.store(false, std::memory_order_release);
+          restart_requested = true;
+          completed_trajectory = false;
+          completed_trajectory_for_planning = false;
+          // Consume the predecessor's completion certificate when the
+          // successor handover is committed. Otherwise the unchanged terminal
+          // bundle would be re-observed on every planner cycle and repeatedly
+          // request PlanFromRest before the successor can replace it.
+          trajectory_completion_witness_.reset();
+          trajectory_reaches_goal_.store(false, std::memory_order_release);
+          terminal_bundle_generation_.store(0U, std::memory_order_release);
+        }
+      }
+      if (restart_requested) {
+        RCLCPP_INFO(get_logger(),
+                    "planner backend finite trajectory requires continuation; restarting PlanFromRest "
+                    "pass_through=%d goal=(%.2f,%.2f,%.2f) vehicle=(%.2f,%.2f,%.2f)",
+                    continue_completed_pass_through ? 1 : 0,
+                    pointFromMessage(target_message, 0), pointFromMessage(target_message, 1),
+                    pointFromMessage(target_message, 2), execution_state.position_world.x(),
+                    execution_state.position_world.y(), execution_state.position_world.z());
+      }
+    }
+  }
+
+  if (!goal) return;
+  if (!route_snapshot.has_value() ||
+      !routeSnapshotMatchesGoalMirrors(*route_snapshot, *goal)) {
+    if (cycle_goal) {
+      (void)clearCommandForCurrentIdentity(
+          *cycle_goal, goal_epoch_at_cycle, localization_epoch_at_cycle,
+          expected_timeline_at_cycle);
+    }
+    RCLCPP_ERROR_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "planner cycle rejected an invalid immutable route snapshot");
+    return;
+  }
+  // A terminal bundle already observed by the command publisher is a bounded
+  // endpoint hold, not a frontier trajectory.  Do not start another
+  // PlanFromRest while that exact bundle is waiting for mission acceptance.
+  if (terminalHoldIsPending(
+          execution_authority_.snapshot().commandAvailable(),
+          trajectory_reaches_goal_.load(std::memory_order_acquire),
+          effective_terminal_stop,
+          terminal_bundle_generation_.load(std::memory_order_acquire))) {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    if (desired_intent_.goal() && desired_intent_.goal()->mission_id == goal->mission_id &&
+        desired_intent_.goal()->waypoint_index == goal->waypoint_index &&
+        desired_intent_.goal()->request_id == goal->request_id) {
+      execution_authority_.clearRestartFromRest();
+      (void)desired_intent_.consumeHotRetarget();
+    }
+    return;
+  }
+  // A terminal planner failure remains terminal for this request until the
+  // mission controller acknowledges it and cancels the goal. Without this
+  // gate the next planning timer could perform a fourth solve and overwrite
+  // the fail-closed state with a newly discovered frontier trajectory.
+  if (execution_authority_.snapshot().failed()) return;
+  // While the command publisher drains a committed safety suffix, keep
+  // replanning from the current vehicle state.  A validated main trajectory
+  // may replace the suffix and recover the mission; failed solves leave the
+  // frozen suffix untouched.  Stopping planner callbacks here would make
+  // recovery impossible by construction and force every transient hot-replan
+  // miss to end in hold/handover.
+
+  // Planner execution state is independently owned by propagated odometry;
+  // ROG-Map's corrected scan-epoch pose is mapping-only.
+  // Always retain the current mission checkpoint as planner backend's geometric target.
+  // PASS_THROUGH additionally supplies next_target as a bounded terminal
+  // tangent; it is never used as a replacement geometric endpoint.
+  const auto& active_route_waypoint =
+      route_snapshot->waypoints[route_snapshot->active_waypoint_index];
+  const Eigen::Vector3d target = active_route_waypoint.position_enu;
+  const auto monitor_bundle = expected_timeline_at_cycle.active;
+  const bool terminal_monitor_request = monitor_bundle &&
+      monitor_bundle->kind == navigation_planning::CandidateBundleKind::kTerminalStop &&
+      monitor_bundle->terminal_stop && !monitor_bundle->backup_available &&
+      monitor_bundle->role == navigation_planning::CandidateRole::kMain &&
+      effective_terminal_stop && !(planning_transition == PlanningIntentTransition::kNewIntent) && !(planning_transition == PlanningIntentTransition::kHotRetarget) &&
+      !restart_from_rest && !expected_timeline_at_cycle.pending &&
+      sameGoalIdentity(goal, executing_goal_at_cycle) &&
+      command_goal_epoch_at_cycle == goal_epoch &&
+      monitor_bundle->localization_epoch == localization_epoch_at_cycle &&
+      monitor_bundle->goal_epoch == goal_epoch &&
+      monitor_bundle->request_id == goal->request_id &&
+      monitor_bundle->bundle_generation == effective_scheduled_key.committed_bundle_generation &&
+      episode_at_cycle.commandAvailable() && !episode_at_cycle.failed() &&
+      !episode_at_cycle.safetySuffixActive() &&
+      episode_at_cycle.lifecycle.phase == ExecutionPhase::kTrackingMain &&
+      episode_at_cycle.lifecycle.recovery == ExecutionRecoveryState::kTrackMain;
+  if (terminal_monitor_request) {
+    // A queued pre-END tick can arrive after END without a publisher callback.
+    // It is discard-only, not permission to fall through to nominal renewal.
+    if (!terminalMainMonitorPhaseIsOpen(
+            *monitor_bundle, episode_at_cycle, now().nanoseconds())) return;
+    const RetainedValidationContext monitor_context{
+        RetainedValidationPurpose::kTerminalMainMonitor, false, true,
+        0U, cycle_count_, std::nullopt,
+        retainedCommandTrackingLimit(
+            planner_->trackingErrorBudgetMeters(),
+            navigation_contracts::kCommandAnchorErrorLimitM),
+        TerminalMonitorBoundary{expected_timeline_at_cycle}};
+    validateRetainedCommand(
+        goal, goal_epoch, localization_epoch_at_cycle,
+        effective_scheduled_key, monitor_context);
+    // No optimizer, future anchor, nominal solve generation/watchdog or
+    // common result tail. Monitoring must not masquerade as NO_NEED/failure.
+    return;
+  }
+  const auto planner_started = std::chrono::steady_clock::now();
+  std::int64_t runtime_request_created_steady_ns = 0;
+  std::int64_t runtime_result_received_steady_ns = 0;
+  std::int64_t runtime_currentness_checked_steady_ns = 0;
+  std::int64_t runtime_admission_started_steady_ns = 0;
+  std::int64_t runtime_admission_finished_steady_ns = 0;
+  bool runtime_admission_attempted = false;
+  bool runtime_admission_succeeded = false;
+  bool runtime_successor_staged = false;
+  // This is the runtime boundary for a PlanFromRest attempt. Each mission
+  // waypoint enters that measured-state path when required; later timer ticks
+  // retain the latest world-validated MAIN until its backup transition is
+  // close enough to reserve the scheduler period, solve deadline, and future
+  // splice interval. Map recertification and command sampling remain
+  // independent of this optimizer renewal policy.
+  const bool plan_from_rest = (planning_transition == PlanningIntentTransition::kNewIntent) || restart_from_rest;
+  const auto transition_bundle = execution_authority_.load();
+  const double transition_elapsed_s = transition_bundle
+      ? now().seconds() - transition_bundle->start_wall_time_s
+      : std::numeric_limits<double>::quiet_NaN();
+  const double planning_interval_s = static_cast<double>(planning_period_us_) * 1.0e-6;
+  const auto transition_sample = transition_bundle
+      ? transition_bundle->sample(now_ns)
+      : std::nullopt;
+  const auto transition_source_sample = transition_bundle
+      ? transition_bundle->sampleAtDeclaredStamp(execution_stamp_ns)
+      : std::nullopt;
+  // Scheduler pressure must compare state and command at the same source
+  // time. The authoritative retained-command transaction below independently
+  // repeats this check and retains the current-command outer cap.
+  const double transition_anchor_error_m = transition_source_sample
+      ? (transition_source_sample->position_world - execution_state.position_world).norm()
+      : std::numeric_limits<double>::infinity();
+  const auto transition_role = transition_sample
+      ? transition_sample->role
+      : transition_bundle ? transition_bundle->role
+                          : navigation_planning::CandidateRole::kEmergency;
+  const double retained_tracking_limit_m = retainedCommandTrackingLimit(
+      planner_->trackingErrorBudgetMeters(),
+      navigation_contracts::kCommandAnchorErrorLimitM);
+  const bool transition_state_known_free = transition_bundle && execution_state.finite() &&
+      latest_world && latest_world.view &&
+      latest_world.view->classify(
+          execution_state.position_world,
+          navigation_world_model::GridLayer::kInflated) ==
+          navigation_world_model::CellState::kKnownFree;
+  // This is only scheduler pressure.  The authoritative path/world decision is
+  // repeated after committed-trajectory validation below; an accepted local
+  // projection may suppress an unnecessary early renewal but never authorizes
+  // command exposure by itself.
+  const auto transition_path_relative_tracking = transition_bundle
+      ? assessPathRelativeTracking(
+            *transition_bundle, execution_state.position_world,
+            execution_state.velocity_world, now_ns, execution_stamp_ns,
+            planning_interval_s + navigation_planning::PlanningTimingContract::kCommandPeriodS,
+            navigation_contracts::kMainTrackingPhaseWindowS, retained_tracking_limit_m,
+            navigation_contracts::kCommandAnchorErrorLimitM,
+            true, transition_state_known_free, true)
+      : PathRelativeTrackingResult{};
+  const bool transition_path_relative_accepted =
+      transition_path_relative_tracking.accepted();
+  const auto transition_experimental_tracking = transition_bundle
+      ? assessExperimentalTracking(
+            tracking_experiment_, *transition_bundle, execution_state.position_world,
+            execution_state.velocity_world, now_ns, execution_stamp_ns,
+            planning_interval_s + navigation_planning::PlanningTimingContract::kCommandPeriodS,
+            true, transition_state_known_free, true)
+      : ExperimentalTrackingResult{};
+  const bool transition_tracking_accepted = tracking_experiment_.enabled
+      ? transition_experimental_tracking.accepted : transition_path_relative_accepted;
+  const bool anchor_recovery_due = commandAnchorRecoveryDue(
+      execution_authority_.snapshot().commandAvailable(), transition_role,
+      transition_anchor_error_m,
+      retained_tracking_limit_m) && !transition_tracking_accepted;
+  // Anchor pressure and hot retargeting may schedule a solve,
+  // but every moving nominal renewal is anchored to committed future PVAJ.
+  // Exceeding the certificate is handled by the one-shot emergency path after
+  // retained validation; it never authorizes measured-state nominal planning.
+  const bool anchor_renewal_replan = anchor_recovery_due && !plan_from_rest;
+  const bool stop_waypoint = goal &&
+      goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP;
+  const double terminal_stop_relative_speed_mps = transition_sample &&
+      execution_state.finite()
+      ? (transition_sample->velocity_world - execution_state.velocity_world).norm()
+      : std::numeric_limits<double>::quiet_NaN();
+  const double terminal_stop_projected_anchor_error_m =
+      projectedRetainedAnchorErrorUpperBound(
+          transition_anchor_error_m, terminal_stop_relative_speed_mps,
+          planning_interval_s);
+  const bool terminal_stop_current_state_known_free = latest_world &&
+      latest_world.view && execution_state.finite() &&
+      latest_world.view->classify(
+          execution_state.position_world,
+          navigation_world_model::GridLayer::kInflated) ==
+          navigation_world_model::CellState::kKnownFree;
+  const bool terminal_stop_projected_tracking_certificate_exceeded =
+      terminal_stop_current_state_known_free &&
+      std::isfinite(terminal_stop_projected_anchor_error_m) &&
+      terminal_stop_projected_anchor_error_m > retained_tracking_limit_m;
+  const bool terminal_stop_recovery_due = anchor_recovery_due ||
+      terminal_stop_projected_tracking_certificate_exceeded;
+  const bool terminal_stop_anchor_deferred = transition_bundle &&
+      terminalStopMayDeferAnchorRecovery(
+          stop_waypoint,
+          execution_authority_.snapshot().commandAvailable(),
+          transition_bundle->hasDeclaredEndpointMetadata(),
+          transition_bundle->terminal_stop,
+          transition_role,
+          terminal_stop_recovery_due,
+          transition_anchor_error_m,
+          retained_tracking_limit_m,
+          terminal_stop_projected_tracking_certificate_exceeded);
+  if (terminal_stop_anchor_deferred) {
+    ++optimizer_deferred_count_;
+    RCLCPP_DEBUG_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "deferring terminal STOP optimizer renewal anchor=%d error=%.3f limit=%.3f",
+        terminal_stop_anchor_deferred ? 1 : 0,
+        transition_anchor_error_m, retained_tracking_limit_m);
+    return;
+  }
+  const bool plan_from_rest_with_transition = plan_from_rest;
+  if (plan_from_rest_with_transition &&
+      (!std::isfinite(measured_speed_mps) ||
+       measured_speed_mps > navigation_planning::PlanningTimingContract::kStationarySpeedMps)) {
+    // A moving vehicle may only renew from an execution anchor. Initial
+    // planning is a stopped-state operation; retaining this request here
+    // would recreate the old moving-PlanFromRest stop/go loop.
+    RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "initial planning deferred until measured state is stationary speed=%.3f",
+        measured_speed_mps);
+    return;
+  }
+  const bool replan_for_new_goal = hotRetargetUsesCommittedFutureState(
+      (planning_transition == PlanningIntentTransition::kHotRetarget),
+      execution_authority_.snapshot().commandAvailable(),
+      transition_role, transition_anchor_error_m,
+      retained_tracking_limit_m);
+  if ((planning_transition == PlanningIntentTransition::kNewIntent)) {
+    // MissionController has invalidated the previous waypoint already. Do
+    // not publish that waypoint while PlanFromRest runs.
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    if (!goal || !(desired_intent_.matches(*goal, goal_epoch) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_cycle))) {
+      return;
+    }
+    const auto current_bundle = execution_authority_.load();
+    const auto terminal_generation = terminal_bundle_generation_.load(
+        std::memory_order_acquire);
+    const bool terminal_hold_belongs_to_current_goal = current_bundle &&
+        terminal_generation != 0U &&
+        current_bundle->bundle_generation == terminal_generation &&
+        current_bundle->request_id == goal->request_id &&
+        current_bundle->goal_epoch == goal_epoch &&
+        terminalHoldIsPending(
+            execution_authority_.snapshot().commandAvailable(),
+            trajectory_reaches_goal_.load(std::memory_order_acquire),
+            effective_terminal_stop, terminal_generation);
+    if (!terminal_hold_belongs_to_current_goal) {
+      execution_authority_.suspendCommand();
+      trajectory_reaches_goal_.store(false);
+      terminal_bundle_generation_.store(0U);
+    }
+  }
+  if (!plan_from_rest_with_transition && !replan_for_new_goal &&
+      !anchor_renewal_replan &&
+      skip_replan_once_.exchange(false, std::memory_order_acq_rel)) {
+    return;
+  }
+  const bool forced_transition = plan_from_rest_with_transition ||
+      replan_for_new_goal || anchor_renewal_replan;
+  const auto renewal_episode = execution_authority_.snapshot();
+  const auto ordinary_renewal_decision = classifyPlannerRenewal(
+      forced_transition,
+      renewal_episode.commandAvailable(),
+      renewal_episode.safetySuffixActive(),
+      transition_sample ? transition_sample->role
+                        : transition_bundle ? transition_bundle->role
+                                            : navigation_planning::CandidateRole::kEmergency,
+      transition_bundle && transition_sample &&
+          transition_bundle->hasTrajectoryMetadata(),
+      transition_elapsed_s,
+      transition_bundle ? transition_bundle->backup_start_time_s
+                        : std::numeric_limits<double>::quiet_NaN(),
+      planner_->solveDeadlineSeconds(), planner_->replanForwardSeconds(),
+      planning_interval_s);
+  const BaselineRefinementContext refinement_context{
+      effective_scheduled_key, transition_bundle.get(), renewal_episode,
+      latest_world.identity, planner_->committedGeneration(), now_ns, transition_role,
+      static_cast<bool>(expected_timeline_at_cycle.pending),
+      !(planning_transition == PlanningIntentTransition::kNewIntent) && !(planning_transition == PlanningIntentTransition::kHotRetarget) && !restart_from_rest &&
+          sameGoalIdentity(goal, executing_goal_at_cycle) &&
+          command_goal_epoch_at_cycle == goal_epoch,
+      command_execution_lease_failure_latch_.allowsCommandExposure(),
+      transition_state_known_free && (transition_tracking_accepted ||
+          (std::isfinite(transition_anchor_error_m) &&
+           transition_anchor_error_m <= retained_tracking_limit_m))};
+  const auto renewal_decision = withBaselineRefinement(
+      ordinary_renewal_decision,
+      baseline_refinement_opportunity_.ready(
+          ordinary_renewal_decision, refinement_context));
+  if (!renewal_decision.run_optimizer) {
+    ++optimizer_deferred_count_;
+    return;
+  }
+  if (renewal_decision.reason == PlannerRenewalReason::kRenewalDue) {
+    ++optimizer_renewal_due_count_;
+  }
+  const double remaining_route_m = [&]() {
+    const double euclidean_distance = execution_state.finite()
+        ? (target - execution_state.position_world).norm()
+        : std::numeric_limits<double>::quiet_NaN();
+    if (route_snapshot && execution_state.finite() &&
+        route_snapshot->active_waypoint_index <
+            route_snapshot->waypoint_arc_lengths_m.size()) {
+      const double target_arc = route_snapshot->waypoint_arc_lengths_m[
+          route_snapshot->active_waypoint_index];
+      double best_arc = route_snapshot->measured_progress.valid &&
+          std::isfinite(route_snapshot->measured_progress.progress_arc_m)
+          ? route_snapshot->measured_progress.progress_arc_m : 0.0;
+      double best_distance_squared = std::numeric_limits<double>::infinity();
+      for (const auto& segment : route_snapshot->segments) {
+        if (!segment.start.allFinite() || !segment.end.allFinite() ||
+            !std::isfinite(segment.length_m) || segment.length_m <= 0.0 ||
+            !std::isfinite(segment.start_arc_m) ||
+            !std::isfinite(segment.end_arc_m)) {
+          continue;
+        }
+        const Eigen::Vector3d delta = execution_state.position_world - segment.start;
+        const double fraction = std::clamp(
+            delta.dot(segment.tangent) / segment.length_m, 0.0, 1.0);
+        const Eigen::Vector3d projection = segment.start + fraction *
+            (segment.end - segment.start);
+        const double distance_squared =
+            (execution_state.position_world - projection).squaredNorm();
+        if (!std::isfinite(distance_squared) ||
+            distance_squared >= best_distance_squared) {
+          continue;
+        }
+        best_distance_squared = distance_squared;
+        best_arc = segment.start_arc_m + fraction * segment.length_m;
+      }
+      if (std::isfinite(target_arc) && std::isfinite(best_arc)) {
+        const double route_remaining = std::max(0.0, target_arc - best_arc);
+        // The Euclidean lower bound makes the phase conservative when the
+        // vehicle is temporarily offset by an obstacle detour: it can enter
+        // the slow approach early, never late, without changing the exact
+        // route, backup, or dynamic certificates.
+        return std::min(route_remaining, euclidean_distance);
+      }
+    }
+    return euclidean_distance;
+  }();
+  const double effective_cruise_speed_mps =
+      planner_->diagnostics().effective_cruise_speed_mps;
+  if (!std::isfinite(effective_cruise_speed_mps) ||
+      effective_cruise_speed_mps <= 0.0) {
+    throw std::logic_error(
+        "planner control envelope did not provide a finite effective cruise speed");
+  }
+  const bool terminal_stop_approach_due = plannerTerminalStopApproachDue(
+      stop_waypoint, remaining_route_m,
+      effective_cruise_speed_mps,
+      mission_dynamic_limits_.vehicle.maximum_acceleration_mps2,
+      mission_dynamic_limits_.vehicle.maximum_jerk_mps3);
+  if (plan_from_rest_with_transition && stop_waypoint) {
+    const double stop_distance = plannerTerminalStopBrakingDistanceM(
+        effective_cruise_speed_mps,
+        mission_dynamic_limits_.vehicle.maximum_acceleration_mps2,
+        mission_dynamic_limits_.vehicle.maximum_jerk_mps3);
+    RCLCPP_INFO(
+        get_logger(),
+        "terminal STOP phase remaining_route=%.3f braking_horizon=%.3f approach=%d",
+        remaining_route_m, stop_distance,
+        terminal_stop_approach_due ? 1 : 0);
+  }
+  navigation_planning::PlannerStatus result = navigation_planning::PlannerStatus::kFailed;
+  const auto pinned_world = world_snapshot_store_.load();
+  if (!pinned_world) {
+    RCLCPP_ERROR(get_logger(), "planner backend cannot solve without a published WorldModel snapshot");
+    return;
+  }
+  const auto request_timeline = execution_authority_.snapshot();
+  const auto request_active_generation = request_timeline.active
+      ? request_timeline.active->bundle_generation : 0U;
+  const auto localization_epoch_at_solve =
+      active_localization_epoch_.load(std::memory_order_acquire);
+  // Producer SOURCE/revision advances do not cancel a bounded worker job.
+  // Its captured request must nevertheless bind one coherent set of inputs;
+  // never refresh an ownership identity to disguise a superseded transaction.
+  // Pending-goal promotion above explicitly supplies its own effective key.
+  if (!effective_scheduled_key.valid() || !goal ||
+      effective_scheduled_key.localization_epoch != localization_epoch_at_solve ||
+      effective_scheduled_key.goal_epoch != goal_epoch ||
+      desired_intent_.revision() != goal_epoch ||
+      effective_scheduled_key.request_id != goal->request_id ||
+      effective_scheduled_key.route_revision != goal->route.route_revision ||
+      effective_scheduled_key.dynamics_hash != dynamics_hash_ ||
+      request_timeline.pending ||
+      request_active_generation != effective_scheduled_key.committed_bundle_generation ||
+      execution_state.localization_epoch != effective_scheduled_key.localization_epoch ||
+      execution_state.world_frame_id != planning_frame_ ||
+      execution_state.body_frame_id != body_frame_id_ ||
+      pinned_world.identity.localization_epoch != effective_scheduled_key.localization_epoch ||
+      pinned_world.identity.generation != effective_scheduled_key.pinned_world_generation) {
+    return;
+  }
+  const auto captured_inputs_check_ns = now().nanoseconds();
+  const auto pinned_world_temporal = assessWorldTemporal(
+      true, pinned_world.identity, captured_inputs_check_ns, maximum_age_ns);
+  if (!pinned_world_temporal.sourceCurrent() ||
+      navigation_execution::classifyTimestampFreshness(
+          captured_inputs_check_ns, execution_stamp_ns, maximum_age_ns) !=
+          navigation_execution::TimestampFreshness::VALID) {
+    return;
+  }
+  const auto solve_generation_value = advanceMonotonicId(planner_solve_generation_);
+  if (!solve_generation_value) {
+    if (cycle_goal) {
+      (void)clearCommandForCurrentIdentity(
+          *cycle_goal, goal_epoch_at_cycle, localization_epoch_at_cycle,
+          expected_timeline_at_cycle);
+    }
+    RCLCPP_ERROR(get_logger(), "planner solve generation exhausted");
+    return;
+  }
+  const std::uint64_t solve_generation = *solve_generation_value;
+  const std::uint64_t committed_generation_before_solve =
+      planner_->committedGeneration();
+  const auto solve_started_ros_ns = now().nanoseconds();
+  const double execution_age_at_solve_ms =
+      executionStateAgeMs(solve_started_ros_ns, execution_stamp_ns);
+  runtime_request_created_steady_ns =
+      navigation_common::steadyClockNowNanoseconds();
+  navigation_planning::PlanningRequest planning_request;
+  planning_request.cancellation_token = stop;
+  // PlanningRequest::start_mode selects the explicit
+  // planSuccessorFromExecutionAnchor lifecycle for every moving renewal;
+  // only a stationary transition selects the initial stopped-state operation.
+  planning_request.key = effective_scheduled_key;
+  planning_request.key.anchor_stamp_ns = execution_stamp_ns;
+  planning_request.key.pinned_world_revision = pinned_world.identity.revision;
+  planning_request.key.start_mode = plan_from_rest_with_transition
+      ? navigation_planning::PlanningStartMode::kStoppedMeasuredState
+      : effective_scheduled_key.start_mode;
+  planning_request.goal.localization_epoch = localization_epoch_at_solve;
+  planning_request.goal.goal_epoch = goal_epoch;
+  planning_request.goal.mission_id = goal->mission_id;
+  planning_request.goal.waypoint_index = goal->waypoint_index;
+  planning_request.goal.request_id = goal->request_id;
+  planning_request.start_state = execution_state;
+  planning_request.mission_start_position_world =
+      mission_start_position_at_cycle;
+  planning_request.diagnostic_solve_generation = solve_generation;
+  planning_request.diagnostic_planner_cycle = cycle_count_;
+  if (planning_request.key.start_mode ==
+      navigation_planning::PlanningStartMode::kStoppedMeasuredState) {
+    const auto support = navigation_mapping::makeX500Mid360CurrentBodySupport(
+        execution_state.position_world, execution_state.orientation_world_body,
+        pinned_world.identity, execution_state.world_frame_id.c_str(),
+        execution_state.body_frame_id.c_str(), execution_state.localization_epoch,
+        execution_state.source_stamp_ns);
+    if (support.valid && support.matchesMeasuredState(
+            execution_state.position_world, execution_state.orientation_world_body,
+            execution_state.localization_epoch, execution_state.source_stamp_ns,
+            execution_state.world_frame_id, execution_state.body_frame_id)) {
+      planning_request.current_body_support =
+          std::make_shared<const navigation_world_model::CurrentBodySupport>(support);
+    }
+  }
+  const auto active_bundle_at_renewal = expected_timeline_at_cycle.active;
+  const bool desired_identity_matches_executing = goal && executing_goal_at_cycle &&
+      goal->mission_id == executing_goal_at_cycle->mission_id &&
+      goal->waypoint_index == executing_goal_at_cycle->waypoint_index &&
+      goal->request_id == executing_goal_at_cycle->request_id;
+  const bool active_bundle_identity_current = active_bundle_at_renewal &&
+      goal && executing_goal_at_cycle &&
+      active_bundle_at_renewal->localization_epoch == localization_epoch_at_cycle &&
+      active_bundle_at_renewal->goal_epoch == command_goal_epoch_at_cycle &&
+      active_bundle_at_renewal->request_id == executing_goal_at_cycle->request_id &&
+      active_bundle_at_renewal->bundle_generation == episode_at_cycle.activeGeneration();
+  SameIdentityRenewalFacts same_identity_renewal_facts;
+  same_identity_renewal_facts.start_mode = planning_request.key.start_mode;
+  same_identity_renewal_facts.transition_kind = classifyGoalTransition(
+      goal, executing_goal_at_cycle);
+  same_identity_renewal_facts.recovery_state = recovery_state_at_cycle;
+  same_identity_renewal_facts.execution_phase = episode_at_cycle.lifecycle.phase;
+  same_identity_renewal_facts.desired_goal_valid = goal.has_value();
+  same_identity_renewal_facts.executing_goal_valid = executing_goal_at_cycle.has_value();
+  same_identity_renewal_facts.desired_identity_matches_executing =
+      desired_identity_matches_executing;
+  same_identity_renewal_facts.goal_epoch_matches_command =
+      goal_epoch_at_cycle != 0U && goal_epoch_at_cycle == command_goal_epoch_at_cycle;
+  same_identity_renewal_facts.active_bundle_valid = active_bundle_at_renewal &&
+      active_bundle_at_renewal->valid();
+  same_identity_renewal_facts.active_bundle_is_main = active_bundle_at_renewal &&
+      active_bundle_at_renewal->role == navigation_planning::CandidateRole::kMain;
+  same_identity_renewal_facts.active_bundle_identity_current =
+      active_bundle_identity_current;
+  same_identity_renewal_facts.no_new_goal = !(planning_transition == PlanningIntentTransition::kNewIntent);
+  same_identity_renewal_facts.no_hot_goal_transition = !(planning_transition == PlanningIntentTransition::kHotRetarget);
+  same_identity_renewal_facts.ordinary_renewal =
+      !plan_from_rest_with_transition && !replan_for_new_goal &&
+      !anchor_renewal_replan;
+  same_identity_renewal_facts.no_pending_successor =
+      !expected_timeline_at_cycle.pending;
+  same_identity_renewal_facts.command_available = episode_at_cycle.commandAvailable();
+  same_identity_renewal_facts.failure_latched = episode_at_cycle.failed();
+  same_identity_renewal_facts.safety_suffix_active = episode_at_cycle.safetySuffixActive();
+  same_identity_renewal_facts.restart_from_rest = restart_from_rest;
+  same_identity_renewal_facts.command_exposure_allowed =
+      command_execution_lease_failure_latch_.allowsCommandExposure();
+  same_identity_renewal_facts.execution_state_fresh =
+      execution_freshness == navigation_execution::TimestampFreshness::VALID;
+  same_identity_renewal_facts.world_fresh =
+      pinned_world_temporal.sourceCurrent();
+  same_identity_renewal_facts.valid_future_anchor = false;
+  same_identity_renewal_facts.fresh_renewal_due_window =
+      ordinaryRenewalFailureInjectionMayArm(renewal_decision, planning_interval_s);
+  same_identity_renewal_facts.current_body_support_present =
+      planning_request.current_body_support != nullptr;
+  same_identity_renewal_facts.terminal_hold_pending = false;
+  // The request witness must come from the same coherent ExecutionAuthority
+  // snapshot that was checked against the scheduled predecessor generation
+  // above. `transition_bundle` was captured earlier for scheduling/retention
+  // decisions and may have been superseded or recertified since then.
+  planning_request.history = makePlanningHistory(request_timeline, execution_state);
+  planning_request.route_snapshot = *route_snapshot;
+  planning_request.world = pinned_world.view;
+  planning_request.dynamics = mission_dynamic_limits_;
+  if (planning_request.key.start_mode ==
+      navigation_planning::PlanningStartMode::kCommittedFutureState) {
+    const auto activation_lead_ns = static_cast<std::int64_t>(
+        navigation_planning::PlanningTimingContract::kStitchDurationS * 1.0e9);
+    if (activation_lead_ns <= 0 ||
+        now_ns > std::numeric_limits<std::int64_t>::max() - activation_lead_ns) {
+      last_planning_outcome_.store(
+          static_cast<std::uint8_t>(
+              navigation_planning::CompletePlanningOutcome::kNoCompleteBundle),
+          std::memory_order_release);
+      last_planning_failure_stage_.store(
+          static_cast<std::uint8_t>(
+              navigation_planning::PlanningFailureStage::kCommitRecertification),
+          std::memory_order_release);
+      last_planning_failure_reason_.store(
+          static_cast<std::uint8_t>(
+              navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline),
+          std::memory_order_release);
+      return;
+    }
+    const auto activation_stamp_ns = now_ns + activation_lead_ns;
+    const auto anchor = execution_authority_.reserveAnchor(
+        execution_stamp_ns, activation_stamp_ns);
+    if (!anchor) {
+      last_planning_outcome_.store(
+          static_cast<std::uint8_t>(
+              navigation_planning::CompletePlanningOutcome::kNoCompleteBundle),
+          std::memory_order_release);
+      last_planning_failure_stage_.store(
+          static_cast<std::uint8_t>(
+              navigation_planning::PlanningFailureStage::kCommitRecertification),
+          std::memory_order_release);
+      last_planning_failure_reason_.store(
+          static_cast<std::uint8_t>(
+              navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline),
+          std::memory_order_release);
+      return;
+    }
+    // The reservation is a factual execution witness, not mutable request
+    // metadata. If mapping/activation superseded the captured inputs, discard
+    // this attempt; do not rewrite its world, G, PVAJ or activation to match.
+    if (anchor->active_bundle_generation != planning_request.key.committed_bundle_generation ||
+        anchor->localization_epoch != planning_request.key.localization_epoch ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            anchor->command_world, pinned_world.identity)) {
+      return;
+    }
+    planning_request.anchor = *anchor;
+    planning_request.activation_stamp_ns = activation_stamp_ns;
+    same_identity_renewal_facts.valid_future_anchor = anchor->valid();
+  }
+  const auto same_identity_renewal_eligible_ordinal =
+      same_identity_renewal_injection_.observe(same_identity_renewal_facts);
+  const bool same_identity_renewal_eligible =
+      sameIdentityRenewalInjectionEligible(same_identity_renewal_facts);
+  planning_request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+      std::chrono::duration_cast<navigation_planning::PlanningBudget::Clock::duration>(
+          std::chrono::duration<double>(planner_->solveDeadlineSeconds()));
+  planning_request.budget.steady_deadline_ns = std::chrono::duration_cast<
+      std::chrono::nanoseconds>(planning_request.budget.deadline.time_since_epoch()).count();
+  if (renewal_decision.reason == PlannerRenewalReason::kQualityRefinement &&
+      (!planning_request.valid() ||
+       !baseline_refinement_opportunity_.consume(
+           ordinary_renewal_decision, refinement_context))) return;
+  if (stop.stop_requested()) return;
+  navigation_planning::PlanningOutcome planning_outcome;
+  std::optional<PlannerSolveFailureWitness> solve_failure_witness;
+  navigation_execution::ExecutionAuthoritySnapshot execution_at_solve;
+  {
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    const auto& key = planning_request.key;
+    const auto current_execution = execution_authority_.snapshot();
+    if (!goal || !desired_intent_.matches(*goal, key.goal_epoch) ||
+        !desired_intent_.goal() ||
+        desired_intent_.goal()->route.route_revision != key.route_revision ||
+        active_localization_epoch_.load(std::memory_order_acquire) !=
+            key.localization_epoch ||
+        current_execution.activeGeneration() != key.committed_bundle_generation ||
+        current_execution.admission_goal_epoch != key.goal_epoch ||
+        current_execution.admission_localization_epoch != key.localization_epoch) {
+      return;
+    }
+    solve_failure_witness = PlannerSolveFailureWitness{
+        key, current_execution, pending_goal_owner_.goalSnapshot()};
+    execution_at_solve = current_execution;
+  }
+  {
+    // Arm only after the immutable request, activation timing, and execution
+    // anchor have all been accepted.  The scope ends as soon as the backend
+    // returns, so post-solve admission work is not reported as an active solve.
+    const PlannerSolveActivityScope solve_activity(
+        planner_solve_activity_mutex_,
+        planner_solve_started_steady_ns_, active_planner_solve_generation_,
+        solve_generation, navigation_common::steadyClockNowNanoseconds(),
+        &active_planner_solve_witness_, std::move(solve_failure_witness));
+    try {
+      if (stop.stop_requested()) return;
+      planning_outcome = planner_->plan(planning_request);
+      runtime_result_received_steady_ns =
+          navigation_common::steadyClockNowNanoseconds();
+      if (planning_outcome.outcome ==
+              navigation_planning::CompletePlanningOutcome::kRetainedCommittedBundle) {
+        result = navigation_planning::PlannerStatus::kNoNeed;
+      } else if (navigation_planning::completePlanningSucceeded(
+                     planning_outcome.outcome)) {
+        result = navigation_planning::PlannerStatus::kSuccess;
+      } else {
+        result = navigation_planning::PlannerStatus::kFailed;
+      }
+    } catch (const std::exception& error) {
+      runtime_result_received_steady_ns =
+          navigation_common::steadyClockNowNanoseconds();
+      RCLCPP_ERROR(get_logger(), "planner backend planner exception: %s", error.what());
+      result = navigation_planning::PlannerStatus::kEmergency;
+      planning_outcome.outcome =
+          navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
+      planning_outcome.failure_stage =
+          navigation_planning::PlanningFailureStage::kInput;
+      planning_outcome.failure_reason =
+          navigation_planning::PlanningFailureReason::kInvalidInput;
+    }
+  }
+  // Preserve the backend's causal result before runtime admission can turn a
+  // timed-out or stale transaction into a different final disposition.  The
+  // structured trace emits both identities; neither field authorizes a
+  // command or changes the fail-closed admission path.
+  const auto planner_backend_outcome = planning_outcome;
+  const auto planner_result_before_injection = result;
+  const auto same_identity_renewal_still_current = [&]() {
+    std::optional<navigation_contracts::msg::NavigationGoal> current_desired_goal;
+    std::optional<navigation_contracts::msg::NavigationGoal> current_executing_goal;
+    navigation_execution::ExecutionAuthoritySnapshot current_timeline;
+    navigation_execution::ExecutionAuthoritySnapshot current_episode;
+    ExecutionRecoveryState current_recovery = ExecutionRecoveryState::kPx4Hold;
+    std::uint64_t current_desired_revision = 0U;
+    std::uint64_t current_command_goal_epoch = 0U;
+    std::uint64_t current_localization_epoch = 0U;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      current_desired_goal = desired_intent_.goal();
+      current_executing_goal = executingGoalSnapshot();
+      current_timeline = execution_authority_.snapshot();
+      current_episode = execution_authority_.snapshot();
+      current_recovery = current_episode.lifecycle.recovery;
+      current_desired_revision = desired_intent_.revision();
+      current_command_goal_epoch = executionGoalEpoch();
+      current_localization_epoch = active_localization_epoch_.load(std::memory_order_acquire);
+      if (!current_desired_goal || !current_executing_goal || !goal || !executing_goal_at_cycle ||
+          current_desired_goal->mission_id != goal->mission_id ||
+          current_desired_goal->waypoint_index != goal->waypoint_index ||
+          current_desired_goal->request_id != goal->request_id ||
+          current_desired_goal->route.route_revision != goal->route.route_revision ||
+          current_executing_goal->mission_id != executing_goal_at_cycle->mission_id ||
+          current_executing_goal->waypoint_index != executing_goal_at_cycle->waypoint_index ||
+          current_executing_goal->request_id != executing_goal_at_cycle->request_id ||
+          current_desired_revision != goal_epoch_at_cycle ||
+          current_command_goal_epoch != command_goal_epoch_at_cycle ||
+          current_localization_epoch != localization_epoch_at_cycle ||
+          classifyGoalTransition(current_desired_goal, current_executing_goal) !=
+              GoalTransitionKind::kSteady ||
+          desired_intent_.isNewIntent() || desired_intent_.isHotRetarget() || current_timeline.pending ||
+          !current_timeline.active ||
+          current_timeline.active->bundle_generation != episode_at_cycle.activeGeneration() ||
+          current_timeline.active->localization_epoch != current_localization_epoch ||
+          current_timeline.active->goal_epoch != current_command_goal_epoch ||
+          current_timeline.active->request_id != current_executing_goal->request_id ||
+          current_timeline.active->role != navigation_planning::CandidateRole::kMain ||
+          !current_timeline.active->valid() ||
+          current_episode.lifecycle.phase != ExecutionPhase::kTrackingMain ||
+          current_recovery != ExecutionRecoveryState::kTrackMain ||
+          !current_episode.commandAvailable() || current_episode.failed() ||
+          current_episode.safetySuffixActive() || current_episode.restartFromRest() ||
+          !command_execution_lease_failure_latch_.allowsCommandExposure()) {
+        return false;
+      }
+    }
+    const auto current_world = world_snapshot_store_.load();
+    const auto current_execution = execution_state_store_.load();
+    const auto current_now_ns = now().nanoseconds();
+    return current_world && current_execution &&
+           assessWorldTemporal(true, current_world.identity, current_now_ns,
+                               data_freshness_window_ns_).sourceCurrent() &&
+           navigation_execution::classifyTimestampFreshness(
+               current_now_ns, current_execution->state.source_stamp_ns,
+               data_freshness_window_ns_) == navigation_execution::TimestampFreshness::VALID &&
+           current_execution->state.finite();
+  };
+  // Test/debug-only observability hook. It is deliberately applied after the
+  // real planner call and before admission, so the old committed bundle is
+  // still available to the normal retained-command path. With the default
+  // cycle id of zero this branch is unreachable in product operation.
+  const bool injected_replan_failure = inject_failed_replan_once_ &&
+      inject_failed_replan_cycle_id_ != 0U &&
+      cycle_count_ == inject_failed_replan_cycle_id_ &&
+      !plan_from_rest_with_transition;
+  const auto failure_injection_episode = execution_authority_.snapshot();
+  const bool ordinary_renewal_failure_injection = inject_failed_replan_when_safe_ &&
+      inject_failed_replan_once_ && !plan_from_rest_with_transition &&
+      !replan_for_new_goal && !anchor_renewal_replan &&
+      failure_injection_episode.lifecycle.recovery ==
+          ExecutionRecoveryState::kTrackMain &&
+      transition_bundle && transition_sample &&
+      transition_role == navigation_planning::CandidateRole::kMain &&
+      !failure_injection_episode.safetySuffixActive() &&
+      transition_bundle->backup_available &&
+      std::isfinite(transition_elapsed_s) &&
+      ordinaryRenewalFailureInjectionMayArm(renewal_decision, planning_interval_s) &&
+      std::isfinite(retained_tracking_limit_m) &&
+      retained_tracking_limit_m > 0.0 &&
+      std::isfinite(transition_anchor_error_m) &&
+      transition_anchor_error_m <= 0.40 * retained_tracking_limit_m &&
+      latest_world && pinned_world_temporal.sourceCurrent() &&
+      execution_freshness == navigation_execution::TimestampFreshness::VALID &&
+      transition_bundle->validateWorld(latest_world.view, now().seconds()).valid;
+  const bool handoff_safe_margin_injection = inject_failed_replan_after_handoff_ &&
+      inject_failed_replan_once_ && !plan_from_rest_with_transition &&
+      replan_for_new_goal && failure_injection_episode.lifecycle.recovery ==
+          ExecutionRecoveryState::kTrackMain &&
+      transition_bundle && transition_sample &&
+      transition_role == navigation_planning::CandidateRole::kMain &&
+      !failure_injection_episode.safetySuffixActive() &&
+      transition_bundle->backup_available &&
+      std::isfinite(transition_elapsed_s) &&
+      transition_bundle->backup_start_time_s - transition_elapsed_s >= 1.5 &&
+      std::isfinite(retained_tracking_limit_m) && retained_tracking_limit_m > 0.0 &&
+      std::isfinite(transition_anchor_error_m) &&
+      transition_anchor_error_m <= 0.40 * retained_tracking_limit_m &&
+      latest_world && pinned_world_temporal.sourceCurrent() &&
+      execution_freshness == navigation_execution::TimestampFreshness::VALID &&
+      transition_bundle->validateWorld(latest_world.view, now().seconds()).valid;
+  const bool repeated_replan_failure = inject_failed_replan_repeated_ &&
+      !plan_from_rest_with_transition && transition_bundle && transition_sample &&
+      transition_role == navigation_planning::CandidateRole::kMain &&
+      failure_injection_episode.lifecycle.recovery ==
+          ExecutionRecoveryState::kTrackMain &&
+      !failure_injection_episode.safetySuffixActive() &&
+      transition_bundle->backup_available && std::isfinite(transition_elapsed_s) &&
+      transition_elapsed_s < transition_bundle->backup_start_time_s &&
+      std::isfinite(transition_anchor_error_m) &&
+      transition_anchor_error_m <= retained_tracking_limit_m && latest_world &&
+      pinned_world_temporal.sourceCurrent() &&
+      execution_freshness == navigation_execution::TimestampFreshness::VALID &&
+      transition_bundle->validateWorld(latest_world.view, now().seconds()).valid;
+  const bool repeated_plan_from_rest_failure = inject_failed_plan_from_rest_repeated_ &&
+      plan_from_rest_with_transition &&
+      failure_injection_episode.lifecycle.recovery ==
+          ExecutionRecoveryState::kStoppedRecovery;
+  const bool same_identity_renewal_injection =
+      same_identity_renewal_eligible &&
+      same_identity_renewal_injection_.shouldInject(
+          same_identity_renewal_eligible_ordinal) &&
+      same_identity_renewal_still_current();
+  const bool injected_failure = injected_replan_failure ||
+      ordinary_renewal_failure_injection ||
+      handoff_safe_margin_injection || repeated_replan_failure ||
+      repeated_plan_from_rest_failure || same_identity_renewal_injection;
+  if (injected_failure) {
+    if (!inject_failed_replan_repeated_ &&
+        !inject_failed_plan_from_rest_repeated_) {
+      inject_failed_replan_once_ = false;
+    }
+    if (same_identity_renewal_injection) {
+      same_identity_renewal_injection_.markInjected();
+    }
+    result = navigation_planning::PlannerStatus::kFailed;
+    planning_outcome.outcome =
+        navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
+    planning_outcome.failure_stage = navigation_planning::PlanningFailureStage::kInput;
+    planning_outcome.failure_reason = navigation_planning::PlanningFailureReason::kInvalidInput;
+    RCLCPP_WARN(get_logger(),
+                "diagnostic injection converted planning cycle=%lu to a failed planning result",
+                static_cast<unsigned long>(cycle_count_));
+  }
+  last_planner_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now() - planner_started).count();
+  const bool timed_out =
+      timed_out_planner_solve_generation_.load() == solve_generation;
+  const bool stopped_recovery_retry =
+      plan_from_rest_with_transition &&
+      execution_authority_.snapshot().lifecycle.recovery ==
+          ExecutionRecoveryState::kStoppedRecovery;
+  if (timed_out && !stopped_recovery_retry) {
+    RCLCPP_ERROR(get_logger(),
+                 "Discarding planner backend solve generation=%lu after planner watchdog timeout",
+                 static_cast<unsigned long>(solve_generation));
+    planner_->discardCommandCandidate();
+    return;
+  }
+  if (timed_out) {
+    // The immutable STOPPED_HOLD remains exposed while the measured-state
+    // solve is retried. Treat the canceled solve as a bounded PlanFromRest
+    // failure so the stopped-recovery deadline can decide whether to continue
+    // or fail closed.
+    result = navigation_planning::PlannerStatus::kFailed;
+    planning_outcome.outcome =
+        navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
+    planning_outcome.failure_stage =
+        navigation_planning::PlanningFailureStage::kDeadline;
+    planning_outcome.failure_reason =
+        navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline;
+    RCLCPP_WARN(
+        get_logger(),
+        "planner backend stopped-recovery solve generation=%lu exceeded watchdog; "
+        "retaining bounded hold within the stopped-recovery deadline",
+        static_cast<unsigned long>(solve_generation));
+  }
+  // Publish the post-watchdog outcome.  This keeps the existing compact
+  // status fields aligned with the outcome used by the admission code while
+  // planner_backend_* remains the pre-admission causal witness.
+  last_planning_outcome_.store(static_cast<int>(planning_outcome.outcome),
+                               std::memory_order_release);
+  last_planning_failure_stage_.store(
+      static_cast<int>(planning_outcome.failure_stage), std::memory_order_release);
+  last_planning_failure_reason_.store(
+      static_cast<int>(planning_outcome.failure_reason), std::memory_order_release);
+  runtime_currentness_checked_steady_ns =
+      navigation_common::steadyClockNowNanoseconds();
+  if (!localization_epoch_ready_.load(std::memory_order_acquire) ||
+      active_localization_epoch_.load(std::memory_order_acquire) !=
+          localization_epoch_at_solve) {
+    RCLCPP_WARN(get_logger(),
+                "Discarding planner backend solve generation=%lu after localization epoch transition",
+                static_cast<unsigned long>(solve_generation));
+    planner_->discardCommandCandidate();
+    return;
+  }
+  const auto planner_diagnostics = planner_->diagnostics();
+  const auto& exp_diagnostics = planner_diagnostics.optimization;
+  const auto& backup_diagnostics = planner_diagnostics.backup_certificate;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    // A terminal mission status or a newer waypoint may arrive while the
+    // optimizer is running. The completed solve is then stale: never expose
+    // its internally committed trajectory to the command publisher.
+    if (!desired_intent_.goal() || desired_intent_.goal()->mission_id != goal->mission_id ||
+        desired_intent_.goal()->waypoint_index != goal->waypoint_index ||
+        desired_intent_.goal()->request_id != goal->request_id) {
+      planner_->discardCommandCandidate();
+      return;
+    }
+  }
+  if (terminalHoldIsPending(
+          execution_authority_.snapshot().commandAvailable(),
+          trajectory_reaches_goal_.load(std::memory_order_acquire),
+          effective_terminal_stop,
+          terminal_bundle_generation_.load(std::memory_order_acquire))) {
+    // The command publisher may have observed the terminal endpoint while
+    // this solve was already in flight. The execution witness now owns the
+    // request; discard every late planner disposition, including retry and
+    // fail-closed paths, so it cannot erase the terminal hold or schedule a
+    // replacement solve.
+    planner_->discardCommandCandidate();
+    return;
+  }
+  // Diagnostic-only status substitution at the backend-result boundary.
+  // The real solve, immutable PlanningKey, desired revision and exact active
+  // execution snapshot are retained. No validator or classifier is bypassed.
+  bool exact_optimization_failure_applied = false;
+  const auto exact_injection_target = goal
+      ? exact_optimization_failure_injection_.matchingTarget(
+            execution_at_solve.activeRequestId(), goal->request_id)
+      : std::nullopt;
+  if (exact_injection_target &&
+      !plan_from_rest_with_transition && !injected_failure &&
+      !timed_out && result != navigation_planning::PlannerStatus::kEmergency) {
+    const auto injection_now_ns = now().nanoseconds();
+    const auto current_world = world_snapshot_store_.load();
+    const auto current_lease = execution_state_store_.load();
+    const bool current_world_fresh = current_world &&
+        assessWorldTemporal(true, current_world.identity, injection_now_ns,
+                            data_freshness_window_ns_).sourceCurrent();
+    const bool current_state_fresh = current_lease &&
+        navigation_execution::classifyTimestampFreshness(
+            injection_now_ns, current_lease->state.source_stamp_ns,
+            data_freshness_window_ns_) == navigation_execution::TimestampFreshness::VALID &&
+        current_lease->state.finite();
+    bool desired_current = false;
+    bool snapshot_current = false;
+    bool authority_identity_current = false;
+    bool exposure_allowed = false;
+    GoalTransitionKind injection_transition = GoalTransitionKind::kSteady;
+    std::uint64_t current_authority_version = 0U;
+    bool current_pending = false;
+    bool eligible = false;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      desired_current = desired_intent_.matches(*goal, goal_epoch) &&
+          active_localization_epoch_.load(std::memory_order_acquire) ==
+              localization_epoch_at_solve;
+      snapshot_current = execution_authority_.isCurrentSnapshot(execution_at_solve);
+      authority_identity_current =
+          execution_authority_.matchesAuthorityIdentity(execution_at_solve);
+      const auto current_authority = execution_authority_.snapshot();
+      current_authority_version = current_authority.version;
+      current_pending = static_cast<bool>(current_authority.pending);
+      exposure_allowed = command_execution_lease_failure_latch_.allowsCommandExposure();
+      injection_transition = classifyGoalTransition(
+          desired_intent_.goal(), executingGoalSnapshot());
+      eligible = exactOptimizationFailureHotHandoffEligible(
+          *exact_injection_target, planning_request.key,
+          *goal, execution_at_solve, injection_transition, desired_current,
+          snapshot_current && exposure_allowed && !current_pending,
+          current_state_fresh, current_world_fresh, injection_now_ns);
+    }
+    const bool semantic_target = exact_injection_target.has_value();
+    if (semantic_target) {
+      const auto publish_injection_event = [&](const std::string& event_name) {
+        diagnostic_msgs::msg::DiagnosticArray event;
+        event.header.stamp = now();
+        diagnostic_msgs::msg::DiagnosticStatus status;
+        status.name = "navigation_runtime/exact_optimization_failure_injection";
+        status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+        status.message = event_name;
+        const auto field = [&status](const std::string& key, const auto value) {
+          diagnostic_msgs::msg::KeyValue item;
+          item.key = key;
+          item.value = std::to_string(value);
+          status.values.push_back(std::move(item));
+        };
+        field("planning_cycle_id", cycle_count_);
+        field("solve_generation", solve_generation);
+        field("desired_revision", goal_epoch);
+        field("desired_request", goal->request_id);
+        field("active_request", execution_at_solve.activeRequestId());
+        field("active_generation", execution_at_solve.activeGeneration());
+        field("active_lineage", execution_at_solve.active_lineage);
+        field("authority_version", execution_at_solve.version);
+        field("current_authority_version", current_authority_version);
+        field("pending_at_solve", execution_at_solve.pending ? 1 : 0);
+        field("pending_current", current_pending ? 1 : 0);
+        field("desired_current", desired_current ? 1 : 0);
+        field("snapshot_current", snapshot_current ? 1 : 0);
+        field("authority_identity_current", authority_identity_current ? 1 : 0);
+        field("exposure_allowed", exposure_allowed ? 1 : 0);
+        field("state_fresh", current_state_fresh ? 1 : 0);
+        field("world_fresh", current_world_fresh ? 1 : 0);
+        field("key_valid", planning_request.key.valid() ? 1 : 0);
+        field("transition_kind", static_cast<int>(injection_transition));
+        field("active_bundle_valid", execution_at_solve.active &&
+            execution_at_solve.active->valid() ? 1 : 0);
+        field("active_interval_valid", execution_at_solve.active &&
+            execution_at_solve.active->valid_from_ns <= injection_now_ns &&
+            injection_now_ns <= execution_at_solve.active->valid_until_ns ? 1 : 0);
+        field("eligible", eligible ? 1 : 0);
+        field("localization_epoch", planning_request.key.localization_epoch);
+        field("world_generation", planning_request.key.pinned_world_generation);
+        field("world_revision", planning_request.key.pinned_world_revision);
+        field("original_planner_status", static_cast<int>(planner_result_before_injection));
+        field("injected_planner_status", static_cast<int>(
+            navigation_planning::PlannerStatus::kOptimizationFailed));
+        field("ros_stamp_ns", injection_now_ns);
+        field("steady_stamp_ns", navigation_common::steadyClockNowNanoseconds());
+        event.status.push_back(std::move(status));
+        diagnostics_publisher_->publish(event);
+      };
+      if (exact_optimization_failure_injection_.consumeIfEligible(eligible)) {
+        publish_injection_event("FAULT_INJECTION_ARMED");
+        result = navigation_planning::PlannerStatus::kOptimizationFailed;
+        exact_optimization_failure_applied = true;
+        publish_injection_event("FAULT_INJECTION_APPLIED");
+      } else {
+        publish_injection_event("FAULT_INJECTION_REJECTED");
+      }
+    }
+  }
+  // The backend stages a candidate; the execution store commits it only after
+  // the authorization checks below. Its planning-history generation changes
+  // only after the execution commit ACK, so staging is not evidence of a ready
+  // command.
+  const bool solve_committed_new_generation = planner_->hasStagedCommandCandidate();
+  const auto disposition = classifyPlannerResult(
+      result, plan_from_rest_with_transition,
+      execution_authority_.snapshot().commandAvailable() && !stopped_recovery_retry,
+      solve_committed_new_generation);
+  if (exact_optimization_failure_applied) {
+    RCLCPP_WARN(get_logger(),
+                "exact diagnostic OptimizationFailed cycle=%lu disposition=%d active_generation=%lu",
+                static_cast<unsigned long>(cycle_count_), static_cast<int>(disposition),
+                static_cast<unsigned long>(execution_at_solve.activeGeneration()));
+  }
+  if (disposition != PlannerResultDisposition::CommandReady) {
+    // A staged candidate is private planner state until the execution store
+    // commits it. Every other disposition is discard-only, including an
+    // emergency candidate that cannot pass the normal command boundary.
+    planner_->discardCommandCandidate();
+  }
+  if (disposition == PlannerResultDisposition::FailClosed) {
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    const auto current_execution = execution_authority_.snapshot();
+    auto mutation = navigation_execution::ConditionalExecutionMutation::kStale;
+    if (goal && desired_intent_.matches(*goal, goal_epoch) &&
+        active_localization_epoch_.load(std::memory_order_acquire) ==
+            localization_epoch_at_solve) {
+      mutation = execution_authority_.failClosedIfCurrentSnapshot(
+          execution_at_solve);
+    }
+    if (mutation == navigation_execution::ConditionalExecutionMutation::kApplied) {
+      trajectory_completion_witness_.reset();
+      trajectory_reaches_goal_.store(false, std::memory_order_release);
+      terminal_bundle_generation_.store(0U, std::memory_order_release);
+    }
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                         "planner result status=%d desired_revision=%lu expected_generation=%lu "
+                         "current_generation=%lu fail_close_disposition=%d",
+                         static_cast<int>(result), static_cast<unsigned long>(goal_epoch),
+                         static_cast<unsigned long>(expected_timeline_at_cycle.activeGeneration()),
+                         static_cast<unsigned long>(current_execution.activeGeneration()),
+                         static_cast<int>(mutation));
+  }
+  if (disposition == PlannerResultDisposition::RestartFromRest) {
+    bool restart_identity_current = false;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      restart_identity_current = goal &&
+          desired_intent_.matches(*goal, goal_epoch) &&
+          active_localization_epoch_.load(std::memory_order_acquire) ==
+              localization_epoch_at_solve &&
+          execution_authority_.isCurrentSnapshot(execution_at_solve);
+      if (restart_identity_current) {
+        trajectory_reaches_goal_.store(false);
+        terminal_bundle_generation_.store(0U);
+        const auto committed_timeline = execution_authority_.snapshot();
+        const auto committed_bundle = committed_timeline.active;
+        const auto committed_goal_epoch = executionGoalEpoch();
+        const auto execution_snapshot = execution_authority_.snapshot();
+        const bool command_exposure_allowed =
+            command_execution_lease_failure_latch_.allowsCommandExposure();
+        const bool scheduled_bundle_current = committed_bundle &&
+            effective_scheduled_key.committed_bundle_generation != 0U &&
+            committed_bundle->bundle_generation ==
+                effective_scheduled_key.committed_bundle_generation;
+        const bool completion_identity_current = !execution_snapshot.failed() &&
+            command_exposure_allowed && scheduled_bundle_current &&
+            executingGoalSnapshot() &&
+            (execution_authority_.matchesActive(*executingGoalSnapshot(), committed_goal_epoch, localization_epoch_at_solve, committed_bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_solve));
+        if (completion_identity_current) {
+          trajectory_completion_witness_ = TrajectoryCompletionWitness{
+              committed_bundle->bundle_generation,
+              committed_timeline.version,
+              committed_bundle->localization_epoch,
+              committed_bundle->goal_epoch,
+              committed_bundle->request_id,
+              executingGoalSnapshot()->mission_id,
+              executingGoalSnapshot()->waypoint_index};
+        } else {
+          // A restart result without a current committed generation is only
+          // restart intent; it is not evidence that a trajectory completed.
+          trajectory_completion_witness_.reset();
+        }
+        if (!committed_bundle ||
+            !execution_authority_.requestRestartFromRest(*committed_bundle)) {
+          return;
+        }
+        (void)desired_intent_.consumeHotRetarget();
+      }
+    }
+    if (!restart_identity_current) {
+      RCLCPP_DEBUG(get_logger(),
+                   "discarding stale planner local-boundary result for mission=%s waypoint=%u request=%lu",
+                   goal->mission_id.c_str(), goal->waypoint_index,
+                   static_cast<unsigned long>(goal->request_id));
+      return;
+    }
+    RCLCPP_INFO(get_logger(),
+                "planner backend local trajectory boundary reached; scheduling PlanFromRest");
+  }
+  if (disposition == PlannerResultDisposition::RetryFromRest) {
+    bool stopped_recovery_timeout = false;
+    bool failure_identity_current = false;
+    bool terminal_hold_pending = false;
+    std::uint64_t retry_active_generation = 0U;
+    bool retry_after_failed = false;
+    double failure_window_s = std::numeric_limits<double>::quiet_NaN();
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      if (goal && desired_intent_.matches(*goal, goal_epoch) &&
+          active_localization_epoch_.load(std::memory_order_acquire) ==
+              localization_epoch_at_solve &&
+          execution_authority_.isCurrentSnapshot(execution_at_solve) &&
+          execution_authority_.snapshot().lifecycle.recovery ==
+              ExecutionRecoveryState::kStoppedRecovery) {
+        failure_identity_current = true;
+        retry_active_generation = execution_authority_.snapshot().activeGeneration();
+        terminal_hold_pending = terminalHoldIsPending(
+            execution_authority_.snapshot().commandAvailable(),
+            trajectory_reaches_goal_.load(std::memory_order_acquire),
+            effective_terminal_stop,
+            terminal_bundle_generation_.load(std::memory_order_acquire));
+        if (!terminal_hold_pending) {
+          trajectory_reaches_goal_.store(false);
+          terminal_bundle_generation_.store(0U);
+        }
+        const auto failure_now_ns = navigation_common::steadyClockNowNanoseconds();
+        if (plan_from_rest_first_failure_steady_ns_ == 0) {
+          plan_from_rest_first_failure_steady_ns_ = failure_now_ns;
+        }
+        failure_window_s = static_cast<double>(
+            static_cast<long double>(failure_now_ns) -
+            static_cast<long double>(plan_from_rest_first_failure_steady_ns_)) * 1.0e-9;
+        const auto timeout_state = execution_authority_.snapshot().lifecycle.recovery;
+        stopped_recovery_timeout = stoppedPlanningTimeoutMayFailClosed(
+            timeout_state,
+            std::isfinite(measured_speed_mps) && measured_speed_mps <=
+                navigation_planning::PlanningTimingContract::kStationarySpeedMps,
+            failure_window_s,
+            navigation_planning::PlanningTimingContract::kStoppedRecoveryTimeoutS);
+        if (stopped_recovery_timeout &&
+            execution_authority_.failClosedIfCurrentSnapshot(execution_at_solve) ==
+                navigation_execution::ConditionalExecutionMutation::kApplied) {
+          trajectory_completion_witness_.reset();
+          trajectory_reaches_goal_.store(false, std::memory_order_release);
+          terminal_bundle_generation_.store(0U, std::memory_order_release);
+        }
+        retry_after_failed = execution_authority_.snapshot().failed();
+      }
+    }
+    try {
+      diagnostic_msgs::msg::DiagnosticArray event;
+      event.header.stamp = navigation_common::nanosecondsToRosTime(
+          now().nanoseconds()).value_or(builtin_interfaces::msg::Time{});
+      diagnostic_msgs::msg::DiagnosticStatus status;
+      status.name = "navigation_runtime/recovery_retry_witness";
+      status.hardware_id = "planning_worker";
+      status.message = "diagnostic_only; actual retry disposition";
+      const auto add = [&status](const char* name, const auto value) {
+        diagnostic_msgs::msg::KeyValue field;
+        field.key = name;
+        field.value = std::to_string(value);
+        status.values.push_back(std::move(field));
+      };
+      add("planning_cycle_id", cycle_count_);
+      add("request_id", goal ? goal->request_id : 0U);
+      add("goal_epoch", goal_epoch);
+      add("localization_epoch", localization_epoch_at_solve);
+      add("active_generation", retry_active_generation);
+      add("identity_current", failure_identity_current ? 1 : 0);
+      add("timeout", stopped_recovery_timeout ? 1 : 0);
+      add("after_failed", retry_after_failed ? 1 : 0);
+      add("terminal_hold_pending", terminal_hold_pending ? 1 : 0);
+      event.status.push_back(std::move(status));
+      diagnostics_publisher_->publish(event);
+    } catch (const std::exception& error) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                           "recovery retry witness publish failed: %s", error.what());
+    }
+    if (!failure_identity_current) {
+      RCLCPP_DEBUG(get_logger(),
+                   "discarding stale PlanFromRest failure for mission=%s waypoint=%u request=%lu",
+                   goal->mission_id.c_str(), goal->waypoint_index,
+                   static_cast<unsigned long>(goal->request_id));
+    } else if (stopped_recovery_timeout) {
+      RCLCPP_ERROR(get_logger(),
+                   "planner backend PlanFromRest recovery timeout elapsed=%.3f timeout=%.3f s; "
+                   "fail-closed for mission=%s waypoint=%u",
+                   failure_window_s,
+                   navigation_planning::PlanningTimingContract::kStoppedRecoveryTimeoutS,
+                   goal->mission_id.c_str(), goal->waypoint_index);
+    } else {
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000,
+          "planner backend PlanFromRest transient failure (%d); retrying within stopped "
+          "recovery deadline elapsed=%.3f timeout=%.3f s",
+          static_cast<int>(result), failure_window_s,
+          navigation_planning::PlanningTimingContract::kStoppedRecoveryTimeoutS);
+    }
+  }
+  if (disposition == PlannerResultDisposition::RetainCommittedCommand ||
+      disposition == PlannerResultDisposition::ValidateRetainedCommand) {
+    const RetainedValidationContext retained_context{
+        disposition == PlannerResultDisposition::ValidateRetainedCommand
+            ? RetainedValidationPurpose::kPlannerValidationOnly
+            : RetainedValidationPurpose::kAfterFailedReplacement,
+        plan_from_rest_with_transition,
+        transition_bundle && transition_bundle->terminal_stop,
+        solve_generation, cycle_count_, result, retained_tracking_limit_m,
+        std::nullopt, execution_at_solve};
+    validateRetainedCommand(goal, goal_epoch, localization_epoch_at_solve,
+                            effective_scheduled_key, retained_context);
+  }
+  if (disposition == PlannerResultDisposition::CommandReady) {
+    {
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      if (!nominalPlanningAllowed(
+              execution_authority_.snapshot().lifecycle.recovery)) {
+        planner_->discardCommandCandidate();
+        return;
+      }
+      if (!localization_epoch_ready_.load(std::memory_order_acquire) ||
+          active_localization_epoch_.load(std::memory_order_acquire) !=
+              localization_epoch_at_solve ||
+          desired_intent_.revision() != goal_epoch) {
+        planner_->discardCommandCandidate();
+        return;
+      }
+      if (!command_execution_lease_failure_latch_.allowsCommandExposure()) {
+        planner_->discardCommandCandidate();
+        return;
+      }
+      if (timed_out_planner_solve_generation_.load() == solve_generation) {
+        planner_->discardCommandCandidate();
+        return;
+      }
+      // Keep the currently exposed command authoritative while the candidate
+      // is exported, revalidated and committed.  Clearing availability here
+      // creates an observable replacement window in which the sampler can see
+      // no command even though the old immutable bundle is still executable.
+      // A successful commit below swaps the store pointer first. A rejected
+      // candidate leaves all previous command state untouched.
+    }
+    runtime_admission_attempted = true;
+    runtime_admission_started_steady_ns =
+        navigation_common::steadyClockNowNanoseconds();
+    const bool runtime_candidate_admitted = commitPlannerCandidate(
+        *goal, goal_epoch, localization_epoch_at_solve, now().nanoseconds(),
+        planning_request.key, planning_outcome.candidate);
+    runtime_admission_finished_steady_ns =
+        navigation_common::steadyClockNowNanoseconds();
+    runtime_admission_succeeded = runtime_candidate_admitted;
+    if (!runtime_candidate_admitted) {
+      RCLCPP_WARN(get_logger(),
+                  "execution boundary rejected planner candidate after solve; "
+                  "retaining the previously exposed command when still current");
+      return;
+    }
+    bool successor_staged = false;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      if (!localization_epoch_ready_.load(std::memory_order_acquire) ||
+          active_localization_epoch_.load(std::memory_order_acquire) !=
+              localization_epoch_at_solve || desired_intent_.revision() != goal_epoch) {
+        // This solve is stale. It must be discard-only and cannot clear a
+        // newer command identity that won the execution-store race.
+        return;
+      }
+      if (!command_execution_lease_failure_latch_.allowsCommandExposure()) {
+        return;
+      }
+      const auto timeline = execution_authority_.snapshot();
+      successor_staged = static_cast<bool>(timeline.pending);
+      runtime_successor_staged = successor_staged;
+      if (!successor_staged) {
+        const auto committed_bundle = timeline.active;
+        if (!committed_bundle || !(desired_intent_.matches(*goal, goal_epoch) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_solve) && execution_authority_.matchesActive(*goal, goal_epoch, localization_epoch_at_solve, committed_bundle->bundle_generation))) {
+          // The store or desired identity changed after this solve. Treat the
+          // callback as stale and leave the newer command identity untouched.
+          return;
+        }
+
+        // An immediate commit is the ownership boundary: a prior BACKUP
+        // suffix and its completion markers must not contaminate the new
+        // MAIN command sampled by the publisher.
+        trajectory_completion_witness_.reset();
+        trajectory_reaches_goal_.store(false, std::memory_order_release);
+        terminal_bundle_generation_.store(0U, std::memory_order_release);
+      }
+      if (pending_handoff_goal &&
+          !pending_goal_owner_.consumeGoal(pending_handoff_goal)) {
+        // The pending pointer is the ownership witness for this two-phase
+        // handoff. A disappearance while solving is an ordering violation;
+        // keep the validated active command, but make the loss observable.
+        RCLCPP_WARN(get_logger(),
+                    "committed stopped-suffix replacement but pending goal owner changed");
+      }
+    }
+    if (!successor_staged) {
+      const auto committed_bundle = execution_authority_.load();
+      const auto committed_end_sample = committed_bundle &&
+          committed_bundle->hasDeclaredEndpointMetadata()
+          ? committed_bundle->sampleAtDeclaredEnd()
+          : std::nullopt;
+      const double completion_tolerance = goalCompletionTolerance(*goal);
+      const bool committed_reaches_goal = stop_goal && committed_end_sample.has_value() &&
+          (committed_end_sample->position_world - target).norm() <= completion_tolerance;
+      {
+        std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+        std::lock_guard<std::mutex> input_lock(input_mutex_);
+        std::lock_guard<std::mutex> command_lock(
+            command_execution_lease_failure_latch_.transitionMutex());
+        const auto current_bundle = execution_authority_.load();
+        if (current_bundle && committed_bundle &&
+            current_bundle.get() == committed_bundle.get() &&
+            (desired_intent_.matches(*goal, goal_epoch) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_solve) && execution_authority_.matchesActive(*goal, goal_epoch, localization_epoch_at_solve, committed_bundle->bundle_generation))) {
+          trajectory_reaches_goal_.store(committed_reaches_goal,
+                                         std::memory_order_release);
+        } else {
+          return;
+        }
+      }
+      if (stop_goal && committed_bundle && committed_bundle->hasDeclaredEndpointMetadata() &&
+          (!committed_end_sample ||
+           (committed_end_sample->position_world - target).norm() > completion_tolerance)) {
+        RCLCPP_WARN(get_logger(),
+                    "planner backend terminal endpoint check failed sample=%d start=%.9f "
+                    "duration=%.9f backup_start=%.9f valid_from=%ld valid_until=%ld target=(%.2f,%.2f,%.2f)",
+                    committed_end_sample.has_value() ? 1 : 0,
+                    committed_bundle->start_wall_time_s, committed_bundle->duration_s,
+                    committed_bundle->backup_start_time_s,
+                    static_cast<long>(committed_bundle->valid_from_ns),
+                    static_cast<long>(committed_bundle->valid_until_ns),
+                    target.x(), target.y(), target.z());
+      }
+    }
+    // A newly committed MAIN already passed the complete candidate and
+    // execution-boundary contracts. Give it one scheduler interval to
+    // establish a continuous command before evaluating its next renewal
+    // deadline. Without this one-shot quiet period, a candidate whose
+    // BACKUP switch is only slightly beyond the renewal lead is immediately
+    // replaced on the next timer tick, producing a commit/replan train and
+    // needlessly increasing hot-splice pressure. A new goal and a hard
+    // anchor recovery remain higher priority at the next tick.
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    if (!goal || !(desired_intent_.matches(*goal, goal_epoch) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_solve))) {
+      return;
+    }
+    skip_replan_once_.store(true, std::memory_order_release);
+    if (planning_outcome.candidate) {
+      baseline_refinement_opportunity_.noteAdmission(
+          planning_request.key, *planning_outcome.candidate, planning_outcome.outcome,
+          (planning_transition == PlanningIntentTransition::kNewIntent) && !restart_from_rest && plan_from_rest_with_transition &&
+              episode_at_cycle.lifecycle.phase == ExecutionPhase::kInitialHold &&
+              episode_at_cycle.lifecycle.recovery == ExecutionRecoveryState::kInitialHold);
+    }
+    plan_from_rest_first_failure_steady_ns_ = 0;
+    // Do not fall back to hot replan after a failed new-goal attempt.  That
+    // would keep publishing the previous waypoint while the mission has
+    // already advanced.
+    {
+      if ((planning_transition == PlanningIntentTransition::kNewIntent)) (void)desired_intent_.consumeNewIntent();
+      if (!successor_staged && clearHotGoalTransitionAfterCommit(
+              plan_from_rest_with_transition, replan_for_new_goal)) {
+        (void)desired_intent_.consumeHotRetarget();
+      }
+      if (restart_from_rest) execution_authority_.clearRestartFromRest();
+    }
+  }
+
+  // Emit one decision record for every solve generation.  Successful hot
+  // replans are as important as failures for latency distributions and for
+  // proving that sampled commands came from one committed generation.
+  {
+    const auto execution_trace_snapshot = execution_trace_store_.load();
+    const ExecutionTraceSnapshot causal_trace = execution_trace_snapshot
+        ? *execution_trace_snapshot : ExecutionTraceSnapshot{};
+    const auto committed_snapshot = planner_->committedSnapshot();
+    const auto& committed = committed_snapshot.position;
+    const auto committed_generation = committed_snapshot.generation;
+    const auto& committed_certificate = committed_snapshot.certificate;
+    const auto& commit_diagnostics = committed_snapshot.diagnostics;
+    const bool commit_observed_this_cycle = commitObservedThisCycle(
+        committed_generation_before_solve, committed_generation,
+        commit_diagnostics.generation);
+    const bool has_committed_bundle = committed_generation > 0U && !committed.empty();
+    navigation_planning::TrajectoryPoint committed_end_sample;
+    const bool committed_end_valid = has_committed_bundle && committed.sample(
+        committed.duration_s, committed_end_sample);
+    const Eigen::Vector3d committed_end = committed_end_valid
+        ? committed_end_sample.position_world : Eigen::Vector3d::Zero();
+    const double endpoint_error = !has_committed_bundle
+                                      ? std::numeric_limits<double>::infinity()
+                                      : (committed_end - target).norm();
+    const auto robot_grid_type = pinned_world.view->classify(
+        execution_state.position_world, navigation_world_model::GridLayer::kEvidence);
+    const auto robot_inflated_grid_type = pinned_world.view->classify(
+        execution_state.position_world, navigation_world_model::GridLayer::kInflated);
+    const Eigen::Vector3d planning_target = planner_diagnostics.planning_goal.allFinite()
+        ? planner_diagnostics.planning_goal : target;
+    const auto target_grid_type = pinned_world.view->classify(
+        target, navigation_world_model::GridLayer::kEvidence);
+    const auto target_inflated_grid_type = pinned_world.view->classify(
+        target, navigation_world_model::GridLayer::kInflated);
+    const auto planning_target_grid_type = pinned_world.view->classify(
+        planning_target, navigation_world_model::GridLayer::kEvidence);
+    const auto planning_target_inflated_grid_type = pinned_world.view->classify(
+        planning_target, navigation_world_model::GridLayer::kInflated);
+    // WorldModel deliberately has no nearest-known-free or nearest-occupied
+    // query. Keep these optional diagnostics unavailable rather than reaching
+    // back into worker-owned mutable map state.
+    const double nearest_known_free_distance =
+        std::numeric_limits<double>::quiet_NaN();
+    Eigen::Vector3d nearest_occupied = Eigen::Vector3d::Constant(
+        std::numeric_limits<double>::quiet_NaN());
+    const double nearest_occupied_distance =
+        std::numeric_limits<double>::quiet_NaN();
+    const int solve_stage = planner_diagnostics.solve_stage;
+    const int replan_return_code = planner_diagnostics.replan_return_code;
+    const int commit_decision = planner_diagnostics.commit_decision;
+    const double planner_elapsed_ms = static_cast<double>(last_planner_us_) * 1.0e-3;
+    const bool solve_deadline_exceeded =
+        planner_elapsed_ms > planner_diagnostics.solve_deadline_s * 1000.0;
+    const auto trace_now_ns = now().nanoseconds();
+    const double execution_age_at_trace_ms =
+        executionStateAgeMs(trace_now_ns, execution_stamp_ns);
+    RCLCPP_INFO(get_logger(),
+                "planner backend decision_trace cycle=%lu solve_generation=%lu committed_generation=%lu "
+                "pinned_world_generation=%lu pinned_world_revision=%lu "
+                "pinned_world_stamp_ns=%ld "
+                "certificate_world_generation=%lu certificate_world_revision=%lu "
+                "certificate_world_stamp_ns=%ld "
+                "cloud_stamp_ns=%ld corrected_stamp_ns=%ld propagated_stamp_ns=%ld "
+                "state_age_ms=%.3f mode=%s result=%d replan_code=%d commit_decision=%d "
+                "solve_stage=%d solve_stage_name=%s solve_elapsed_ms=%.3f "
+                "solve_deadline_exceeded=%d target=(%.2f,%.2f,%.2f) "
+                "planning_target=(%.2f,%.2f,%.2f) goal_radius=%.3f goal_adjusted=%d "
+                "target_grid=%d target_inf_grid=%d "
+                "planning_target_grid=%d planning_target_inf_grid=%d "
+                "committed_end=(%.2f,%.2f,%.2f) endpoint_error=%.3f command=%d failure=%d "
+                "exp_frontend_ms=%.3f exp_opt_ms=%.3f backup_frontend_ms=%.3f "
+                "backup_opt_ms=%.3f robot_grid=%d robot_inf_grid=%d nearest_free_m=%.3f "
+                "nearest_occ_m=%.3f nearest_occ=(%.2f,%.2f,%.2f)",
+                static_cast<unsigned long>(cycle_count_),
+                static_cast<unsigned long>(solve_generation),
+                static_cast<unsigned long>(committed_generation),
+                static_cast<unsigned long>(pinned_world.identity.generation),
+                static_cast<unsigned long>(pinned_world.identity.revision),
+                static_cast<long>(pinned_world.identity.observation_stamp_ns),
+                static_cast<unsigned long>(committed_certificate.validated_world.generation),
+                static_cast<unsigned long>(committed_certificate.validated_world.revision),
+                static_cast<long>(committed_certificate.validated_world.observation_stamp_ns),
+                static_cast<long>(cloud_stamp_ns), static_cast<long>(corrected_stamp_ns),
+                static_cast<long>(execution_stamp_ns),
+                execution_age_at_trace_ms,
+                plan_from_rest_with_transition ? "PlanFromRest" : "ReplanOnce",
+                static_cast<int>(result),
+                replan_return_code, commit_decision, solve_stage,
+                planner_diagnostics.solve_stage_name.c_str(), planner_elapsed_ms,
+                solve_deadline_exceeded, target.x(), target.y(),
+                target.z(), planning_target.x(), planning_target.y(), planning_target.z(),
+                planner_diagnostics.goal_acceptance_radius_m,
+                planner_diagnostics.goal_endpoint_adjusted ? 1 : 0,
+                static_cast<int>(target_grid_type), static_cast<int>(target_inflated_grid_type),
+                static_cast<int>(planning_target_grid_type),
+                static_cast<int>(planning_target_inflated_grid_type),
+                committed_end.x(), committed_end.y(), committed_end.z(),
+                endpoint_error, execution_authority_.snapshot().commandAvailable(),
+                execution_authority_.snapshot().failed(),
+                planner_diagnostics.module_time_us[0] * 1.0e-3,
+                planner_diagnostics.module_time_us[1] * 1.0e-3,
+                planner_diagnostics.module_time_us[2] * 1.0e-3,
+                planner_diagnostics.module_time_us[3] * 1.0e-3,
+                static_cast<int>(robot_grid_type), static_cast<int>(robot_inflated_grid_type),
+                nearest_known_free_distance, nearest_occupied_distance,
+                nearest_occupied.x(), nearest_occupied.y(), nearest_occupied.z());
+
+    if (commit_observed_this_cycle) {
+      RCLCPP_INFO(get_logger(),
+                  "planner backend commit_trace generation=%lu previous_generation=%lu "
+                  "start_wall_time=%.9f execution_stamp_ns=%ld "
+                  "execution_age_at_solve_ms=%.3f execution_age_at_trace_ms=%.3f "
+                  "execution_p=[%.6f,%.6f,%.6f] execution_v=[%.6f,%.6f,%.6f] "
+                  "candidate_start_p=[%.6f,%.6f,%.6f] "
+                  "candidate_start_v=[%.6f,%.6f,%.6f] previous_valid=%d "
+                  "candidate_start_a=[%.6f,%.6f,%.6f] "
+                  "candidate_start_j=[%.6f,%.6f,%.6f] "
+                  "previous_sample_tt=%.6f splice_p=%.6f splice_v=%.6f "
+                  "splice_a=%.6f splice_j=%.6f splice_yaw=%.6f "
+                  "splice_yaw_rate=%.6f",
+                  static_cast<unsigned long>(commit_diagnostics.generation),
+                  static_cast<unsigned long>(commit_diagnostics.previous_generation),
+                  commit_diagnostics.candidate_start_wall_time_s,
+                  static_cast<long>(execution_stamp_ns),
+                  execution_age_at_solve_ms,
+                  execution_age_at_trace_ms,
+                  execution_state.position_world.x(), execution_state.position_world.y(),
+                  execution_state.position_world.z(), execution_state.velocity_world.x(),
+                  execution_state.velocity_world.y(), execution_state.velocity_world.z(),
+                  commit_diagnostics.candidate_start_position.x(),
+                  commit_diagnostics.candidate_start_position.y(),
+                  commit_diagnostics.candidate_start_position.z(),
+                  commit_diagnostics.candidate_start_velocity.x(),
+                  commit_diagnostics.candidate_start_velocity.y(),
+                  commit_diagnostics.candidate_start_velocity.z(),
+                  commit_diagnostics.previous_valid ? 1 : 0,
+                  commit_diagnostics.candidate_start_acceleration.x(),
+                  commit_diagnostics.candidate_start_acceleration.y(),
+                  commit_diagnostics.candidate_start_acceleration.z(),
+                  commit_diagnostics.candidate_start_jerk.x(),
+                  commit_diagnostics.candidate_start_jerk.y(),
+                  commit_diagnostics.candidate_start_jerk.z(),
+                  commit_diagnostics.previous_sample_time_s,
+                  commit_diagnostics.position_residual.norm(),
+                  commit_diagnostics.velocity_residual.norm(),
+                  commit_diagnostics.acceleration_residual.norm(),
+                  commit_diagnostics.jerk_residual.norm(),
+                  commit_diagnostics.yaw_residual,
+                  commit_diagnostics.yaw_rate_residual);
+    }
+
+    diagnostic_msgs::msg::DiagnosticArray trace_diagnostics;
+    trace_diagnostics.header.stamp = now();
+    diagnostic_msgs::msg::DiagnosticStatus trace_status;
+    trace_status.name = "navigation_runtime/planner";
+    trace_status.level = result == navigation_planning::PlannerStatus::kSuccess
+                             ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                             : diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    trace_status.message = "DECISION_TRACE";
+    // Snapshot the identities without holding an input lock while reading the
+    // execution timeline.  This preserves the established input -> timeline
+    // lock order and makes the trace describe the same post-commit boundary
+    // that the sampler will observe next.
+    std::optional<navigation_contracts::msg::NavigationGoal> desired_trace_goal;
+    std::optional<navigation_contracts::msg::NavigationGoal> executing_trace_goal;
+    {
+      std::lock_guard<std::mutex> lock(input_mutex_);
+      desired_trace_goal = desired_intent_.goal();
+      executing_trace_goal = executingGoalSnapshot();
+    }
+    const auto timeline_trace = execution_authority_.snapshot();
+    const auto transition_kind = classifyGoalTransition(
+        desired_trace_goal, executing_trace_goal);
+    const auto add_trace_value = [&trace_status](const std::string& key,
+                                                  const auto& value) {
+      diagnostic_msgs::msg::KeyValue item;
+      item.key = key;
+      item.value = std::to_string(value);
+      trace_status.values.push_back(std::move(item));
+    };
+    const auto add_trace_string = [&trace_status](const std::string& key,
+                                                  const std::string_view value) {
+      diagnostic_msgs::msg::KeyValue item;
+      item.key = key;
+      item.value = value;
+      trace_status.values.push_back(std::move(item));
+    };
+    const auto add_trace_vector = [&trace_status](const std::string& key,
+                                                   const auto& value) {
+      diagnostic_msgs::msg::KeyValue item;
+      item.key = key;
+      std::ostringstream stream;
+      stream << std::setprecision(17) << '[' << value.x() << ',' << value.y()
+             << ',' << value.z() << ']';
+      item.value = stream.str();
+      trace_status.values.push_back(std::move(item));
+    };
+    const auto trace_worker_snapshot = planning_worker_
+        ? planning_worker_->snapshot()
+        : PlanningWorkerSnapshot{};
+    const bool worker_transaction_matches =
+        trace_worker_snapshot.last_transaction_localization_epoch ==
+            effective_scheduled_key.localization_epoch &&
+        trace_worker_snapshot.last_transaction_goal_epoch ==
+            effective_scheduled_key.goal_epoch &&
+        trace_worker_snapshot.last_transaction_request_id ==
+            effective_scheduled_key.request_id &&
+        trace_worker_snapshot.last_transaction_route_revision ==
+            effective_scheduled_key.route_revision &&
+        trace_worker_snapshot.last_transaction_committed_bundle_generation ==
+            effective_scheduled_key.committed_bundle_generation &&
+        trace_worker_snapshot.last_transaction_pinned_world_generation ==
+            effective_scheduled_key.pinned_world_generation &&
+        trace_worker_snapshot.last_transaction_pinned_world_revision ==
+            effective_scheduled_key.pinned_world_revision &&
+        trace_worker_snapshot.last_transaction_anchor_stamp_ns ==
+            static_cast<std::uint64_t>(effective_scheduled_key.anchor_stamp_ns) &&
+        trace_worker_snapshot.last_transaction_dynamics_hash ==
+            effective_scheduled_key.dynamics_hash;
+    add_trace_string(
+        "worker_transaction_identity_scope",
+        worker_transaction_matches ? "EXACT_SCHEDULED_KEY" : "LATEST_UNMATCHED");
+    add_trace_value(
+        "runtime_request_enqueued_steady_ns",
+        worker_transaction_matches ? trace_worker_snapshot.last_enqueue_time_steady_ns
+                                    : 0);
+    add_trace_value(
+        "worker_dequeued_steady_ns",
+        worker_transaction_matches ? trace_worker_snapshot.last_worker_start_steady_ns
+                                    : 0);
+    add_trace_value(
+        "backend_received_steady_ns",
+        worker_transaction_matches ? trace_worker_snapshot.last_backend_entry_steady_ns
+                                    : 0);
+    add_trace_value(
+        "backend_finished_steady_ns",
+        worker_transaction_matches ? trace_worker_snapshot.last_backend_exit_steady_ns
+                                    : 0);
+    const auto add_goal_identity = [&add_trace_value, &add_trace_string](
+        const std::string_view prefix,
+        const std::optional<navigation_contracts::msg::NavigationGoal>& goal,
+        const std::uint64_t epoch) {
+      const std::string key_prefix(prefix);
+      add_trace_value(key_prefix + "_valid", goal ? 1 : 0);
+      add_trace_value(key_prefix + "_epoch", epoch);
+      if (!goal) return;
+      add_trace_string(key_prefix + "_mission_id", goal->mission_id);
+      add_trace_value(key_prefix + "_waypoint_index", goal->waypoint_index);
+      add_trace_value(key_prefix + "_request_id", goal->request_id);
+      add_trace_value(key_prefix + "_route_revision", goal->route.route_revision);
+    };
+    const auto add_bundle_identity = [&add_trace_value, &add_trace_string](
+        const std::string_view prefix,
+        const std::shared_ptr<const navigation_planning::CandidateBundle>& bundle) {
+      const std::string key_prefix(prefix);
+      add_trace_value(key_prefix + "_valid", bundle ? 1 : 0);
+      if (!bundle) return;
+      add_trace_value(key_prefix + "_localization_epoch", bundle->localization_epoch);
+      add_trace_value(key_prefix + "_goal_epoch", bundle->goal_epoch);
+      add_trace_value(key_prefix + "_request_id", bundle->request_id);
+      add_trace_value(key_prefix + "_bundle_generation", bundle->bundle_generation);
+      add_trace_value(key_prefix + "_activation_stamp_ns", bundle->activation_stamp_ns);
+      add_trace_value(key_prefix + "_world_generation", bundle->world_identity.generation);
+      add_trace_value(key_prefix + "_world_revision", bundle->world_identity.revision);
+      add_trace_value(key_prefix + "_world_stamp_ns",
+                      bundle->world_identity.observation_stamp_ns);
+      add_trace_value(key_prefix + "_role", static_cast<int>(bundle->role));
+      add_trace_value(key_prefix + "_backup_available", bundle->backup_available ? 1 : 0);
+    };
+    add_trace_string("transition_kind", goalTransitionKindName(transition_kind));
+    add_goal_identity("desired", desired_trace_goal,
+                      desired_intent_.revision());
+    add_goal_identity("executing", executing_trace_goal,
+                      executionGoalEpoch());
+    add_bundle_identity("active_execution", timeline_trace.active);
+    add_bundle_identity("pending_execution", timeline_trace.pending);
+    add_trace_value("active_execution_timeline_version", timeline_trace.version);
+    add_trace_value("pending_activation_ns", timeline_trace.pending_activation_ns);
+    const auto& active_bundle = timeline_trace.active;
+    const bool route_boundary_event_present = active_bundle &&
+        active_bundle->route_boundary_event.has_value();
+    add_trace_value("route_boundary_event_present", route_boundary_event_present ? 1 : 0);
+    if (route_boundary_event_present) {
+      const auto& boundary = *active_bundle->route_boundary_event;
+      add_trace_value("route_boundary_stamp_ns", boundary.boundary_stamp_ns);
+      add_trace_value("route_boundary_kind", static_cast<int>(boundary.kind));
+      add_trace_value("route_boundary_constraint_valid",
+                      active_bundle->route_boundary_constraint.has_value() &&
+                          active_bundle->route_boundary_constraint->valid() ? 1 : 0);
+      const auto boundary_sample = active_bundle->sampleAtDeclaredStamp(
+          boundary.boundary_stamp_ns);
+      add_trace_value("boundary_command_speed_mps",
+                      boundary_sample ? boundary_sample->velocity_world.norm() : 0.0);
+      add_trace_value("boundary_remaining_main_horizon_s",
+                      boundary_sample
+                          ? std::max(0.0, active_bundle->duration_s -
+                                boundary_sample->trajectory_time_s)
+                          : 0.0);
+      add_trace_value("terminal_velocity_mps",
+                      active_bundle->terminal_stop
+                          ? active_bundle->sampleAtDeclaredStamp(active_bundle->declared_end_ns)
+                                .value_or(navigation_planning::TrajectoryPoint{}).velocity_world.norm()
+                          : 0.0);
+    }
+    add_trace_value("planning_outcome",
+                    last_planning_outcome_.load(std::memory_order_acquire));
+    add_trace_value("planning_failure_stage",
+                    last_planning_failure_stage_.load(std::memory_order_acquire));
+    add_trace_value("planning_failure_reason",
+                    last_planning_failure_reason_.load(std::memory_order_acquire));
+    add_trace_value("planner_backend_outcome",
+                    static_cast<int>(planner_backend_outcome.outcome));
+    add_trace_value("planner_backend_failure_stage",
+                    static_cast<int>(planner_backend_outcome.failure_stage));
+    add_trace_value("planner_backend_failure_reason",
+                    static_cast<int>(planner_backend_outcome.failure_reason));
+    add_trace_string(
+        "planning_failure_stage_name",
+        navigation_planning::planningFailureStageName(
+            static_cast<navigation_planning::PlanningFailureStage>(
+                last_planning_failure_stage_.load(std::memory_order_acquire))));
+    add_trace_string(
+        "planning_failure_reason_name",
+        navigation_planning::planningFailureReasonName(
+            static_cast<navigation_planning::PlanningFailureReason>(
+                last_planning_failure_reason_.load(std::memory_order_acquire))));
+    add_trace_string(
+        "planner_backend_failure_stage_name",
+        navigation_planning::planningFailureStageName(
+            planner_backend_outcome.failure_stage));
+    add_trace_string(
+        "planner_backend_failure_reason_name",
+        navigation_planning::planningFailureReasonName(
+            planner_backend_outcome.failure_reason));
+    add_trace_value("planning_cycle_id", cycle_count_);
+    add_trace_value("planning_localization_epoch",
+                    effective_scheduled_key.localization_epoch);
+    add_trace_value("bundle_id", committed_generation);
+    add_trace_value("solve_generation", solve_generation);
+    add_trace_value("planning_start_mode",
+                    static_cast<int>(planning_request.key.start_mode));
+    add_trace_value("planner_renewal_reason",
+                    static_cast<int>(renewal_decision.reason));
+    add_trace_value("renewal_remaining_main_horizon_s",
+                    renewal_decision.remaining_main_horizon_s);
+    add_trace_value("renewal_required_lead_time_s",
+                    renewal_decision.required_lead_time_s);
+    add_trace_value("same_identity_renewal_eligible",
+                    same_identity_renewal_eligible ? 1 : 0);
+    add_trace_value("same_identity_renewal_ordinary",
+                    same_identity_renewal_facts.ordinary_renewal ? 1 : 0);
+    add_trace_value("same_identity_renewal_eligible_ordinal",
+                    same_identity_renewal_eligible_ordinal);
+    add_trace_value("same_identity_renewal_target_ordinal",
+                    same_identity_renewal_injection_.targetOrdinal());
+    add_trace_value("same_identity_renewal_injected",
+                    same_identity_renewal_injection ? 1 : 0);
+    add_trace_value("same_identity_renewal_injection_fired",
+                    same_identity_renewal_injection_.injectionFired() ? 1 : 0);
+    add_trace_string(
+        "same_identity_renewal_injection_reason",
+        same_identity_renewal_injection
+            ? "SAME_IDENTITY_NORMAL_RENEWAL" : "NONE");
+    add_trace_value("current_body_support_present",
+                    planning_request.current_body_support ? 1 : 0);
+    add_trace_value("planner_result_before_injection",
+                    static_cast<int>(planner_result_before_injection));
+    add_trace_value("planner_result_after_injection", static_cast<int>(result));
+    add_trace_value("planner_disposition", static_cast<int>(disposition));
+    add_trace_value("exact_optimization_failure_applied",
+                    exact_optimization_failure_applied ? 1 : 0);
+    add_trace_value("injected_replan_failure", injected_failure ? 1 : 0);
+    add_trace_value("commit_observed_this_cycle", commit_observed_this_cycle ? 1 : 0);
+    add_trace_value("execution_stamp_ns", execution_stamp_ns);
+    add_trace_value("state_age_at_solve_ms",
+                    execution_age_at_solve_ms);
+    add_trace_value("state_age_at_trace_ms", execution_age_at_trace_ms);
+    add_trace_vector("planning_state_position", execution_state.position_world);
+    add_trace_vector("planning_state_velocity", execution_state.velocity_world);
+    add_trace_vector("planning_state_acceleration", execution_state.acceleration_world);
+    add_trace_vector("planning_state_jerk", execution_state.jerk_world);
+    add_trace_value("planning_state_acceleration_estimated",
+                    execution_state.acceleration_estimated ? 1 : 0);
+    add_trace_value("planning_state_jerk_estimated",
+                    execution_state.jerk_estimated ? 1 : 0);
+    add_trace_vector("requested_goal", target);
+    add_trace_vector("planning_goal", planning_target);
+    add_trace_value("goal_acceptance_radius_m",
+                    planner_diagnostics.goal_acceptance_radius_m);
+    add_trace_value("goal_endpoint_adjusted",
+                    planner_diagnostics.goal_endpoint_adjusted ? 1 : 0);
+    add_trace_value("target_grid_state", static_cast<int>(target_grid_type));
+    add_trace_value("target_inflated_grid_state", static_cast<int>(target_inflated_grid_type));
+    if (commit_observed_this_cycle) {
+      add_trace_value("commit_previous_generation",
+                      commit_diagnostics.previous_generation);
+      add_trace_value("candidate_start_wall_time_s",
+                      commit_diagnostics.candidate_start_wall_time_s);
+      add_trace_vector("candidate_start_position",
+                       commit_diagnostics.candidate_start_position);
+      add_trace_vector("candidate_start_velocity",
+                       commit_diagnostics.candidate_start_velocity);
+      add_trace_vector("candidate_start_acceleration",
+                       commit_diagnostics.candidate_start_acceleration);
+      add_trace_vector("candidate_start_jerk",
+                       commit_diagnostics.candidate_start_jerk);
+      add_trace_value("splice_previous_valid",
+                      commit_diagnostics.previous_valid ? 1 : 0);
+      add_trace_value("splice_previous_sample_tt_s",
+                      commit_diagnostics.previous_sample_time_s);
+      add_trace_value("splice_position_residual_m",
+                      commit_diagnostics.position_residual.norm());
+      add_trace_value("splice_velocity_residual_mps",
+                      commit_diagnostics.velocity_residual.norm());
+      add_trace_value("splice_acceleration_residual_mps2",
+                      commit_diagnostics.acceleration_residual.norm());
+      add_trace_value("splice_jerk_residual_mps3",
+                      commit_diagnostics.jerk_residual.norm());
+      add_trace_value("splice_yaw_residual_rad", commit_diagnostics.yaw_residual);
+      add_trace_value("splice_yaw_rate_residual_radps",
+                      commit_diagnostics.yaw_rate_residual);
+    }
+    add_trace_value("pinned_world_generation", pinned_world.identity.generation);
+    add_trace_value("pinned_world_revision", pinned_world.identity.revision);
+    add_trace_value("pinned_world_stamp_ns", pinned_world.identity.observation_stamp_ns);
+      add_trace_value("certificate_world_generation",
+                    committed_certificate.validated_world.generation);
+    add_trace_value("certificate_world_revision",
+                    committed_certificate.validated_world.revision);
+    add_trace_value("certificate_world_stamp_ns",
+                    committed_certificate.validated_world.observation_stamp_ns);
+    add_trace_value("candidate_result", static_cast<int>(result));
+    add_trace_value("replan_code", replan_return_code);
+    add_trace_value("commit_decision", commit_decision);
+    add_trace_value("execution_boundary_rejection",
+                    last_execution_boundary_rejection_.load(std::memory_order_acquire));
+    add_trace_value("anchor_error_m", causal_trace.anchor_error_m);
+    add_trace_value("projected_anchor_error_m",
+                    causal_trace.projected_anchor_error_m);
+    add_trace_value("retained_tracking_limit_m",
+                    causal_trace.retained_tracking_limit_m);
+    add_trace_value("relative_anchor_speed_mps",
+                    causal_trace.relative_anchor_speed_mps);
+    add_trace_value("committed_suffix_usable",
+                    causal_trace.committed_suffix_usable ? 1 : 0);
+    add_trace_value("sampled_path_clear",
+                    causal_trace.sampled_path_clear ? 1 : 0);
+    add_trace_value("tracking_certificate_exceeded",
+                    causal_trace.tracking_certificate_exceeded ? 1 : 0);
+    add_trace_value("projected_tracking_certificate_exceeded",
+                    causal_trace.projected_tracking_certificate_exceeded ? 1 : 0);
+    add_trace_value("backup_available",
+                    causal_trace.backup_available ? 1 : 0);
+    add_trace_value("time_to_backup_start_s",
+                    causal_trace.time_to_backup_start_s);
+    add_trace_value("emergency_authorization_reason",
+                    causal_trace.emergency_authorization_reason);
+    add_trace_value("causal_planning_cycle_id",
+                    causal_trace.planning_cycle_id);
+    add_trace_value("causal_solve_generation",
+                    causal_trace.solve_generation);
+    add_trace_value("causal_timestamp_ns",
+                    causal_trace.timestamp_ns);
+    add_trace_value("emergency_candidate_commit_result",
+                    causal_trace.emergency_candidate_commit_result);
+    add_trace_value("evaluation_now_ns",
+                    causal_trace.evaluation_now_ns);
+    add_trace_value("execution_state_source_stamp_ns",
+                    causal_trace.execution_state_source_stamp_ns);
+    add_trace_value("execution_state_receive_stamp_ns",
+                    causal_trace.execution_state_receive_stamp_ns);
+    add_trace_value("execution_state_source_age_ms",
+                    causal_trace.execution_state_source_age_ms);
+    add_trace_value("execution_state_receive_age_ms",
+                    causal_trace.execution_state_receive_age_ms);
+    add_trace_value("committed_bundle_start_stamp_ns",
+                    causal_trace.committed_bundle_start_stamp_ns);
+    add_trace_vector("measured_position_at_state_source",
+                     causal_trace.measured_position_at_state_source);
+    add_trace_vector("measured_velocity_at_state_source",
+                     causal_trace.measured_velocity_at_state_source);
+    add_trace_vector("committed_command_position_at_now",
+                     causal_trace.committed_command_position_at_now);
+    add_trace_vector("committed_command_velocity_at_now",
+                     causal_trace.committed_command_velocity_at_now);
+    add_trace_vector("committed_command_position_at_state_source",
+                     causal_trace.committed_command_position_at_state_source);
+    add_trace_vector("committed_command_velocity_at_state_source",
+                     causal_trace.committed_command_velocity_at_state_source);
+    add_trace_value("anchor_error_raw_m",
+                    causal_trace.anchor_error_raw_m);
+    add_trace_value("anchor_error_time_aligned_m",
+                    causal_trace.anchor_error_time_aligned_m);
+    add_trace_value("command_motion_over_state_age_m",
+                    causal_trace.command_motion_over_state_age_m);
+    add_trace_value("velocity_residual_time_aligned_mps",
+                    causal_trace.velocity_residual_time_aligned_mps);
+    add_trace_value("phase_execution_lag_s", causal_trace.phase_execution_lag_s);
+    add_trace_value("phase_execution_source_error_m",
+                    causal_trace.phase_execution_source_error_m);
+    add_trace_value("phase_execution_certificate_accepted",
+                    causal_trace.phase_execution_certificate_accepted ? 1 : 0);
+    add_trace_value("phase_execution_bridge_usable",
+                    causal_trace.phase_execution_bridge_usable ? 1 : 0);
+    add_trace_value("phase_execution_final_source_stamp_ns",
+                    causal_trace.phase_execution_final_source_stamp_ns);
+    add_trace_value("phase_execution_final_evaluation_stamp_ns",
+                    causal_trace.phase_execution_final_evaluation_stamp_ns);
+    add_trace_value("phase_execution_final_lag_s",
+                    causal_trace.phase_execution_final_lag_s);
+    add_trace_value("phase_execution_final_source_error_m",
+                    causal_trace.phase_execution_final_source_error_m);
+    add_trace_value("phase_execution_final_predicted_error_m",
+                    causal_trace.phase_execution_final_predicted_error_m);
+    add_trace_value("phase_execution_final_relative_velocity_mps",
+                    causal_trace.phase_execution_final_relative_velocity_mps);
+    add_trace_value("phase_execution_final_certificate_accepted",
+                    causal_trace.phase_execution_final_certificate_accepted ? 1 : 0);
+    add_trace_value("path_relative_projected_stamp_ns",
+                    causal_trace.path_relative_projected_stamp_ns);
+    add_trace_value("path_relative_phase_offset_s",
+                    causal_trace.path_relative_phase_offset_s);
+    add_trace_value("path_relative_predicted_phase_offset_s",
+                    causal_trace.path_relative_predicted_phase_offset_s);
+    add_trace_value("path_relative_error_m", causal_trace.path_relative_error_m);
+    add_trace_value("path_relative_cross_track_error_m",
+                    causal_trace.path_relative_cross_track_error_m);
+    add_trace_value("path_relative_vertical_error_m",
+                    causal_trace.path_relative_vertical_error_m);
+    add_trace_value("path_relative_predicted_error_m",
+                    causal_trace.path_relative_predicted_error_m);
+    add_trace_value("path_relative_progress_rate",
+                    causal_trace.path_relative_progress_rate);
+    add_trace_value("path_relative_raw_error_m",
+                    causal_trace.path_relative_raw_error_m);
+    add_trace_value("path_relative_evaluation_count",
+                    causal_trace.path_relative_evaluation_count);
+    add_trace_value("path_relative_tracking_accepted",
+                    causal_trace.path_relative_tracking_accepted ? 1 : 0);
+    add_trace_value("path_relative_bridge_usable",
+                    causal_trace.path_relative_bridge_usable ? 1 : 0);
+    add_trace_value("tracking_experiment_enabled", tracking_experiment_.enabled ? 1 : 0);
+    add_trace_value("tracking_experiment_suppress_braking", tracking_experiment_.suppress_braking ? 1 : 0);
+    add_trace_value("tracking_experiment_base_m", tracking_experiment_.base_m);
+    add_trace_value("tracking_experiment_lateral_alpha_s", tracking_experiment_.lateral_alpha_s);
+    add_trace_value("tracking_experiment_longitudinal_beta_s", tracking_experiment_.longitudinal_beta_s);
+    add_trace_value("experimental_tracking_bridge_usable", causal_trace.experimental_tracking_bridge_usable ? 1 : 0);
+    add_trace_value("experimental_tracking_override_used", causal_trace.experimental_tracking_override_used ? 1 : 0);
+    add_trace_value("experimental_tracking_brake_suppressed", causal_trace.experimental_tracking_brake_suppressed ? 1 : 0);
+    add_trace_value("experimental_lateral_error_m", causal_trace.experimental_lateral_error_m);
+    add_trace_value("experimental_longitudinal_error_m", causal_trace.experimental_longitudinal_error_m);
+    add_trace_value("experimental_lateral_limit_m", causal_trace.experimental_lateral_limit_m);
+    add_trace_value("experimental_longitudinal_limit_m", causal_trace.experimental_longitudinal_limit_m);
+    add_trace_value("experimental_predicted_lateral_error_m", causal_trace.experimental_predicted_lateral_error_m);
+    add_trace_value("experimental_predicted_longitudinal_error_m", causal_trace.experimental_predicted_longitudinal_error_m);
+    add_trace_value("causal_execution_localization_epoch",
+                    causal_trace.execution_localization_epoch);
+    add_trace_value("causal_execution_goal_epoch", causal_trace.execution_goal_epoch);
+    add_trace_value("causal_execution_request_id", causal_trace.execution_request_id);
+    add_trace_value("causal_execution_bundle_generation",
+                    causal_trace.execution_bundle_generation);
+    add_trace_value("causal_execution_state_ingress_sequence",
+                    causal_trace.execution_state_ingress_sequence);
+    add_trace_value("solve_stage", solve_stage);
+    {
+      diagnostic_msgs::msg::KeyValue item;
+      item.key = "solve_stage_name";
+      item.value = planner_diagnostics.solve_stage_name;
+      trace_status.values.push_back(std::move(item));
+    }
+    add_trace_value("planning_latency_ms", planner_elapsed_ms);
+    // Keep the canonical total in the same microsecond unit as all planner
+    // stage fields. `planning_latency_ms` remains for the rolling trace, while
+    // this field feeds the report's percentile table without reconstructing a
+    // total by summing stages that may overlap or be skipped.
+    add_trace_value("planning_total_us", last_planner_us_);
+    // Keep planner stage timings explicit and unit-labelled in the structured
+    // trace.  The raw planner backend log already exposes these values, but without
+    // publishing them here the report cannot identify which stage causes a
+    // solve deadline overrun.
+    add_trace_value("exp_frontend_us",
+                    planner_diagnostics.module_time_us[0]);
+    add_trace_value("exp_opt_us",
+                    planner_diagnostics.module_time_us[1]);
+    add_trace_value("backup_frontend_us",
+                    planner_diagnostics.module_time_us[2]);
+    add_trace_value("backup_opt_us",
+                    planner_diagnostics.module_time_us[3]);
+    const auto& planner_timeline = planner_diagnostics.timeline;
+    add_trace_value("planner_request_received_steady_ns",
+                    planner_timeline.request_received_steady_ns);
+    add_trace_value("planner_solve_started_steady_ns",
+                    planner_timeline.solve_started_steady_ns);
+    add_trace_value("planner_solve_finished_steady_ns",
+                    planner_timeline.solve_finished_steady_ns);
+    add_trace_value("planner_hard_deadline_steady_ns",
+                    planner_timeline.hard_deadline_steady_ns);
+    add_trace_value("planner_remaining_hard_budget_us_at_finish",
+                    planner_timeline.remaining_hard_budget_us_at_finish);
+    add_trace_value("runtime_request_created_steady_ns",
+                    runtime_request_created_steady_ns);
+    add_trace_value("runtime_result_received_steady_ns",
+                    runtime_result_received_steady_ns);
+    add_trace_value("runtime_currentness_checked_steady_ns",
+                    runtime_currentness_checked_steady_ns);
+    add_trace_value("runtime_admission_started_steady_ns",
+                    runtime_admission_started_steady_ns);
+    add_trace_value("runtime_admission_finished_steady_ns",
+                    runtime_admission_finished_steady_ns);
+    add_trace_value("runtime_admission_attempted",
+                    runtime_admission_attempted ? 1 : 0);
+    add_trace_value("runtime_admission_succeeded",
+                    runtime_admission_succeeded ? 1 : 0);
+    add_trace_value("runtime_successor_staged",
+                    runtime_successor_staged ? 1 : 0);
+    add_trace_value("planner_trace_schema_version", 3);
+    add_trace_value(
+        "candidate_generation",
+        planning_outcome.candidate ? planning_outcome.candidate->bundle_generation : 0U);
+    add_trace_value(
+        "candidate_activation_stamp_ns",
+        planning_outcome.candidate ? planning_outcome.candidate->activation_stamp_ns : 0);
+    add_trace_value("latest_execution_activation_generation",
+                    last_execution_activation_generation_.load(
+                        std::memory_order_acquire));
+    add_trace_value("latest_execution_activation_started_steady_ns",
+                    last_execution_activation_started_steady_ns_.load(
+                        std::memory_order_acquire));
+    add_trace_value("latest_execution_activation_finished_steady_ns",
+                    last_execution_activation_finished_steady_ns_.load(
+                        std::memory_order_acquire));
+    add_trace_value("latest_execution_activation_result",
+                    last_execution_activation_result_.load(
+                        std::memory_order_acquire));
+    add_trace_value("latest_command_sampled_generation",
+                    last_command_sampled_generation_.load(
+                        std::memory_order_acquire));
+    add_trace_value("latest_command_sampled_steady_ns",
+                    last_command_sampled_steady_ns_.load(
+                        std::memory_order_acquire));
+    add_trace_value("latest_command_sampled_result",
+                    last_command_sampled_result_.load(
+                        std::memory_order_acquire));
+    const bool backend_retained = navigation_planning::planningRetainedCommittedBundle(
+        planner_backend_outcome.outcome);
+    const bool backend_complete = navigation_planning::completePlanningSucceeded(
+        planner_backend_outcome.outcome) || backend_retained;
+    const bool backend_failure_event_present =
+        !backend_complete && planner_backend_outcome.failure_stage !=
+            navigation_planning::PlanningFailureStage::kNone;
+    const std::int64_t backend_failure_event_steady_ns =
+        backend_failure_event_present ? planner_timeline.solve_finished_steady_ns : 0;
+    const auto latest_watchdog_generation =
+        last_watchdog_generation_.load(std::memory_order_acquire);
+    const std::int64_t watchdog_event_steady_ns =
+        latest_watchdog_generation == solve_generation
+            ? last_watchdog_event_steady_ns_.load(std::memory_order_acquire)
+            : 0;
+    const bool admission_failure_event_present =
+        runtime_admission_attempted && !runtime_admission_succeeded;
+    const std::int64_t admission_failure_event_steady_ns =
+        admission_failure_event_present ? runtime_admission_finished_steady_ns : 0;
+    add_trace_value("planner_backend_failure_event_steady_ns",
+                    backend_failure_event_steady_ns);
+    add_trace_value("watchdog_event_steady_ns", watchdog_event_steady_ns);
+    add_trace_value("runtime_admission_failure_event_steady_ns",
+                    admission_failure_event_steady_ns);
+    add_trace_string("backend_outcome_scope", "BACKEND");
+    add_trace_string(
+        "runtime_admission_disposition",
+        !runtime_admission_attempted
+            ? "NOT_ATTEMPTED"
+            : runtime_admission_succeeded
+                ? (runtime_successor_staged ? "STAGED_PENDING_ACTIVATION"
+                                             : "IMMEDIATELY_COMMITTED")
+                : "REJECTED");
+    add_trace_string(
+        "execution_disposition",
+        !runtime_admission_attempted
+            ? "NOT_ATTEMPTED"
+            : !runtime_admission_succeeded
+                ? "NOT_STAGED"
+                : runtime_successor_staged ? "PENDING_ACTIVATION"
+                                            : "ACTIVE_COMMITTED");
+    bool causal_event_present = false;
+    std::int64_t first_causal_event_steady_ns = 0;
+    int first_causal_event_order = 0;
+    std::string first_causal_scope = "NONE";
+    std::string first_causal_stage = "none";
+    std::string first_causal_reason = "none";
+    const auto consider_causal_event = [&](const std::int64_t event_steady_ns,
+                                           const int order,
+                                           const char* const scope,
+                                           const char* const stage,
+                                           const std::string& reason) {
+      if (event_steady_ns <= 0) return;
+      if (!causal_event_present || event_steady_ns < first_causal_event_steady_ns ||
+          (event_steady_ns == first_causal_event_steady_ns &&
+           order < first_causal_event_order)) {
+        causal_event_present = true;
+        first_causal_event_steady_ns = event_steady_ns;
+        first_causal_event_order = order;
+        first_causal_scope = scope;
+        first_causal_stage = stage;
+        first_causal_reason = reason;
+      }
+    };
+    if (backend_failure_event_present) {
+      consider_causal_event(
+          backend_failure_event_steady_ns, 0, "BACKEND",
+          navigation_planning::planningFailureStageName(
+              planner_backend_outcome.failure_stage),
+          navigation_planning::planningFailureReasonName(
+              planner_backend_outcome.failure_reason));
+    }
+    if (admission_failure_event_present) {
+      consider_causal_event(
+          admission_failure_event_steady_ns, 1, "RUNTIME_ADMISSION",
+          "execution_boundary",
+          "rejection_code_" + std::to_string(
+                                  last_execution_boundary_rejection_.load(
+                                      std::memory_order_acquire)));
+    }
+    if (watchdog_event_steady_ns > 0) {
+      consider_causal_event(watchdog_event_steady_ns, 2, "WATCHDOG", "watchdog",
+                            "timeout");
+    }
+    add_trace_value("first_causal_failure_event_steady_ns",
+                    first_causal_event_steady_ns);
+    add_trace_value("first_causal_failure_event_order",
+                    causal_event_present ? first_causal_event_order : -1);
+    add_trace_string("first_causal_failure_class",
+                     causal_event_present ? "CAUSAL" : "NONE");
+    add_trace_string("backend_failure_event_class",
+                     backend_failure_event_present ? "CAUSAL" : "NONE");
+    add_trace_string(
+        "runtime_admission_failure_event_class",
+        admission_failure_event_present
+            ? (causal_event_present && first_causal_scope == "RUNTIME_ADMISSION"
+                   ? "CAUSAL" : "DOWNSTREAM_CONSEQUENCE")
+            : "NONE");
+    add_trace_string(
+        "watchdog_event_class",
+        watchdog_event_steady_ns > 0
+            ? (causal_event_present && first_causal_scope == "WATCHDOG"
+                   ? "CAUSAL" : "CONTAINMENT")
+            : "NONE");
+    if (causal_event_present) {
+      add_trace_string("first_causal_failure_scope", first_causal_scope);
+      add_trace_string("first_causal_failure_stage", first_causal_stage);
+      add_trace_string("first_causal_failure_reason", first_causal_reason);
+    } else {
+      add_trace_string("first_causal_failure_scope", "NONE");
+      add_trace_string("first_causal_failure_stage", "none");
+      add_trace_string("first_causal_failure_reason", "none");
+    }
+    for (std::size_t stage_index = 1U;
+         stage_index < navigation_planning::kPlannerDiagnosticStageSlotCount;
+         ++stage_index) {
+      const auto stage = static_cast<navigation_planning::PlannerDiagnosticStage>(
+          stage_index);
+      const auto& timing = planner_timeline.stages[stage_index];
+      const std::string prefix = "planner_stage_" + std::to_string(stage_index);
+      add_trace_string(prefix + "_name",
+                       navigation_planning::plannerDiagnosticStageName(stage));
+      add_trace_value(prefix + "_observed", timing.observed ? 1 : 0);
+      add_trace_value(prefix + "_begin_steady_ns", timing.begin_steady_ns);
+      add_trace_value(prefix + "_end_steady_ns", timing.end_steady_ns);
+      add_trace_value(prefix + "_remaining_hard_budget_us",
+                      timing.remaining_hard_budget_us);
+      add_trace_value(prefix + "_result_code", timing.result_code);
+    }
+    add_trace_value("backup_certificate_attempted",
+                    backup_diagnostics.attempted ? 1 : 0);
+    add_trace_value("backup_switch_candidate_count",
+                    backup_diagnostics.switch_candidate_count);
+    add_trace_value("backup_feasible_seed_count",
+                    backup_diagnostics.feasible_seed_count);
+    add_trace_value("backup_visibility_hull_pass_count",
+                    backup_diagnostics.visibility_hull_pass_count);
+    add_trace_value("backup_aligned_sfc_built_count",
+                    backup_diagnostics.aligned_sfc_built_count);
+    add_trace_value("backup_aligned_hull_pass_count",
+                    backup_diagnostics.aligned_hull_pass_count);
+    add_trace_value("backup_known_free_check_count",
+                    backup_diagnostics.known_free_check_count);
+    add_trace_value("backup_known_free_pass_count",
+                    backup_diagnostics.known_free_pass_count);
+    add_trace_value("backup_certificate_selected",
+                    backup_diagnostics.selected ? 1 : 0);
+    add_trace_value("backup_last_reject_stage",
+                    backup_diagnostics.last_reject_stage);
+    add_trace_value("backup_last_known_free_failure_code",
+                    backup_diagnostics.last_known_free_failure_code);
+    add_trace_value("backup_last_known_free_cell_state",
+                    backup_diagnostics.last_known_free_cell_state);
+    add_trace_value("backup_last_known_free_blocked_role",
+                    backup_diagnostics.last_known_free_blocked_role);
+    add_trace_value("backup_last_known_free_first_blocked_time_s",
+                    backup_diagnostics.last_known_free_first_blocked_time_s);
+    add_trace_vector("backup_last_known_free_blocked_position",
+                     backup_diagnostics.last_known_free_blocked_position);
+    add_trace_value("backup_last_seed_switch_time_s",
+                    backup_diagnostics.last_seed_switch_time_s);
+    add_trace_value("backup_last_seed_duration_s",
+                    backup_diagnostics.last_seed_duration_s);
+    add_trace_value("backup_last_seed_initial_velocity_mps",
+                    backup_diagnostics.last_seed_initial_velocity_mps);
+    add_trace_value("backup_last_seed_max_velocity_mps",
+                    backup_diagnostics.last_seed_max_velocity_mps);
+    add_trace_value("backup_last_seed_max_acceleration_mps2",
+                    backup_diagnostics.last_seed_max_acceleration_mps2);
+    add_trace_value("backup_last_seed_max_jerk_mps3",
+                    backup_diagnostics.last_seed_max_jerk_mps3);
+    add_trace_vector("backup_last_seed_endpoint",
+                     backup_diagnostics.last_seed_endpoint);
+    add_trace_value("exp_diagnostics_valid", exp_diagnostics.valid ? 1 : 0);
+    add_trace_value("requested_cruise_speed_mps",
+                    planner_diagnostics.requested_cruise_speed_mps);
+    add_trace_value("effective_cruise_speed_mps",
+                    planner_diagnostics.effective_cruise_speed_mps);
+    add_trace_value("control_max_velocity_mps",
+                    planner_diagnostics.control_max_velocity_mps);
+    add_trace_value("control_max_acceleration_mps2",
+                    planner_diagnostics.control_max_acceleration_mps2);
+    add_trace_value("control_max_jerk_mps3",
+                    planner_diagnostics.control_max_jerk_mps3);
+    add_trace_value("physical_max_velocity_mps",
+                    planner_diagnostics.physical_max_velocity_mps);
+    add_trace_value("physical_max_acceleration_mps2",
+                    planner_diagnostics.physical_max_acceleration_mps2);
+    add_trace_value("physical_max_jerk_mps3",
+                    planner_diagnostics.physical_max_jerk_mps3);
+    add_trace_value("candidate_max_velocity_mps",
+                    planner_diagnostics.candidate_maximum_velocity_mps);
+    add_trace_value("candidate_max_acceleration_mps2",
+                    planner_diagnostics.candidate_maximum_acceleration_mps2);
+    add_trace_value("candidate_max_jerk_mps3",
+                    planner_diagnostics.candidate_maximum_jerk_mps3);
+    add_trace_value("exp_used_certified_seed",
+                    exp_diagnostics.used_certified_seed ? 1 : 0);
+    add_trace_value("exp_used_feasible_iterate_checkpoint",
+                    exp_diagnostics.used_feasible_iterate_checkpoint ? 1 : 0);
+    add_trace_value("exp_feasible_iterate_checkpoint_attempt",
+                    exp_diagnostics.feasible_iterate_checkpoint_attempt);
+    add_trace_value("exp_feasible_iterate_checkpoint_iteration",
+                    exp_diagnostics.feasible_iterate_checkpoint_iteration);
+    add_trace_value("exp_feasible_iterate_certificate_count",
+                    exp_diagnostics.feasible_iterate_certificate_count);
+    add_trace_value("exp_feasible_iterate_certificate_time_us",
+                    exp_diagnostics.feasible_iterate_certificate_time_us);
+    add_trace_value("exp_certified_seed_failure_stage",
+                    exp_diagnostics.certified_seed_failure_stage);
+    add_trace_value("exp_corridor_seed_build_failure_stage",
+                    exp_diagnostics.corridor_seed_build_failure_stage);
+    add_trace_value("exp_corridor_seed_retry_attempt_count",
+                    exp_diagnostics.corridor_seed_retry_attempt_count);
+    add_trace_value("exp_corridor_seed_retry_build_valid_count",
+                    exp_diagnostics.corridor_seed_retry_build_valid_count);
+    add_trace_value("exp_corridor_seed_retry_last_certificate_stage",
+                    exp_diagnostics.corridor_seed_retry_last_certificate_stage);
+    add_trace_value("exp_corridor_seed_selected_mode",
+                    exp_diagnostics.corridor_seed_selected_mode);
+    add_trace_value("exp_corridor_seed_selected_max_duration_scale",
+                    exp_diagnostics.corridor_seed_selected_max_duration_scale);
+    add_trace_value("exp_lbfgs_attempt_count", exp_diagnostics.lbfgs_attempt_count);
+    add_trace_value("exp_lbfgs_evaluation_count",
+                    exp_diagnostics.lbfgs_evaluation_count);
+    add_trace_value("exp_lbfgs_first_attempt_evaluation_count",
+                    exp_diagnostics.lbfgs_first_attempt_evaluation_count);
+    add_trace_value("exp_lbfgs_last_attempt_evaluation_count",
+                    exp_diagnostics.lbfgs_last_attempt_evaluation_count);
+    add_trace_value("exp_retry_count", exp_diagnostics.retry_count);
+    add_trace_value("exp_retry_violation_mask", exp_diagnostics.retry_violation_mask);
+    add_trace_value("exp_retry_stop_reason", exp_diagnostics.retry_stop_reason);
+    add_trace_value("exp_lbfgs_first_return_code",
+                    exp_diagnostics.first_lbfgs_return_code);
+    add_trace_value("exp_lbfgs_last_return_code",
+                    exp_diagnostics.last_lbfgs_return_code);
+    add_trace_value("exp_lbfgs_cancelled", exp_diagnostics.cancelled ? 1 : 0);
+    add_trace_value("exp_hard_deadline_observed",
+                    exp_diagnostics.hard_deadline_observed ? 1 : 0);
+    add_trace_value("exp_initial_normalized_dynamic_violation",
+                    exp_diagnostics.initial_normalized_dynamic_violation);
+    add_trace_value("exp_best_normalized_dynamic_violation",
+                    exp_diagnostics.best_normalized_dynamic_violation);
+    add_trace_value("exp_final_normalized_dynamic_violation",
+                    exp_diagnostics.final_normalized_dynamic_violation);
+    // Keep the historical generic names populated for report compatibility;
+    // these are the last independently evaluated MINCO candidate extrema,
+    // including a candidate rejected by a hard gate.
+    add_trace_value("maximum_velocity_mps",
+                    exp_diagnostics.last_candidate_maximum_velocity_mps);
+    add_trace_value("maximum_acceleration_mps2",
+                    exp_diagnostics.last_candidate_maximum_acceleration_mps2);
+    add_trace_value("maximum_jerk_mps3",
+                    exp_diagnostics.last_candidate_maximum_jerk_mps3);
+    add_trace_value("exp_certified_seed_maximum_velocity_mps",
+                    exp_diagnostics.certified_seed_maximum_velocity_mps);
+    add_trace_value("exp_certified_seed_maximum_acceleration_mps2",
+                    exp_diagnostics.certified_seed_maximum_acceleration_mps2);
+    add_trace_value("exp_certified_seed_maximum_jerk_mps3",
+                    exp_diagnostics.certified_seed_maximum_jerk_mps3);
+    add_trace_value("exp_initial_duration_s", exp_diagnostics.initial_duration_s);
+    add_trace_value("exp_initial_minimum_piece_duration_s",
+                    exp_diagnostics.initial_minimum_piece_duration_s);
+    add_trace_value("exp_initial_maximum_piece_duration_s",
+                    exp_diagnostics.initial_maximum_piece_duration_s);
+    add_trace_value("exp_final_duration_s", exp_diagnostics.final_duration_s);
+    add_trace_value("exp_retry_duration_lower_bound_min_s",
+                    exp_diagnostics.retry_duration_lower_bound_min_s);
+    add_trace_value("exp_retry_duration_lower_bound_max_s",
+                    exp_diagnostics.retry_duration_lower_bound_max_s);
+    add_trace_value("exp_retry_free_duration_seed_min_s",
+                    exp_diagnostics.retry_free_duration_seed_min_s);
+    add_trace_value("exp_retry_free_duration_seed_max_s",
+                    exp_diagnostics.retry_free_duration_seed_max_s);
+    add_trace_value("guide_path_length_m", planner_diagnostics.latest_guide_path_length_m);
+    add_trace_value("guide_duration_s", planner_diagnostics.latest_guide_duration_s);
+    add_trace_value("required_lookahead_m", planner_diagnostics.required_lookahead_m);
+    add_trace_value("certified_lookahead_m", planner_diagnostics.certified_lookahead_m);
+    add_trace_value("lookahead_complete", planner_diagnostics.lookahead_complete ? 1 : 0);
+    add_trace_value("route_yaw_source", planner_diagnostics.route_yaw_source);
+    add_trace_value("route_yaw_target_rad", planner_diagnostics.route_yaw_target_rad);
+    add_trace_value("route_yaw_lookahead_m", planner_diagnostics.route_yaw_lookahead_m);
+    add_trace_value("route_yaw_progress_arc_m",
+                    planner_diagnostics.route_yaw_progress_arc_m);
+    add_trace_value("yaw_rate_limit_rad_s", planner_diagnostics.yaw_rate_limit_rad_s);
+    add_trace_value("yaw_acceleration_limit_rad_s2",
+                    planner_diagnostics.yaw_acceleration_limit_rad_s2);
+    add_trace_value("candidate_maximum_yaw_rate_rad_s",
+                    planner_diagnostics.candidate_maximum_yaw_rate_rad_s);
+    add_trace_value("candidate_maximum_yaw_acceleration_rad_s2",
+                    planner_diagnostics.candidate_maximum_yaw_acceleration_rad_s2);
+    add_trace_value("exp_retry_budget_remaining_us",
+                    exp_diagnostics.retry_budget_remaining_us);
+    add_trace_value("exp_refinement_budget_at_entry_us",
+                    exp_diagnostics.refinement_budget_at_entry_us);
+    add_trace_value("exp_nonfinite_evaluation_count",
+                    exp_diagnostics.nonfinite_evaluation_count);
+    add_trace_value("exp_first_nonfinite_stage",
+                    exp_diagnostics.first_nonfinite_stage);
+    add_trace_value("exp_first_nonfinite_value_mask",
+                    exp_diagnostics.first_nonfinite_value_mask);
+    add_trace_value("exp_first_nonfinite_attempt",
+                    exp_diagnostics.first_nonfinite_attempt);
+    add_trace_value("exp_first_nonfinite_iteration",
+                    exp_diagnostics.first_nonfinite_iteration);
+    add_trace_value("exp_first_nonfinite_min_duration_s",
+                    exp_diagnostics.first_nonfinite_min_duration_s);
+    add_trace_value("exp_first_nonfinite_max_duration_s",
+                    exp_diagnostics.first_nonfinite_max_duration_s);
+    add_trace_value("exp_first_nonfinite_cost",
+                    exp_diagnostics.first_nonfinite_cost);
+    add_trace_value("exp_first_nonfinite_gradient_norm",
+                    exp_diagnostics.first_nonfinite_gradient_norm);
+    add_trace_value("solve_deadline_exceeded", solve_deadline_exceeded ? 1 : 0);
+    const auto episode_trace = execution_authority_.snapshot();
+    add_trace_value("command_available", episode_trace.commandAvailable() ? 1 : 0);
+    add_trace_value("planner_failure_latched", episode_trace.failed() ? 1 : 0);
+    trace_diagnostics.status.push_back(std::move(trace_status));
+
+    // Publish the actual immutable bundle geometry used by the command
+    // sampler.  A rejected command is deliberately represented as
+    // path_available=false; its terminal hold sample must never be rendered
+    // as a safety trajectory at the takeoff origin.  The report can therefore
+    // show nominal and backup on one common map without reconstructing paths
+    // from repeated NavigationCommand samples.
+    diagnostic_msgs::msg::DiagnosticStatus path_status;
+    path_status.name = "navigation_runtime/planner_path";
+    path_status.level = has_committed_bundle
+                            ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                            : diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    path_status.message = has_committed_bundle ? "PATH_SNAPSHOT" : "NO_EXECUTABLE_PATH";
+    diagnostic_msgs::msg::KeyValue path_item;
+    path_item.key = "planner_path_snapshot_json";
+    path_item.value = plannerPathSnapshotJson(
+        committed_snapshot, cycle_count_, solve_generation,
+        static_cast<int>(result), replan_return_code, commit_decision,
+        planner_diagnostics.solve_stage_name, target, planning_target,
+        planner_diagnostics.goal_acceptance_radius_m,
+        planner_diagnostics.goal_endpoint_adjusted, robot_grid_type,
+        robot_inflated_grid_type, target_grid_type, target_inflated_grid_type,
+        episode_trace.safetySuffixActive(), committed_snapshot.terminal_stop);
+    path_status.values.push_back(std::move(path_item));
+    trace_diagnostics.status.push_back(std::move(path_status));
+    diagnostics_publisher_->publish(trace_diagnostics);
+  }
+
+  const auto metrics_now = std::chrono::steady_clock::now();
+  const double planner_cycle_ms = static_cast<double>(
+      std::chrono::duration_cast<std::chrono::microseconds>(metrics_now - cycle_started).count()) /
+                                 1000.0;
+  if (end_to_end_samples_ms_.size() == 256U) end_to_end_samples_ms_.erase(end_to_end_samples_ms_.begin());
+  end_to_end_samples_ms_.push_back(planner_cycle_ms);
+  if (metrics_now - metrics_log_time_ >= std::chrono::seconds(1)) {
+    auto sorted = end_to_end_samples_ms_;
+    std::sort(sorted.begin(), sorted.end());
+    const auto percentile = [&](double fraction) {
+      if (sorted.empty()) return 0.0;
+      const auto index = std::min(sorted.size() - 1U,
+                                  static_cast<std::size_t>(fraction * sorted.size()));
+      return sorted[index];
+    };
+    const auto committed = planner_->committedSnapshot();
+    const auto planner_diagnostics = planner_->diagnostics();
+    const auto committed_generation = committed.generation;
+    const bool backup_available = committed.backup_available;
+    const double backup_start_s = committed.backup_start_time_s;
+    const auto guide_end = planner_diagnostics.latest_guide_end;
+    const auto guide_min = planner_diagnostics.latest_guide_min;
+    const auto guide_max = planner_diagnostics.latest_guide_max;
+    const bool committed_valid = committed_generation > 0U && !committed.empty();
+    const double committed_duration = committed.position.duration_s;
+    const auto sample_position = [&committed, committed_valid](const double time_s) {
+      navigation_planning::TrajectoryPoint sample;
+      return committed_valid && committed.position.sample(time_s, sample)
+          ? sample.position_world : Eigen::Vector3d::Zero();
+    };
+    const auto committed_start = sample_position(0.0);
+    const auto committed_end = sample_position(committed_duration);
+    const auto committed_quarter = sample_position(committed_duration * 0.25);
+    const auto committed_half = sample_position(committed_duration * 0.50);
+    const auto committed_three_quarter = sample_position(committed_duration * 0.75);
+    const auto main_end = !committed_valid || !backup_available
+                              ? committed_end
+                              : sample_position(std::clamp(backup_start_s, 0.0, committed_duration));
+    RCLCPP_INFO(get_logger(),
+                "planner_cycle_metrics cycles=%lu commands=%lu dropped_cloud=%lu "
+                "planner_cycle_ms=%.3f p50_ms=%.3f p95_ms=%.3f p99_ms=%.3f "
+                "map_us=%ld "
+                "planner_us=%ld publish_us=%ld store_publish_us=%ld transition_lock_us=%ld "
+                "input_lock_us=%ld target=(%.2f,%.2f,%.2f) "
+                "robot=(%.2f,%.2f,%.2f) committed_start=(%.2f,%.2f,%.2f) "
+                "committed_q1=(%.2f,%.2f,%.2f) committed_mid=(%.2f,%.2f,%.2f) "
+                "committed_q3=(%.2f,%.2f,%.2f) committed_end=(%.2f,%.2f,%.2f) "
+                "main_end=(%.2f,%.2f,%.2f) backup_start=%.3f "
+                "guide_end=(%.2f,%.2f,%.2f) "
+                "guide_bounds=[(%.2f,%.2f,%.2f),(%.2f,%.2f,%.2f)] "
+                "committed_duration=%.3f",
+                static_cast<unsigned long>(cycle_count_),
+                static_cast<unsigned long>(command_publish_count_.load()),
+                static_cast<unsigned long>(accounting.replaced_waiting +
+                                           accounting.replaced_ready), planner_cycle_ms,
+                percentile(0.50), percentile(0.95), percentile(0.99),
+                static_cast<long>(mapping.map_update_us), static_cast<long>(last_planner_us_),
+                static_cast<long>(last_publish_us_.load()),
+                static_cast<long>(last_command_store_publish_us_.load()),
+                static_cast<long>(last_command_transition_lock_wait_us_.load()),
+                static_cast<long>(last_input_lock_wait_us_), target.x(), target.y(), target.z(),
+                execution_state.position_world.x(), execution_state.position_world.y(),
+                execution_state.position_world.z(),
+                committed_start.x(), committed_start.y(), committed_start.z(),
+                committed_quarter.x(), committed_quarter.y(), committed_quarter.z(),
+                committed_half.x(), committed_half.y(), committed_half.z(),
+                committed_three_quarter.x(), committed_three_quarter.y(), committed_three_quarter.z(),
+                committed_end.x(), committed_end.y(), committed_end.z(),
+                main_end.x(), main_end.y(), main_end.z(), backup_start_s,
+                guide_end.x(), guide_end.y(), guide_end.z(),
+                guide_min.x(), guide_min.y(), guide_min.z(),
+                guide_max.x(), guide_max.y(), guide_max.z(),
+                committed_duration);
+    metrics_log_time_ = metrics_now;
+  }
+}
+
+void NavigationRuntimeNode::observeRetainedDecision(
+    const ExecutionTraceSnapshot& trace,
+    const RetainedDecisionObservation& decision) noexcept {
+  (void)tryEmitRetainedDecision(
+      trace, decision, retained_decision_diagnostics_enabled_,
+      retained_decision_accounting_, [&](auto status) {
+        diagnostic_msgs::msg::DiagnosticArray event;
+        event.header.stamp = navigation_common::nanosecondsToRosTime(
+            trace.timestamp_ns).value_or(builtin_interfaces::msg::Time{});
+        event.status.push_back(std::move(status));
+        diagnostics_publisher_->publish(event);
+      });
+}
+
+void NavigationRuntimeNode::validateRetainedCommand(
+    const std::optional<navigation_contracts::msg::NavigationGoal>& goal,
+    const std::uint64_t goal_epoch,
+    const std::uint64_t localization_epoch_at_solve,
+    const PlanningKey& effective_scheduled_key,
+    const RetainedValidationContext& context) {
+  const bool plan_from_rest_with_transition = context.plan_from_rest_with_transition;
+  const auto solve_generation = context.solve_generation;
+  const auto result = context.planner_result;
+  const bool terminal_monitor =
+      context.purpose == RetainedValidationPurpose::kTerminalMainMonitor;
+  const double retained_tracking_limit_m = context.tracking_limit_m;
+  const double planning_interval_s = static_cast<double>(planning_period_us_) * 1.0e-6;
+  ExecutionTraceSnapshot causal_snapshot;
+  RetainedDecisionObservation observation;
+  observation.desired_request_id = goal ? goal->request_id : 0U;
+  observation.desired_goal_epoch = goal_epoch;
+  observation.purpose = static_cast<std::uint8_t>(context.purpose);
+  const bool validate_without_new_commit =
+      context.purpose == RetainedValidationPurpose::kPlannerValidationOnly;
+  navigation_execution::ExecutionAuthoritySnapshot retained_timeline;
+  std::optional<navigation_contracts::msg::NavigationGoal> retained_desired_goal;
+  std::optional<navigation_contracts::msg::NavigationGoal> retained_executing_goal;
+  navigation_execution::ExecutionAuthoritySnapshot retained_episode;
+  ExecutionRecoveryState retained_recovery_state = ExecutionRecoveryState::kPx4Hold;
+  std::uint64_t retained_desired_revision = 0U;
+  std::uint64_t retained_command_goal_epoch = 0U;
+  std::uint64_t retained_localization_epoch = 0U;
+  PlanningIntentTransition retained_planning_transition = PlanningIntentTransition::kNone;
+  {
+    // Retained-command validation is a transaction over the desired goal,
+    // executing identity, epochs, timeline and lifecycle episode. Capture
+    // all of them under the canonical lock order before doing any expensive
+    // sampling or world validation; otherwise a late callback can combine
+    // a new goal with an old bundle and mutate the wrong execution.
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    retained_desired_goal = desired_intent_.goal();
+    retained_executing_goal = executingGoalSnapshot();
+    retained_desired_revision = desired_intent_.revision();
+    retained_command_goal_epoch = executionGoalEpoch();
+    retained_localization_epoch = active_localization_epoch_.load(
+        std::memory_order_acquire);
+    retained_timeline = execution_authority_.snapshot();
+    retained_episode = execution_authority_.snapshot();
+    retained_recovery_state = retained_episode.lifecycle.recovery;
+    retained_planning_transition = desired_intent_.transition();
+  }
+  if (context.expected_execution &&
+      !execution_authority_.isCurrentSnapshot(*context.expected_execution)) {
+    // A late result cannot reinterpret a newer active command as the
+    // incumbent of its old solve, even when desired intent still matches.
+    // Emit the exact discard outcome before returning; otherwise the
+    // planner request appears to have no terminal producer witness.
+    causal_snapshot.timestamp_ns = now().nanoseconds();
+    causal_snapshot.planning_cycle_id = context.diagnostic_planning_cycle_id;
+    causal_snapshot.execution_localization_epoch = localization_epoch_at_solve;
+    causal_snapshot.execution_goal_epoch = goal_epoch;
+    causal_snapshot.execution_request_id = goal ? goal->request_id : 0U;
+    observation.disposition = RetainedDecisionDisposition::kSuperseded;
+    observation.owner_snapshot_current = false;
+    observation.callback_request_current =
+        retained_desired_goal && goal && retained_desired_revision == goal_epoch &&
+        sameGoalIdentity(retained_desired_goal, goal);
+    observation.captured_timeline_version = retained_timeline.version;
+    observation.captured_bundle_generation = retained_timeline.active
+        ? retained_timeline.active->bundle_generation : 0U;
+    observation.after_timeline_version = retained_timeline.version;
+    observation.after_bundle_generation = observation.captured_bundle_generation;
+    observation.after_command_available = retained_episode.commandAvailable();
+    observation.after_failure_latched = retained_episode.failed();
+    observeRetainedDecision(causal_snapshot, observation);
+    return;
+  }
+  const auto committed_bundle = retained_timeline.active;
+  observation.captured_timeline_version = retained_timeline.version;
+  observation.captured_bundle_generation = committed_bundle
+      ? committed_bundle->bundle_generation : 0U;
+  const auto expected_bundle = context.terminal_monitor
+      ? context.terminal_monitor->snapshot.active : committed_bundle;
+  observation.expected_world = expected_bundle ? expected_bundle->world_identity
+      : navigation_world_model::WorldSnapshotIdentity{};
+  observation.expected_end_ns = expected_bundle ? expected_bundle->declared_end_ns : 0;
+  observation.expected_valid_until_ns = expected_bundle ? expected_bundle->valid_until_ns : 0;
+  observation.captured_world = retained_timeline.world_identity.value_or(
+      navigation_world_model::WorldSnapshotIdentity{});
+  observation.declared_end_ns = committed_bundle ? committed_bundle->declared_end_ns : 0;
+  observation.valid_until_ns = committed_bundle ? committed_bundle->valid_until_ns : 0;
+  const bool retained_goal_matches_callback = goal && retained_desired_goal &&
+      sameGoalIdentity(goal, retained_desired_goal) &&
+      goal_epoch == retained_desired_revision &&
+      localization_epoch_at_solve == retained_localization_epoch;
+  const bool committed = retained_goal_matches_callback &&
+      retainedCommandMatchesExecutionIdentity(
+      static_cast<bool>(committed_bundle),
+      committed_bundle && committed_bundle->hasTrajectoryMetadata(),
+      committed_bundle ? committed_bundle->localization_epoch : 0U,
+      retained_localization_epoch,
+      committed_bundle ? committed_bundle->goal_epoch : 0U,
+      retained_command_goal_epoch,
+      committed_bundle ? committed_bundle->request_id : 0U,
+      retained_executing_goal.has_value(),
+      retained_executing_goal ? retained_executing_goal->request_id : 0U,
+      retained_executing_goal && retained_desired_goal &&
+          retained_executing_goal->mission_id == retained_desired_goal->mission_id);
+  if (terminal_monitor &&
+      (!context.terminal_monitor || !committed || (retained_planning_transition == PlanningIntentTransition::kNewIntent) ||
+       (retained_planning_transition == PlanningIntentTransition::kHotRetarget) || retained_timeline.pending ||
+       retained_command_goal_epoch != goal_epoch ||
+       !sameGoalIdentity(retained_desired_goal, retained_executing_goal) ||
+       !executionAuthoritySnapshotsEqual(
+           retained_timeline, context.terminal_monitor->snapshot) ||
+       !executionLifecycleSnapshotsEqual(
+           retained_episode, context.terminal_monitor->snapshot) ||
+       !terminalMainMonitorPhaseIsOpen(
+           *committed_bundle, retained_episode, now().nanoseconds()))) {
+    causal_snapshot.planning_cycle_id = context.diagnostic_planning_cycle_id;
+    causal_snapshot.solve_generation = solve_generation;
+    causal_snapshot.timestamp_ns = now().nanoseconds();
+    // Preserve the callback's expected G even when the current owner is H.
+    // Captured owner/version/world remain separately observable above.
+    causal_snapshot.execution_localization_epoch = expected_bundle
+        ? expected_bundle->localization_epoch : effective_scheduled_key.localization_epoch;
+    causal_snapshot.execution_goal_epoch = expected_bundle
+        ? expected_bundle->goal_epoch : effective_scheduled_key.goal_epoch;
+    causal_snapshot.execution_request_id = expected_bundle
+        ? expected_bundle->request_id : effective_scheduled_key.request_id;
+    causal_snapshot.execution_bundle_generation = expected_bundle
+        ? expected_bundle->bundle_generation : effective_scheduled_key.committed_bundle_generation;
+    observation.disposition = RetainedDecisionDisposition::kEntryRejected;
+    observeRetainedDecision(causal_snapshot, observation);
+    return;
+  }
+  const bool backup_available = committed && committed_bundle->backup_available;
+  const double backup_start_s = committed
+      ? committed_bundle->backup_start_time_s : 0.0;
+
+  // ReplanOnce may run while command publication and vehicle motion continue.
+  // Pin measured state before its evaluation instant, then keep the trajectory
+  // delta integral until the final duration conversion. Independently rounded
+  // absolute seconds can turn exact START into a negative elapsed duration.
+  // A real pre-START instant or malformed delta must remain unusable, not zero.
+  const auto retained_execution_state = execution_state_store_.load();
+  const auto retained_validation_now_ns = now().nanoseconds();
+  const auto retained_elapsed_ns = committed && committed_bundle->declared_start_ns > 0
+      ? navigation_common::checkedDifference(
+            retained_validation_now_ns, committed_bundle->declared_start_ns)
+      : std::nullopt;
+  const double elapsed_s = retained_elapsed_ns
+      ? static_cast<double>(*retained_elapsed_ns) * 1.0e-9
+      : std::numeric_limits<double>::infinity();
+  const double total_duration_s = committed
+      ? committed_bundle->duration_s : 0.0;
+  const double clamped_elapsed_s =
+      std::clamp(elapsed_s, 0.0, std::max(0.0, total_duration_s));
+  const auto sampleCommittedBundle =
+      [&](const double trajectory_time_s,
+          navigation_planning::TrajectoryPoint& output) {
+        if (!committed) return false;
+        const auto stamp_ns = navigation_common::secondsSumToNanoseconds(
+            committed_bundle->start_wall_time_s, trajectory_time_s);
+        if (!stamp_ns) return false;
+        const auto sample = committed_bundle->sample(*stamp_ns);
+        if (!sample) return false;
+        output = *sample;
+        return true;
+      };
+  navigation_planning::TrajectoryPoint command_anchor_sample;
+  const bool command_anchor_valid = sampleCommittedBundle(
+      clamped_elapsed_s, command_anchor_sample);
+  const Eigen::Vector3d command_anchor = command_anchor_valid
+      ? command_anchor_sample.position_world : Eigen::Vector3d::Zero();
+  // Apply the same dual-clock freshness contract used by command publication;
+  // a stale receive must not rescue a retained or emergency command.
+  const auto retained_freshness_now_ns = now().nanoseconds();
+  const auto retained_freshness_steady_ns = navigation_common::steadyClockNowNanoseconds();
+  const auto retained_state_freshness = retained_execution_state
+      ? navigation_contracts::evaluateExecutionStateFreshness(
+            retained_freshness_now_ns, retained_execution_state->state.source_stamp_ns,
+            retained_freshness_steady_ns,
+            retained_execution_state->state.receive_stamp_ns,
+            data_freshness_window_s_)
+      : navigation_contracts::ExecutionStateFreshness{};
+  observation.initial_freshness_ros_ns = retained_freshness_now_ns;
+  observation.initial_freshness_steady_ns = retained_freshness_steady_ns;
+  observation.initial_freshness_reason = retained_execution_state
+      ? static_cast<int>(retained_state_freshness.reason) : -1;
+  Eigen::Vector3d current_vehicle_position = Eigen::Vector3d::Zero();
+  Eigen::Vector3d current_vehicle_velocity = Eigen::Vector3d::Zero();
+  const bool fresh_vehicle_state = retained_execution_state &&
+                                   retained_execution_state->state.finite() &&
+                                   retained_state_freshness.valid();
+  // Diagnostic-only temporal decomposition. These samples use the same
+  // immutable committed evaluator at the two exact timestamps and do not
+  // widen the executable lease.
+  navigation_planning::TrajectoryPoint command_sample_at_now;
+  navigation_planning::TrajectoryPoint command_sample_at_state_source;
+  const auto sampleCommittedBundleAtDeclaredStamp =
+      [&](const std::int64_t stamp_ns,
+          navigation_planning::TrajectoryPoint& output) {
+        if (!committed || stamp_ns <= 0) return false;
+        const auto sample = committed_bundle->sampleAtDeclaredStamp(stamp_ns);
+        if (!sample) return false;
+        output = *sample;
+        return true;
+      };
+  const bool temporal_command_now_valid =
+      sampleCommittedBundleAtDeclaredStamp(
+          retained_validation_now_ns, command_sample_at_now);
+  const bool temporal_command_source_valid = retained_execution_state &&
+      sampleCommittedBundleAtDeclaredStamp(
+          retained_execution_state->state.source_stamp_ns,
+          command_sample_at_state_source);
+  observation.source_sample_valid = temporal_command_source_valid;
+  const bool temporal_state_valid = retained_execution_state &&
+      retained_execution_state->state.position_world.allFinite() &&
+      retained_execution_state->state.velocity_world.allFinite();
+  const double anchor_error_raw_m = temporal_command_now_valid && temporal_state_valid
+      ? (command_sample_at_now.position_world -
+         retained_execution_state->state.position_world).norm()
+      : std::numeric_limits<double>::quiet_NaN();
+  const double anchor_error_time_aligned_m =
+      temporal_command_source_valid && temporal_state_valid
+      ? (command_sample_at_state_source.position_world -
+         retained_execution_state->state.position_world).norm()
+      : std::numeric_limits<double>::quiet_NaN();
+  const double command_motion_over_state_age_m =
+      temporal_command_now_valid && temporal_command_source_valid
+      ? (command_sample_at_now.position_world -
+         command_sample_at_state_source.position_world).norm()
+      : std::numeric_limits<double>::quiet_NaN();
+  const double velocity_residual_time_aligned_mps =
+      temporal_command_source_valid && temporal_state_valid
+      ? (command_sample_at_state_source.velocity_world -
+         retained_execution_state->state.velocity_world).norm()
+      : std::numeric_limits<double>::quiet_NaN();
+  causal_snapshot.planning_cycle_id = context.diagnostic_planning_cycle_id;
+  causal_snapshot.solve_generation = solve_generation;
+  causal_snapshot.timestamp_ns = retained_validation_now_ns;
+  causal_snapshot.execution_localization_epoch = committed
+      ? committed_bundle->localization_epoch : localization_epoch_at_solve;
+  causal_snapshot.execution_goal_epoch = committed ? committed_bundle->goal_epoch : goal_epoch;
+  causal_snapshot.execution_request_id = committed ? committed_bundle->request_id : goal->request_id;
+  causal_snapshot.execution_bundle_generation = committed
+      ? committed_bundle->bundle_generation : 0U;
+  causal_snapshot.execution_state_ingress_sequence = retained_execution_state
+      ? retained_execution_state->ingress_sequence : 0U;
+  causal_snapshot.evaluation_now_ns = retained_validation_now_ns;
+  causal_snapshot.execution_state_source_stamp_ns = retained_execution_state
+      ? retained_execution_state->state.source_stamp_ns : 0;
+  causal_snapshot.execution_state_receive_stamp_ns = retained_execution_state
+      ? retained_execution_state->state.receive_stamp_ns : 0;
+  causal_snapshot.execution_state_source_age_ms = retained_state_freshness.source_age_ms;
+  causal_snapshot.execution_state_receive_age_ms = retained_state_freshness.receive_age_ms;
+  causal_snapshot.committed_bundle_start_stamp_ns = committed
+      ? committed_bundle->declared_start_ns : 0;
+  const Eigen::Vector3d nan_vector =
+      Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+  causal_snapshot.measured_position_at_state_source = temporal_state_valid
+      ? retained_execution_state->state.position_world : nan_vector;
+  causal_snapshot.measured_velocity_at_state_source = temporal_state_valid
+      ? retained_execution_state->state.velocity_world : nan_vector;
+  causal_snapshot.committed_command_position_at_now = temporal_command_now_valid
+      ? command_sample_at_now.position_world : nan_vector;
+  causal_snapshot.committed_command_velocity_at_now = temporal_command_now_valid
+      ? command_sample_at_now.velocity_world : nan_vector;
+  causal_snapshot.committed_command_position_at_state_source = temporal_command_source_valid
+      ? command_sample_at_state_source.position_world : nan_vector;
+  causal_snapshot.committed_command_velocity_at_state_source = temporal_command_source_valid
+      ? command_sample_at_state_source.velocity_world : nan_vector;
+  causal_snapshot.anchor_error_raw_m = anchor_error_raw_m;
+  causal_snapshot.anchor_error_time_aligned_m = anchor_error_time_aligned_m;
+  causal_snapshot.command_motion_over_state_age_m = command_motion_over_state_age_m;
+  causal_snapshot.velocity_residual_time_aligned_mps = velocity_residual_time_aligned_mps;
+  causal_snapshot.retained_elapsed_s = elapsed_s;
+  causal_snapshot.committed_bundle_duration_s = total_duration_s;
+  causal_snapshot.validate_without_new_commit = validate_without_new_commit;
+  causal_snapshot.retained_fresh_vehicle_state = fresh_vehicle_state;
+  causal_snapshot.retained_committed_command_available = committed;
+  causal_snapshot.retained_command_anchor_valid = command_anchor_valid;
+  causal_snapshot.retained_safety_trajectory_available = backup_available;
+  causal_snapshot.retained_terminal_stop = context.transition_terminal_stop;
+  causal_snapshot.retained_committed_role = committed_bundle
+      ? static_cast<int>(committed_bundle->role) : -1;
+  causal_snapshot.retained_recovery_state_before = static_cast<std::uint8_t>(
+      retained_recovery_state);
+  const double latest_vehicle_state_age_s = retained_execution_state
+      ? retained_state_freshness.source_age_ms * 1.0e-3
+      : std::numeric_limits<double>::infinity();
+  if (fresh_vehicle_state) {
+    current_vehicle_position = retained_execution_state->state.position_world;
+    current_vehicle_velocity = retained_execution_state->state.velocity_world;
+  }
+  const double anchor_error_m = !command_anchor_valid || !fresh_vehicle_state
+                                    ? std::numeric_limits<double>::infinity()
+                                    : (command_anchor - current_vehicle_position).norm();
+  const auto latest_world = world_snapshot_store_.latest();
+  const bool current_vehicle_state_known_free = fresh_vehicle_state && latest_world &&
+      latest_world.view &&
+      latest_world.view->classify(
+          current_vehicle_position,
+          navigation_world_model::GridLayer::kInflated) ==
+          navigation_world_model::CellState::kKnownFree;
+  causal_snapshot.current_vehicle_state_known_free = current_vehicle_state_known_free;
+  bool sampled_path_clear = committed;
+  double first_blocked_sample_s = std::numeric_limits<double>::quiet_NaN();
+  Eigen::Vector3d first_blocked_sample = Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::quiet_NaN());
+  navigation_world_model::CellState first_blocked_grid =
+      navigation_world_model::CellState::kUnknown;
+  bool first_blocked_cell_observed = false;
+  if (sampled_path_clear) {
+    const auto validation = latest_world
+        ? committed_bundle->validateWorld(latest_world.view, now().seconds())
+        : navigation_planning::TrajectoryValidationResult{};
+    observation.world_validation_attempted = static_cast<bool>(latest_world);
+    observation.world_validation = validation;
+    sampled_path_clear = validation.valid;
+    if (!sampled_path_clear) {
+      first_blocked_cell_observed = validation.blocking_cell_observed;
+      first_blocked_sample_s = std::isfinite(validation.first_blocked_time_s)
+          ? validation.first_blocked_time_s : clamped_elapsed_s;
+      first_blocked_sample = validation.first_blocked_position;
+      if (!first_blocked_sample.allFinite()) {
+        navigation_planning::TrajectoryPoint blocked_sample;
+        if (sampleCommittedBundle(std::clamp(
+                first_blocked_sample_s, 0.0, total_duration_s), blocked_sample)) {
+          first_blocked_sample = blocked_sample.position_world;
+        }
+      }
+      first_blocked_grid = first_blocked_cell_observed
+          ? static_cast<navigation_world_model::CellState>(validation.first_blocked_cell_state)
+          : navigation_world_model::CellState::kUndefined;
+    }
+  }
+  const auto phase_execution_certificate = committed
+      ? assessPhaseExecutionCertificate(
+            *committed_bundle, current_vehicle_position, current_vehicle_velocity,
+            retained_validation_now_ns,
+            retained_execution_state ? retained_execution_state->state.source_stamp_ns : 0,
+            static_cast<std::int64_t>(planning_period_us_) * 1000,
+            static_cast<double>(planning_period_us_) * 1.0e-6,
+            retained_tracking_limit_m, navigation_contracts::kCommandAnchorErrorLimitM,
+            current_vehicle_state_known_free, sampled_path_clear)
+      : PhaseExecutionCertificate{};
+  const bool phase_execution_certificate_accepted =
+      phase_execution_certificate.accepted();
+  const auto path_relative_tracking = committed
+      ? assessPathRelativeTracking(
+            *committed_bundle, current_vehicle_position, current_vehicle_velocity,
+            retained_validation_now_ns,
+            retained_execution_state ? retained_execution_state->state.source_stamp_ns : 0,
+            planning_interval_s + navigation_planning::PlanningTimingContract::kCommandPeriodS,
+            navigation_contracts::kMainTrackingPhaseWindowS, retained_tracking_limit_m,
+            navigation_contracts::kCommandAnchorErrorLimitM,
+            fresh_vehicle_state, current_vehicle_state_known_free, sampled_path_clear)
+      : PathRelativeTrackingResult{};
+  const bool path_relative_tracking_accepted = path_relative_tracking.accepted();
+  const auto experimental_tracking = committed
+      ? assessExperimentalTracking(
+            tracking_experiment_, *committed_bundle,
+            current_vehicle_position, current_vehicle_velocity, retained_validation_now_ns,
+            retained_execution_state ? retained_execution_state->state.source_stamp_ns : 0,
+            planning_interval_s + navigation_planning::PlanningTimingContract::kCommandPeriodS,
+            fresh_vehicle_state, current_vehicle_state_known_free, sampled_path_clear)
+      : ExperimentalTrackingResult{};
+  causal_snapshot.path_relative_projected_stamp_ns =
+      path_relative_tracking.projected_stamp_ns;
+  causal_snapshot.path_relative_phase_offset_s =
+      path_relative_tracking.phase_offset_s;
+  causal_snapshot.path_relative_predicted_phase_offset_s =
+      path_relative_tracking.predicted_phase_offset_s;
+  causal_snapshot.path_relative_error_m = path_relative_tracking.path_error_m;
+  causal_snapshot.path_relative_cross_track_error_m =
+      path_relative_tracking.cross_track_error_m;
+  causal_snapshot.path_relative_vertical_error_m =
+      path_relative_tracking.vertical_error_m;
+  causal_snapshot.path_relative_predicted_error_m =
+      path_relative_tracking.predicted_path_error_m;
+  causal_snapshot.path_relative_progress_rate = path_relative_tracking.progress_rate;
+  causal_snapshot.path_relative_raw_error_m = path_relative_tracking.raw_error_m;
+  causal_snapshot.path_relative_evaluation_count =
+      path_relative_tracking.evaluation_count;
+  causal_snapshot.path_relative_tracking_accepted = path_relative_tracking_accepted;
+  causal_snapshot.phase_execution_lag_s = phase_execution_certificate.phase_lag_s;
+  causal_snapshot.phase_execution_source_error_m =
+      phase_execution_certificate.source_time_error_m;
+  causal_snapshot.phase_execution_predicted_error_m =
+      phase_execution_certificate.predicted_source_error_m;
+  causal_snapshot.phase_execution_relative_velocity_mps =
+      phase_execution_certificate.relative_velocity_mps;
+  causal_snapshot.phase_execution_certificate_accepted =
+      phase_execution_certificate_accepted;
+  // A phase witness is allowed to replace only the retained MAIN tracking
+  // measurement. It never changes the raw diagnostic, command timestamp,
+  // lease, bundle identity, or the scheduler's conservative anchor pressure.
+  // The source-time tube is already reserved by the planner's tracking
+  // budget; the absolute current-command cap remains an independent guard.
+  // Safety-suffix and backup ownership remain strict current-anchor
+  // decisions. The phase witness may preserve the existing MAIN command
+  // for one bounded validation interval, but it cannot make a future
+  // BACKUP suffix usable from a raw out-of-tube anchor.
+  const double strict_execution_anchor_error_m = anchor_error_m;
+  const auto time_aligned_tracking = assessTimeAlignedRetainedTracking(
+      anchor_error_time_aligned_m, anchor_error_raw_m,
+      retained_tracking_limit_m, navigation_contracts::kCommandAnchorErrorLimitM);
+  // If replanning fails after the main-to-backup switch, the usable safety
+  // suffix starts at the current command anchor, not in the past.
+  const double safety_transition_s = backup_available
+                                         ? std::max(backup_start_s, clamped_elapsed_s)
+                                         : clamped_elapsed_s;
+  causal_snapshot.committed_safety_transition_time_s = safety_transition_s;
+  const double relative_anchor_speed_mps =
+      temporal_command_source_valid && fresh_vehicle_state
+          ? (command_sample_at_state_source.velocity_world - current_vehicle_velocity).norm()
+          : std::numeric_limits<double>::quiet_NaN();
+  const double projected_anchor_error_m =
+      projectedRetainedAnchorErrorUpperBound(
+          time_aligned_tracking.tracking_error_m, relative_anchor_speed_mps,
+          static_cast<double>(planning_period_us_) * 1.0e-6);
+  bool use_safety_suffix = committedSafetySuffixIsUsable(
+      backup_available, elapsed_s, total_duration_s,
+      safety_transition_s,
+      strict_execution_anchor_error_m, retained_tracking_limit_m,
+      sampled_path_clear);
+  // A measured-state PlanFromRest attempt may fail while the currently
+  // executing bundle is still a fresh, continuously certified bridge. Keep
+  // that bridge alive until the bounded recovery budget is exhausted; a
+  // single optimizer miss must not convert an otherwise safe recovery
+  // opportunity into an immediate PX4 handover. This does not extend the
+  // command lease and does not allow a non-finite, stale, blocked, or
+  // over-error bundle to remain exposed.
+  const bool recovery_bridge_usable = plan_from_rest_with_transition &&
+      !retained_episode.failed() && committed &&
+      fresh_vehicle_state && command_anchor_valid && sampled_path_clear &&
+      std::isfinite(elapsed_s) && elapsed_s >= 0.0 &&
+      std::isfinite(total_duration_s) && elapsed_s <= total_duration_s + 1.0e-9 &&
+      std::isfinite(strict_execution_anchor_error_m) &&
+      strict_execution_anchor_error_m <= retained_tracking_limit_m;
+  bool emergency_brake_committed = false;
+  bool emergency_certification_failed = false;
+  bool emergency_boundary_failed = false;
+  bool retained_result_discarded = false;
+  // This is a bounded MAIN-continuity disposition only. It does not mark a
+  // BACKUP suffix usable and does not transfer recovery ownership. The
+  // ordinary command publisher still enforces the existing lease and the
+  // next validation cycle must re-establish this witness.
+  const bool phase_execution_bridge_usable = phaseExecutionBridgeMayPreserveMain(
+      tracking_experiment_.enabled
+          ? experimental_tracking.accepted && !retained_episode.safetySuffixActive()
+          : path_relative_tracking_accepted,
+      committed, fresh_vehicle_state,
+      command_anchor_valid, plan_from_rest_with_transition, retained_recovery_state,
+      retained_execution_state ? retained_execution_state->state.localization_epoch : 0U,
+      committed_bundle ? committed_bundle->localization_epoch : 0U,
+      retained_episode.failed(), retained_validation_now_ns,
+      committed_bundle ? committed_bundle->valid_until_ns : 0,
+      static_cast<std::int64_t>(planning_period_us_) * 1000);
+  observation.initial_bridge_usable = phase_execution_bridge_usable;
+  causal_snapshot.phase_execution_bridge_usable = phase_execution_bridge_usable;
+  causal_snapshot.path_relative_bridge_usable = phase_execution_bridge_usable;
+  // Only a fully eligible MAIN bridge may replace the raw retained-command
+  // certificate. A phase measurement that is valid in isolation but is in
+  // PlanFromRest, recovery, epoch mismatch, or outside the next lease keeps
+  // the original fail-closed tracking decision.
+  const bool tracking_certificate_exceeded =
+      !phase_execution_bridge_usable && time_aligned_tracking.support_valid &&
+      !time_aligned_tracking.within_limits;
+  const double projected_execution_error_m = phase_execution_bridge_usable
+      ? path_relative_tracking.predicted_path_error_m
+      : projected_anchor_error_m;
+  const bool projected_tracking_certificate_exceeded =
+      !(tracking_experiment_.enabled && phase_execution_bridge_usable) &&
+      std::isfinite(projected_execution_error_m) &&
+      projected_execution_error_m > retained_tracking_limit_m;
+  // The relaxed bypass covers finite supported tracking, not missing support.
+  // At a newly activated terminal MAIN, a fresh SOURCE can still belong to A.
+  // Do not sample G before START or pretend this is an actual/projected
+  // exceedance. Attempt H through the existing independent brake certificates
+  // and exact pre-END owner transaction. Velocity-only still requires its
+  // separate ACTUAL reason contract and is deliberately not widened here.
+  const bool indeterminate_pre_start_tracking = terminal_monitor &&
+      !tracking_experiment_.velocity_only_enabled && temporal_command_now_valid &&
+      sampled_path_clear && observation.world_validation_attempted &&
+      observation.world_validation.valid && retained_execution_state && committed_bundle &&
+      retained_execution_state->state.localization_epoch == committed_bundle->localization_epoch &&
+      retained_execution_state->state.world_frame_id == planning_frame_ &&
+      retained_execution_state->state.body_frame_id == body_frame_id_ &&
+      terminalMainHasIndeterminatePreStartPressure(
+          *committed_bundle, temporal_command_source_valid,
+          retained_execution_state->state.source_stamp_ns, retained_validation_now_ns,
+          anchor_error_raw_m, retained_tracking_limit_m,
+          navigation_contracts::kCommandAnchorErrorLimitM);
+  const bool emergency_authorized = measuredStateEmergencyMayReplaceCommittedCommand(
+      validate_without_new_commit, use_safety_suffix,
+      fresh_vehicle_state, committed, command_anchor_valid,
+          tracking_certificate_exceeded,
+          retained_recovery_state,
+          committed_bundle
+              ? committed_bundle->role
+          : navigation_planning::CandidateRole::kEmergency,
+          projected_tracking_certificate_exceeded,
+          current_vehicle_state_known_free,
+          backup_available,
+          context.transition_terminal_stop,
+          indeterminate_pre_start_tracking);
+  std::uint8_t emergency_authorization_reason =
+      navigation_contracts::msg::NavigationCommand::EMERGENCY_AUTHORIZATION_NONE;
+  if (emergency_authorized) {
+    if (!use_safety_suffix && tracking_certificate_exceeded) {
+      emergency_authorization_reason = navigation_contracts::msg::NavigationCommand::
+          EMERGENCY_AUTHORIZATION_ACTUAL_ANCHOR_CERTIFICATE_EXCEEDED;
+    } else if (!tracking_certificate_exceeded &&
+               projected_tracking_certificate_exceeded) {
+      emergency_authorization_reason = navigation_contracts::msg::NavigationCommand::
+          EMERGENCY_AUTHORIZATION_PROJECTED_MAIN_ONLY_CERTIFICATE_EXCEEDED;
+    } else if (indeterminate_pre_start_tracking) {
+      emergency_authorization_reason = navigation_contracts::msg::NavigationCommand::
+          EMERGENCY_AUTHORIZATION_INDETERMINATE_PRE_START_TRACKING;
+    } else {
+      emergency_authorization_reason = navigation_contracts::msg::NavigationCommand::
+          EMERGENCY_AUTHORIZATION_OTHER_INVALID;
+    }
+  }
+  causal_snapshot.anchor_error_m = anchor_error_m;
+  causal_snapshot.projected_anchor_error_m = projected_anchor_error_m;
+  causal_snapshot.retained_tracking_limit_m = retained_tracking_limit_m;
+  causal_snapshot.relative_anchor_speed_mps = relative_anchor_speed_mps;
+  causal_snapshot.backup_available = backup_available;
+  causal_snapshot.time_to_backup_start_s = backup_available
+      ? backup_start_s - elapsed_s : std::numeric_limits<double>::quiet_NaN();
+  causal_snapshot.committed_suffix_usable = use_safety_suffix;
+  causal_snapshot.sampled_path_clear = sampled_path_clear;
+  causal_snapshot.tracking_certificate_exceeded = tracking_certificate_exceeded;
+  causal_snapshot.projected_tracking_certificate_exceeded = projected_tracking_certificate_exceeded;
+  causal_snapshot.emergency_authorization_reason = emergency_authorization_reason;
+  causal_snapshot.emergency_candidate_commit_result = 0;
+  if (emergency_authorized) {
+    // This is the only measured-state moving transition. Propagated P/V and
+    // Propagated odometry does not expose measured A/J. Keep P/V and yaw
+    // continuous, but do not promote finite-difference estimates into the
+    // emergency command boundary.
+    navigation_planning::TrajectoryPoint emergency_command =
+        makeMeasuredEmergencyBoundary(
+            command_anchor_sample,
+            retained_execution_state &&
+                retained_execution_state->state.acceleration_estimated,
+            retained_execution_state &&
+                retained_execution_state->state.jerk_estimated);
+    if (retained_execution_state) {
+      emergency_command.position_world =
+          retained_execution_state->state.position_world;
+      emergency_command.velocity_world =
+          retained_execution_state->state.velocity_world;
+      if (!retained_execution_state->state.acceleration_estimated) {
+        emergency_command.acceleration_world =
+            retained_execution_state->state.acceleration_world;
+      }
+      if (!retained_execution_state->state.jerk_estimated) {
+        emergency_command.jerk_world =
+            retained_execution_state->state.jerk_world;
+      }
+      emergency_command.yaw = retained_execution_state->state.yaw_rad;
+      const double measured_altitude_m =
+          emergency_command.position_world.z();
+      const double command_anchor_altitude_m =
+          command_anchor_sample.position_world.z();
+      const double terminal_altitude_m =
+          plannerEmergencyTerminalAltitude(
+              measured_altitude_m, command_anchor_altitude_m,
+              retained_tracking_limit_m);
+      RCLCPP_WARN(
+          get_logger(),
+          "one-shot emergency altitude anchor measured=%.3f command=%.3f terminal=%.3f limit=%.3f",
+          measured_altitude_m, command_anchor_altitude_m,
+          terminal_altitude_m, retained_tracking_limit_m);
+    observation.emergency_preparation_attempted = true;
+    emergency_brake_committed = planner_->commitEmergencyBrake(
+        emergency_command, now().seconds(), localization_epoch_at_solve,
+        goal_epoch, goal->request_id, terminal_altitude_m);
+    }
+    use_safety_suffix = emergency_brake_committed;
+    emergency_certification_failed = !emergency_brake_committed;
+    causal_snapshot.emergency_candidate_commit_result = emergency_brake_committed ? 1 : 2;
+    observation.emergency_prepared = emergency_brake_committed;
+    if (projected_tracking_certificate_exceeded && !tracking_certificate_exceeded) {
+      RCLCPP_WARN(get_logger(),
+                  "planner backend projected retained-command anchor beyond the "
+                  "tracking envelope; committing one-shot measured-state recovery "
+                  "before the next validation boundary anchor=%.3f projected=%.3f limit=%.3f",
+                  anchor_error_m, projected_anchor_error_m, retained_tracking_limit_m);
+    }
+  }
+  if (emergency_brake_committed) observation.emergency_admission_attempted = true;
+  if (emergency_brake_committed &&
+      !commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
+                              now().nanoseconds(), effective_scheduled_key,
+                              std::nullopt, &observation.emergency_store_admitted,
+                              context.terminal_monitor)) {
+    emergency_brake_committed = false;
+    use_safety_suffix = false;
+    emergency_boundary_failed = true;
+    RCLCPP_ERROR(get_logger(),
+                 "execution boundary rejected the one-shot measured emergency candidate; "
+                 "rechecking original execution owner before failure delivery");
+  }
+  observation.emergency_identity_delivered = emergency_brake_committed;
+  // Prepare the expensive analytic witnesses before taking the owner
+  // transaction locks.  The lock section below only rechecks freshness,
+  // ownership and lease metadata, so projection cannot block command or
+  // localization transitions.
+  const auto prepared_final_retained_now_ns = now().nanoseconds();
+  const auto prepared_final_execution_state = execution_state_store_.load();
+  const auto prepared_final_state_freshness = prepared_final_execution_state
+      ? navigation_contracts::evaluateExecutionStateFreshness(
+            prepared_final_retained_now_ns,
+            prepared_final_execution_state->state.source_stamp_ns,
+            navigation_common::steadyClockNowNanoseconds(),
+            prepared_final_execution_state->state.receive_stamp_ns,
+            data_freshness_window_s_)
+      : navigation_contracts::ExecutionStateFreshness{};
+  const bool prepared_final_fresh_vehicle_state = prepared_final_execution_state &&
+      prepared_final_execution_state->state.finite() &&
+      prepared_final_state_freshness.valid();
+  const Eigen::Vector3d prepared_final_vehicle_position =
+      prepared_final_fresh_vehicle_state
+      ? prepared_final_execution_state->state.position_world
+      : Eigen::Vector3d::Zero();
+  const Eigen::Vector3d prepared_final_vehicle_velocity =
+      prepared_final_fresh_vehicle_state
+      ? prepared_final_execution_state->state.velocity_world
+      : Eigen::Vector3d::Zero();
+  const auto prepared_final_world = latest_world;
+  const bool prepared_final_vehicle_state_known_free =
+      prepared_final_fresh_vehicle_state && prepared_final_world &&
+      prepared_final_world.view &&
+      prepared_final_world.view->classify(
+          prepared_final_vehicle_position,
+          navigation_world_model::GridLayer::kInflated) ==
+          navigation_world_model::CellState::kKnownFree;
+  const auto prepared_final_phase_execution_certificate = committed
+      ? assessPhaseExecutionCertificate(
+            *committed_bundle, prepared_final_vehicle_position,
+            prepared_final_vehicle_velocity, prepared_final_retained_now_ns,
+            prepared_final_execution_state
+                ? prepared_final_execution_state->state.source_stamp_ns : 0,
+            static_cast<std::int64_t>(planning_period_us_) * 1000,
+            static_cast<double>(planning_period_us_) * 1.0e-6,
+            retained_tracking_limit_m, navigation_contracts::kCommandAnchorErrorLimitM,
+            prepared_final_vehicle_state_known_free, sampled_path_clear)
+      : PhaseExecutionCertificate{};
+  const auto prepared_final_path_relative_tracking = committed
+      ? assessPathRelativeTracking(
+            *committed_bundle, prepared_final_vehicle_position,
+            prepared_final_vehicle_velocity, prepared_final_retained_now_ns,
+            prepared_final_execution_state
+                ? prepared_final_execution_state->state.source_stamp_ns : 0,
+            planning_interval_s +
+                navigation_planning::PlanningTimingContract::kCommandPeriodS,
+            navigation_contracts::kMainTrackingPhaseWindowS, retained_tracking_limit_m,
+            navigation_contracts::kCommandAnchorErrorLimitM,
+            prepared_final_fresh_vehicle_state,
+            prepared_final_vehicle_state_known_free, sampled_path_clear)
+      : PathRelativeTrackingResult{};
+  const bool prepared_final_command_anchor_valid = committed &&
+      committed_bundle->sample(prepared_final_retained_now_ns).has_value();
+  const auto prepared_final_experimental_tracking = committed
+      ? assessExperimentalTracking(
+            tracking_experiment_, *committed_bundle,
+            prepared_final_vehicle_position, prepared_final_vehicle_velocity,
+            prepared_final_retained_now_ns,
+            prepared_final_execution_state
+                ? prepared_final_execution_state->state.source_stamp_ns : 0,
+            planning_interval_s + navigation_planning::PlanningTimingContract::kCommandPeriodS,
+            prepared_final_fresh_vehicle_state,
+            prepared_final_vehicle_state_known_free, sampled_path_clear)
+      : ExperimentalTrackingResult{};
+  // A visible main-only trajectory remains a MAIN command. Only an actual
+  // atomic main-to-backup bundle is marked safety-owned at the PX4 boundary.
+  {
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    const auto current_timeline = execution_authority_.snapshot();
+    const auto current_episode = execution_authority_.snapshot();
+    const auto current_desired_revision = desired_intent_.revision();
+    const auto current_command_goal_epoch = executionGoalEpoch();
+    const auto current_localization_epoch = active_localization_epoch_.load(
+        std::memory_order_acquire);
+    const auto final_retained_now_ns = prepared_final_retained_now_ns;
+    const auto& final_execution_state = prepared_final_execution_state;
+    const bool final_fresh_vehicle_state = prepared_final_fresh_vehicle_state;
+    const auto& final_phase_execution_certificate =
+        prepared_final_phase_execution_certificate;
+    const auto& final_path_relative_tracking =
+        prepared_final_path_relative_tracking;
+    causal_snapshot.phase_execution_final_source_stamp_ns = final_execution_state
+        ? final_execution_state->state.source_stamp_ns : 0;
+    causal_snapshot.phase_execution_final_lag_s =
+        final_phase_execution_certificate.phase_lag_s;
+    causal_snapshot.phase_execution_final_source_error_m =
+        final_phase_execution_certificate.source_time_error_m;
+    causal_snapshot.phase_execution_final_predicted_error_m =
+        final_phase_execution_certificate.predicted_source_error_m;
+    causal_snapshot.phase_execution_final_relative_velocity_mps =
+        final_phase_execution_certificate.relative_velocity_mps;
+    causal_snapshot.phase_execution_final_certificate_accepted =
+        final_phase_execution_certificate.accepted();
+    causal_snapshot.path_relative_projected_stamp_ns =
+        final_path_relative_tracking.projected_stamp_ns;
+    causal_snapshot.path_relative_phase_offset_s =
+        final_path_relative_tracking.phase_offset_s;
+    causal_snapshot.path_relative_predicted_phase_offset_s =
+        final_path_relative_tracking.predicted_phase_offset_s;
+    causal_snapshot.path_relative_error_m =
+        final_path_relative_tracking.path_error_m;
+    causal_snapshot.path_relative_cross_track_error_m =
+        final_path_relative_tracking.cross_track_error_m;
+    causal_snapshot.path_relative_vertical_error_m =
+        final_path_relative_tracking.vertical_error_m;
+    causal_snapshot.path_relative_predicted_error_m =
+        final_path_relative_tracking.predicted_path_error_m;
+    causal_snapshot.path_relative_progress_rate =
+        final_path_relative_tracking.progress_rate;
+    causal_snapshot.path_relative_raw_error_m =
+        final_path_relative_tracking.raw_error_m;
+    causal_snapshot.path_relative_evaluation_count =
+        final_path_relative_tracking.evaluation_count;
+    causal_snapshot.path_relative_tracking_accepted =
+        final_path_relative_tracking.accepted();
+    const bool final_command_anchor_valid = prepared_final_command_anchor_valid;
+    const auto lock_recheck_now_ns = now().nanoseconds();
+    const auto lock_recheck_steady_ns = navigation_common::steadyClockNowNanoseconds();
+    const auto lock_recheck_state_freshness = final_execution_state
+        ? navigation_contracts::evaluateExecutionStateFreshness(
+              lock_recheck_now_ns, final_execution_state->state.source_stamp_ns,
+              lock_recheck_steady_ns,
+              final_execution_state->state.receive_stamp_ns, data_freshness_window_s_)
+        : navigation_contracts::ExecutionStateFreshness{};
+    const bool final_witness_age_bounded = final_execution_state &&
+        lock_recheck_state_freshness.valid() &&
+        lock_recheck_now_ns >= prepared_final_retained_now_ns &&
+        lock_recheck_now_ns - prepared_final_retained_now_ns <=
+            static_cast<std::int64_t>(
+                navigation_planning::PlanningTimingContract::kCommandPeriodS * 1.0e9);
+    observation.delivery_evaluated = true;
+    observation.lock_recheck_ros_ns = lock_recheck_now_ns;
+    observation.lock_recheck_steady_ns = lock_recheck_steady_ns;
+    observation.final_state_receive_ns = final_execution_state
+        ? final_execution_state->state.receive_stamp_ns : 0;
+    observation.final_source_age_ms = lock_recheck_state_freshness.source_age_ms;
+    observation.final_receive_age_ms = lock_recheck_state_freshness.receive_age_ms;
+    observation.final_freshness_reason = static_cast<int>(lock_recheck_state_freshness.reason);
+    observation.final_witness_age_bounded = final_witness_age_bounded;
+    observation.final_phase_status = static_cast<int>(final_phase_execution_certificate.status);
+    observation.final_path_status = static_cast<int>(final_path_relative_tracking.status);
+    observation.final_experimental_support_valid = prepared_final_experimental_tracking.support_valid;
+    observation.final_body_known_free = prepared_final_vehicle_state_known_free;
+    observation.final_command_anchor_valid = final_command_anchor_valid;
+    const bool phase_execution_bridge_current = phaseExecutionBridgeMayPreserveMain(
+        tracking_experiment_.enabled
+            ? prepared_final_experimental_tracking.accepted && !retained_episode.safetySuffixActive()
+            : final_path_relative_tracking.accepted(),
+        committed,
+        final_fresh_vehicle_state && final_witness_age_bounded,
+        final_command_anchor_valid,
+        plan_from_rest_with_transition, retained_recovery_state,
+        final_execution_state ? final_execution_state->state.localization_epoch : 0U,
+        committed_bundle ? committed_bundle->localization_epoch : 0U,
+        retained_episode.failed(), final_retained_now_ns,
+        committed_bundle ? committed_bundle->valid_until_ns : 0,
+        static_cast<std::int64_t>(planning_period_us_) * 1000);
+    causal_snapshot.phase_execution_bridge_usable = phase_execution_bridge_current;
+    causal_snapshot.path_relative_bridge_usable =
+        !tracking_experiment_.enabled && phase_execution_bridge_current;
+    causal_snapshot.experimental_tracking_bridge_usable =
+        false;
+    const auto& adaptive = prepared_final_experimental_tracking.current;
+    const auto& predicted_adaptive = prepared_final_experimental_tracking.predicted;
+    causal_snapshot.experimental_lateral_error_m = adaptive.lateral_error_m;
+    causal_snapshot.experimental_longitudinal_error_m = adaptive.longitudinal_error_m;
+    causal_snapshot.experimental_lateral_limit_m = adaptive.lateral_limit_m;
+    causal_snapshot.experimental_longitudinal_limit_m = adaptive.longitudinal_limit_m;
+    causal_snapshot.experimental_predicted_lateral_error_m = predicted_adaptive.lateral_error_m;
+    causal_snapshot.experimental_predicted_longitudinal_error_m = predicted_adaptive.longitudinal_error_m;
+    causal_snapshot.phase_execution_final_evaluation_stamp_ns = final_retained_now_ns;
+    const auto retained_transition = retainedValidationTransition(
+        use_safety_suffix || phase_execution_bridge_current);
+    // The desired goal may legitimately be ahead of the executing
+    // predecessor during PASS_THROUGH. It is therefore not part of the
+    // execution-owner token. It is checked separately below to ensure this
+    // callback is still allowed to mutate its own request state.
+    const bool execution_owner_snapshot_current =
+        localization_epoch_ready_.load(std::memory_order_acquire) &&
+        failedExecutionLeaseIsCurrent(
+            final_execution_state, execution_state_store_.load()) &&
+        current_command_goal_epoch == retained_command_goal_epoch &&
+        current_localization_epoch == retained_localization_epoch &&
+        sameGoalIdentity(executingGoalSnapshot(), retained_executing_goal) &&
+        current_timeline.version == retained_timeline.version &&
+        current_timeline.active.get() == retained_timeline.active.get() &&
+        current_timeline.active && retained_timeline.active &&
+        current_timeline.active->bundle_generation ==
+            retained_timeline.active->bundle_generation &&
+        current_timeline.pending.get() == retained_timeline.pending.get() &&
+        current_timeline.pending_activation_ns == retained_timeline.pending_activation_ns &&
+        executionLifecycleSnapshotsEqual(current_episode, retained_episode);
+    const bool callback_request_current =
+        localization_epoch_ready_.load(std::memory_order_acquire) &&
+        current_localization_epoch == localization_epoch_at_solve &&
+        current_desired_revision == goal_epoch &&
+        sameGoalIdentity(desired_intent_.goal(), goal);
+    const bool monitor_window_current = !terminal_monitor ||
+        (context.terminal_monitor && committed_bundle &&
+         execution_owner_snapshot_current && !desired_intent_.isNewIntent() && !desired_intent_.isHotRetarget() &&
+         current_command_goal_epoch == goal_epoch &&
+         sameGoalIdentity(desired_intent_.goal(), executingGoalSnapshot()) &&
+         !terminalHoldIsPending(
+             current_episode.commandAvailable(),
+             trajectory_reaches_goal_.load(std::memory_order_acquire), true,
+             terminal_bundle_generation_.load(std::memory_order_acquire)) &&
+         terminalMainMonitorPhaseIsOpen(
+             *committed_bundle, current_episode, now().nanoseconds()));
+    observation.owner_snapshot_current = execution_owner_snapshot_current;
+    observation.callback_request_current = callback_request_current;
+    observation.monitor_window_current = monitor_window_current;
+    if (terminal_monitor && !emergency_brake_committed && !monitor_window_current) {
+      // Successful admission has its own pre-END store cutover. A failed or
+      // superseded preparation has no such receipt: after END (even without a
+      // publisher callback), it is discard-only, never revocation of G's hold.
+      retained_result_discarded = true;
+      observation.disposition = RetainedDecisionDisposition::kDiscarded;
+    } else if (!callback_request_current ||
+        (!execution_owner_snapshot_current && !emergency_brake_committed)) {
+      // A newer request or execution owner owns command state now. This old
+      // solve is discard-only: never invalidate a deliberately transferred
+      // hot-retarget command. The desired-side epoch is only the callback's
+      // request check; it is not used to declare the predecessor stale.
+      // The emergency candidate is the sole exception: commitPlannerCandidate
+      // intentionally changed the timeline, so its own identity check below
+      // is the revalidation boundary for that one-way safety transition.
+      retained_result_discarded = terminal_monitor;
+      observation.disposition = RetainedDecisionDisposition::kSuperseded;
+    } else if (!command_execution_lease_failure_latch_.allowsCommandExposure()) {
+      observation.disposition = RetainedDecisionDisposition::kFailClosed;
+      failClosedLocked();
+    } else if (emergency_certification_failed) {
+      observation.disposition = RetainedDecisionDisposition::kFailClosed;
+      if (committed_bundle) {
+        (void)applyExecutionRecoveryEventLocked(
+            ExecutionRecoveryEvent::kEmergencyCertificationFailed,
+            *committed_bundle);
+      }
+      failClosedLocked();
+    } else if (emergency_boundary_failed) {
+      observation.disposition = RetainedDecisionDisposition::kFailClosed;
+      failClosedLocked();
+    } else if (emergency_brake_committed) {
+      observation.disposition = RetainedDecisionDisposition::kEmergencyDelivered;
+      // commitPlannerCandidate() changed timeline identity and recovery in
+      // one ExecutionAuthority mutation. Do not replay that transition here:
+      // a newer callback may already own the execution record.
+    } else if (recovery_bridge_usable) {
+      observation.disposition = RetainedDecisionDisposition::kRecoveryBridgePreserved;
+      // A hot-retarget recovery bridge may still be the previous physical
+      // bundle.  Its execution epoch is immutable until the staged
+      // successor activation boundary; never relabel it with the desired
+      // goal epoch merely because the recovery solve missed.
+      const auto retained_execution_bundle = execution_authority_.load();
+      if (retained_execution_bundle &&
+          retained_execution_bundle->goal_epoch == goal_epoch) {
+
+      }
+      const auto retained_execution_goal = executingGoalSnapshot();
+      const auto retained_command_epoch =
+          executionGoalEpoch();
+      if (retained_execution_bundle && retained_execution_goal &&
+          (execution_authority_.matchesActive(*retained_execution_goal, retained_command_epoch, localization_epoch_at_solve, retained_execution_bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_solve))) {
+        execution_authority_.observeRetainedCommand(
+            *retained_execution_bundle, use_safety_suffix);
+      }
+      trajectory_completion_witness_.reset();
+    } else if (phase_execution_bridge_current && !use_safety_suffix) {
+      observation.disposition = RetainedDecisionDisposition::kMainBridgePreserved;
+      causal_snapshot.experimental_tracking_bridge_usable = tracking_experiment_.enabled;
+      causal_snapshot.experimental_tracking_override_used = tracking_experiment_.enabled &&
+          !final_path_relative_tracking.accepted();
+      causal_snapshot.experimental_tracking_brake_suppressed = tracking_experiment_.enabled &&
+          tracking_experiment_.suppress_braking &&
+          (prepared_final_experimental_tracking.suppression_used ||
+           !final_path_relative_tracking.accepted());
+      // Preserve the current MAIN owner for this bounded source-time
+      // witness. Deliberately do not mark a safety suffix or activate
+      // BACKUP from this branch.
+      trajectory_completion_witness_.reset();
+    } else if (use_safety_suffix && validate_without_new_commit) {
+      observation.disposition = RetainedDecisionDisposition::kCertifiedCommandPreserved;
+      const auto retained_execution_goal = executingGoalSnapshot();
+      const auto retained_command_epoch =
+          executionGoalEpoch();
+      const bool retained_identity_current = committed_bundle &&
+          retained_execution_goal && (execution_authority_.matchesActive(*retained_execution_goal, retained_command_epoch, localization_epoch_at_solve, committed_bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_solve));
+      if (retained_identity_current) {
+        execution_authority_.observeRetainedCommand(*committed_bundle, true);
+      }
+    } else if (!validate_without_new_commit ||
+               retained_transition == RetainedValidationTransition::FailClosed) {
+      observation.disposition = use_safety_suffix
+          ? RetainedDecisionDisposition::kCertifiedCommandPreserved
+          : RetainedDecisionDisposition::kFailClosed;
+      const auto retained_execution_goal = executingGoalSnapshot();
+      const auto retained_command_epoch =
+          executionGoalEpoch();
+      const bool retained_identity_current = committed_bundle &&
+          retained_execution_goal && (execution_authority_.matchesActive(*retained_execution_goal, retained_command_epoch, localization_epoch_at_solve, committed_bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_solve));
+      if (retainedSafetyTransitionMayActivateBackup(
+              use_safety_suffix, backup_available,
+              command_anchor_valid
+                  ? command_anchor_sample.role
+                  : navigation_planning::CandidateRole::kEmergency) &&
+          !emergency_brake_committed && retained_identity_current) {
+        applyExecutionRecoveryEventLocked(
+            ExecutionRecoveryEvent::kBackupActivated, *committed_bundle);
+      }
+      if (!use_safety_suffix) {
+
+        failClosedLocked();
+      }
+    }
+    const auto after_timeline = execution_authority_.snapshot();
+    const auto after_episode = execution_authority_.snapshot();
+    observation.after_timeline_version = after_timeline.version;
+    observation.after_bundle_generation = after_timeline.active
+        ? after_timeline.active->bundle_generation : 0U;
+    observation.after_episode_generation = after_episode.activeGeneration();
+    observation.after_command_available = after_episode.commandAvailable();
+    observation.after_failure_latched = after_episode.failed();
+  }
+  if (emergency_brake_committed &&
+      command_execution_lease_failure_latch_.allowsCommandExposure()) {
+    RCLCPP_WARN(get_logger(),
+                "planner backend replaced the exceeded-anchor command with one "
+                "measured-state emergency brake");
+  }
+  if ((retained_planning_transition == PlanningIntentTransition::kHotRetarget)) {
+    RCLCPP_INFO(get_logger(),
+                "mission_handoff retained_result stamp_ns=%lld desired_wp=%u "
+                "desired_req=%lu desired_epoch=%lu execution_epoch=%lu "
+                "captured_generation=%lu after_generation=%lu disposition=%u "
+                "committed=%d after_available=%d after_failure=%d",
+                static_cast<long long>(now().nanoseconds()),
+                retained_desired_goal ? retained_desired_goal->waypoint_index : 0U,
+                static_cast<unsigned long>(retained_desired_goal ? retained_desired_goal->request_id : 0U),
+                static_cast<unsigned long>(retained_desired_revision),
+                static_cast<unsigned long>(retained_command_goal_epoch),
+                static_cast<unsigned long>(observation.captured_bundle_generation),
+                static_cast<unsigned long>(observation.after_bundle_generation),
+                static_cast<unsigned>(observation.disposition), committed ? 1 : 0,
+                observation.after_command_available ? 1 : 0,
+                observation.after_failure_latched ? 1 : 0);
+  }
+  if (terminal_monitor) {
+    RCLCPP_DEBUG(
+        get_logger(),
+        "terminal MAIN monitor generation=%lu discarded=%d emergency_admitted=%d "
+        "fresh=%d clear=%d anchor=%.3f projected=%.3f limit=%.3f",
+        static_cast<unsigned long>(committed_bundle ? committed_bundle->bundle_generation : 0U),
+        retained_result_discarded ? 1 : 0, emergency_brake_committed ? 1 : 0,
+        fresh_vehicle_state ? 1 : 0, sampled_path_clear ? 1 : 0,
+        anchor_error_m, projected_anchor_error_m, retained_tracking_limit_m);
+  } else if (use_safety_suffix && validate_without_new_commit) {
+    RCLCPP_DEBUG(get_logger(),
+                 "planner backend reported NO_NEED; retained committed command remains "
+                 "latest-world valid without a new commit");
+  } else if (recovery_bridge_usable) {
+    RCLCPP_WARN(get_logger(),
+                "planner backend recovery solve missed; retaining the fresh certified "
+                "command bridge while bounded recovery continues");
+  } else if (causal_snapshot.phase_execution_bridge_usable) {
+    RCLCPP_DEBUG(get_logger(),
+                 "retaining current MAIN command for bounded source-time phase witness; "
+                 "raw_anchor=%.3f final_source_error=%.3f final_predicted=%.3f",
+                 anchor_error_m,
+                 causal_snapshot.phase_execution_final_source_error_m,
+                 causal_snapshot.phase_execution_final_predicted_error_m);
+  } else if (use_safety_suffix) {
+    RCLCPP_WARN(get_logger(),
+                "planner backend hot replan failed (%d); retaining visible committed trajectory "
+                "backup=%d elapsed=%.3f backup_start=%.3f end=%.3f "
+                "anchor_error=%.3f projected_anchor_error=%.3f "
+                "relative_anchor_speed=%.3f tracking_limit=%.3f",
+                result ? static_cast<int>(*result) : -1, backup_available, elapsed_s, safety_transition_s,
+                total_duration_s, anchor_error_m, projected_anchor_error_m,
+                relative_anchor_speed_mps, retained_tracking_limit_m);
+  } else {
+    RCLCPP_ERROR(get_logger(),
+                 "planner backend hot replan failed without a valid safety suffix: backup=%d "
+                 "elapsed=%.3f backup_start=%.3f end=%.3f anchor_error=%.3f "
+                 "projected_anchor_error=%.3f relative_anchor_speed=%.3f "
+                 "tracking_limit=%.3f "
+                 "state_age=%.3f clear=%d blocked_t=%.3f blocked_grid=%d "
+                 "blocked=(%.2f,%.2f,%.2f) blocking_cell_observed=%d",
+                 backup_available, elapsed_s,
+                 safety_transition_s, total_duration_s,
+                 anchor_error_m, projected_anchor_error_m,
+                 relative_anchor_speed_mps, retained_tracking_limit_m,
+                 latest_vehicle_state_age_s, sampled_path_clear,
+                 first_blocked_sample_s, static_cast<int>(first_blocked_grid),
+                 first_blocked_sample.x(), first_blocked_sample.y(),
+                 first_blocked_sample.z(), first_blocked_cell_observed ? 1 : 0);
+  }
+  // The trace store linearizes publication against localization invalidation
+  // and rejects an older epoch. Keep the evaluated identity even when a
+  // later goal or activation changes before publication; command attachment
+  // performs the separate full-identity match at its own boundary.
+  (void)execution_trace_store_.publish(causal_snapshot);
+  // Per-call worker event survives revocation/discard. No command attachment
+  // or successful optimizer job is required, and no validator is queried twice.
+  // Preserve the existing trace publication before doing observer transport.
+  observeRetainedDecision(causal_snapshot, observation);
+}
+
+
+void NavigationRuntimeNode::publishCommand() {
+  const auto command_ros_time = now();
+  const double now_seconds = command_ros_time.seconds();
+  if (!std::isfinite(now_seconds)) return;
+  std::uint64_t localization_epoch_at_command =
+      active_localization_epoch_.load(std::memory_order_acquire);
+  if (!localization_epoch_ready_.load(std::memory_order_acquire)) return;
+
+  // Do not keep publishing a command from a fresh odometry stream when the
+  // world evidence has stopped advancing. This is a recoverable fail-closed
+  // condition: the next fresh mapping snapshot may resume planning.
+  const auto world_failure_execution = execution_authority_.snapshot();
+  const auto latest_world = world_snapshot_store_.load();
+  const auto world_freshness = assessWorldTemporal(
+      static_cast<bool>(latest_world), latest_world.identity,
+      command_ros_time.nanoseconds(), data_freshness_window_ns_);
+  if (!world_freshness.sourceCurrent()) {
+    ++world_snapshot_freshness_rejection_count_;
+    if (planning_worker_) planning_worker_->cancelActive();
+    // No command is published from this callback. A later fresh snapshot may
+    // resume only this exact bundle after successful world recertification.
+    suspendCommandForWorldFreshness(world_failure_execution);
+    return;
+  }
+
+  // A waypoint handoff may be produced by the independent heading worker
+  // while the serial position optimizer is still blocked.  The command clock
+  // is the only owner allowed to submit that immutable candidate to the
+  // execution timeline; stale nominal completions still face the same key,
+  // anchor, world and transaction gates below.
+  consumeHeadingRebind(command_ros_time.nanoseconds());
+
+  // The execution timeline owns the future splice. A successor is staged by
+  // the planning worker, then atomically becomes the active command at its
+  // producer-declared boundary before this callback samples the command. The
+  // captured pointer is the finalizer's identity witness; it avoids loading a
+  // second pointer while the store transaction is locked.
+  const auto pending_timeline = execution_authority_.snapshot();
+  const auto pending_bundle = pending_timeline.pending;
+  if (pending_bundle && pending_timeline.pending_activation_ns <=
+                           command_ros_time.nanoseconds()) {
+    const auto activation_started_steady_ns =
+        navigation_common::steadyClockNowNanoseconds();
+    last_execution_activation_generation_.store(
+        pending_bundle->bundle_generation, std::memory_order_release);
+    last_execution_activation_started_steady_ns_.store(
+        activation_started_steady_ns, std::memory_order_release);
+    bool activated = false;
+    {
+      // The store operation is nested under the canonical runtime transition
+      // locks. Its finalizer only observes this already-coherent state; it
+      // must never acquire the locks in the reverse order.
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const auto episode_before_activation =
+          execution_authority_.snapshot();
+      activated = execution_authority_.activatePendingIfDueAndFinalize(
+          command_ros_time.nanoseconds(), pending_timeline,
+          [this, pending_bundle, episode_before_activation](
+              const std::uint64_t generation) {
+            if (pending_bundle->bundle_generation != generation ||
+                !localization_epoch_ready_.load(std::memory_order_acquire) ||
+                !command_execution_lease_failure_latch_.allowsCommandExposure()) {
+              return false;
+            }
+            const auto recovery_state = episode_before_activation.lifecycle.recovery;
+            if (!executionRecoveryStateKnown(recovery_state) ||
+                !nominalPlanningAllowed(recovery_state) ||
+                episode_before_activation.failed() || !desired_intent_.goal() ||
+                desired_intent_.goal()->request_id != pending_bundle->request_id ||
+                desired_intent_.revision() !=
+                    pending_bundle->goal_epoch ||
+                active_localization_epoch_.load(std::memory_order_acquire) !=
+                    pending_bundle->localization_epoch) {
+              return false;
+            }
+            // Ordinary successors have no mission/waypoint fields in the
+            // immutable bundle. When this is a retained handoff, the pending
+            // owner supplies the complete tuple and must agree with desired_intent_.goal().
+            const auto pending_goal = pending_goal_owner_.goalSnapshot();
+            if (pending_goal &&
+                (pending_goal->mission_id != desired_intent_.goal()->mission_id ||
+                 pending_goal->waypoint_index != desired_intent_.goal()->waypoint_index ||
+                 pending_goal->request_id != pending_bundle->request_id)) {
+              return false;
+            }
+            // State ownership is finalized after this store transaction, so a
+            // fail-closed transition cannot be resurrected by this callback.
+            return queueExecutionTimelineActivation(generation);
+          });
+      if (activated) {
+        // The callback validated the exact pending pointer/generation and the
+        // same identity/lease state while these locks remained held. Commit
+        // the execution lifecycle before releasing the transaction authority.
+
+
+        (void)desired_intent_.consumeHotRetarget();
+        (void)desired_intent_.consumeNewIntent();
+        // Activation is an ownership boundary: a completion witness from the
+        // predecessor cannot be consumed as evidence for the successor.
+        trajectory_completion_witness_.reset();
+      }
+    }
+    last_execution_activation_finished_steady_ns_.store(
+        navigation_common::steadyClockNowNanoseconds(),
+        std::memory_order_release);
+    last_execution_activation_result_.store(activated ? 1 : 2,
+                                            std::memory_order_release);
+    if (activated) {
+      // One diagnostic record is emitted from the activation producer using
+      // the immutable staged snapshot captured before the owner transaction.
+      // It is intentionally outside the execution locks and has no authority
+      // over command publication.
+      try {
+        diagnostic_msgs::msg::DiagnosticArray event;
+        event.header.stamp = navigation_common::nanosecondsToRosTime(
+            command_ros_time.nanoseconds()).value_or(builtin_interfaces::msg::Time{});
+        diagnostic_msgs::msg::DiagnosticStatus status;
+        status.name = "navigation_runtime/execution_activation_witness";
+        status.hardware_id = "execution_authority";
+        status.message = "diagnostic_only; staged execution activated";
+        const auto add = [&status](const char* key, const auto value) {
+          diagnostic_msgs::msg::KeyValue entry;
+          entry.key = key;
+          entry.value = std::to_string(value);
+          status.values.push_back(std::move(entry));
+        };
+        add("bundle_generation", pending_bundle->bundle_generation);
+        add("bundle_owner_cycle_id", pending_bundle->producer_planning_cycle_id);
+        add("bundle_source", static_cast<unsigned>(pending_bundle->source));
+        add("request_id", pending_bundle->request_id);
+        add("goal_epoch", pending_bundle->goal_epoch);
+        add("localization_epoch", pending_bundle->localization_epoch);
+        add("world_generation", pending_bundle->world_identity.generation);
+        add("world_revision", pending_bundle->world_identity.revision);
+        add("activation_stamp_ns", command_ros_time.nanoseconds());
+        add("pending_snapshot_version", pending_timeline.version);
+        event.status.push_back(std::move(status));
+        diagnostics_publisher_->publish(event);
+      } catch (const std::exception& error) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                             "execution activation witness publish failed: %s", error.what());
+      }
+      RCLCPP_INFO(get_logger(),
+                  "execution timeline activated successor generation=%lu at ns=%lld",
+                  static_cast<unsigned long>(pending_bundle->bundle_generation),
+                  static_cast<long long>(command_ros_time.nanoseconds()));
+    }
+  }
+
+  std::unique_lock<std::mutex> solve_activity_lock(planner_solve_activity_mutex_,
+                                                   std::defer_lock);
+  solve_activity_lock.lock();
+  const std::uint64_t active_solve = active_planner_solve_generation_;
+  const std::int64_t solve_started_ns = planner_solve_started_steady_ns_;
+  const auto solve_failure_witness = active_planner_solve_witness_;
+  if (active_solve != 0U && solve_started_ns > 0) {
+    const std::int64_t solve_age_ns =
+        navigation_common::steadyClockNowNanoseconds() - solve_started_ns;
+    if (solve_age_ns > planner_watchdog_timeout_ns_) {
+      const std::uint64_t previous_timeout =
+          timed_out_planner_solve_generation_.exchange(active_solve);
+      if (previous_timeout != active_solve) {
+        last_watchdog_generation_.store(active_solve, std::memory_order_release);
+        last_watchdog_event_steady_ns_.store(
+            navigation_common::steadyClockNowNanoseconds(),
+            std::memory_order_release);
+        if (planning_worker_) planning_worker_->cancelActive();
+        // Do not wait for the backend ownership mutex here. The watchdog is
+        // the out-of-band deadline authority and must be able to cancel a job
+        // even while the planner is inside an optimizer/certificate call.
+        // Detailed stage/point diagnostics are sampled by the worker-owned
+        // completion path, not on this real-time command callback.
+        constexpr int timeout_stage = -1;
+        constexpr std::size_t timeout_point_count = 0U;
+        bool retain_safety_suffix = false;
+        bool retain_stopped_recovery_hold = false;
+        bool retain_certified_main = false;
+        bool stale_solve = true;
+        {
+          std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+          std::lock_guard<std::mutex> input_lock(input_mutex_);
+          std::lock_guard<std::mutex> command_lock(
+              command_execution_lease_failure_latch_.transitionMutex());
+          const auto episode = execution_authority_.snapshot();
+          const auto& key = solve_failure_witness
+              ? solve_failure_witness->key : PlanningKey{};
+          const auto pending_now = pending_goal_owner_.goalSnapshot();
+          stale_solve = !solve_failure_witness || !desired_intent_.goal() ||
+              desired_intent_.revision() != key.goal_epoch ||
+              desired_intent_.goal()->request_id != key.request_id ||
+              desired_intent_.goal()->route.route_revision != key.route_revision ||
+              active_localization_epoch_.load(std::memory_order_acquire) !=
+                  key.localization_epoch ||
+              pending_now.get() != solve_failure_witness->pending_goal.get() ||
+              !execution_authority_.isCurrentSnapshot(
+                  solve_failure_witness->execution);
+          if (!stale_solve) {
+            const auto recovery_state = episode.lifecycle.recovery;
+            retain_safety_suffix = watchdogTimeoutMayRetainSafetySuffix(
+                recovery_state, episode.commandAvailable(),
+                episode.safetySuffixActive());
+            retain_stopped_recovery_hold = watchdogTimeoutMayRetainStoppedRecoveryHold(
+                recovery_state, episode.commandAvailable(),
+                episode.restartFromRest());
+            const auto current_ros_ns = now().nanoseconds();
+            const auto current_world = world_snapshot_store_.load();
+            retain_certified_main = episode.commandAvailable() && episode.active &&
+                episode.active->valid() &&
+                episode.active->role == navigation_planning::CandidateRole::kMain &&
+                current_ros_ns >= episode.active->valid_from_ns &&
+                current_ros_ns <= episode.active->valid_until_ns &&
+                current_world &&
+                navigation_world_model::sameWorldSnapshotIdentity(
+                    current_world.identity, episode.active->world_identity) &&
+                assessWorldTemporal(true, current_world.identity, current_ros_ns,
+                                    data_freshness_window_ns_).sourceCurrent();
+          }
+          if (stale_solve) {
+            // The cancellation still belongs to the timed-out solve, but its
+            // failure cannot revoke a newer desired/pending/execution owner.
+          } else if (retain_safety_suffix || retain_stopped_recovery_hold ||
+                     retain_certified_main) {
+            // The timed-out replacement is not allowed to revoke the already
+            // certified suffix or bounded stopped-recovery hold. Keep its
+            // ownership and let the stopped-recovery deadline govern the next
+            // transition.
+            if (retain_safety_suffix) {
+              const auto active_bundle = execution_authority_.load();
+              if (active_bundle && active_bundle->bundle_generation ==
+                                       episode.activeGeneration()) {
+                (void)execution_authority_.preserveSafetySuffix(*active_bundle);
+              }
+            }
+          } else {
+            // The exact solve and execution still own this failure, and no
+            // certified command can bridge the timeout.
+            if (execution_authority_.failClosedIfCurrentSnapshot(
+                    solve_failure_witness->execution) ==
+                navigation_execution::ConditionalExecutionMutation::kApplied) {
+              (void)pending_goal_owner_.clearIfCurrent(
+                  solve_failure_witness->pending_goal);
+              trajectory_completion_witness_.reset();
+              trajectory_reaches_goal_.store(false, std::memory_order_release);
+              terminal_bundle_generation_.store(0U, std::memory_order_release);
+            }
+          }
+        }
+        solve_activity_lock.unlock();
+        RCLCPP_ERROR(get_logger(),
+                     "planner backend planner watchdog timed out generation=%lu age=%.3f s stage=%d points=%zu; "
+                     "stale=%d preserving certified safety suffix=%d certified MAIN=%d",
+                     static_cast<unsigned long>(active_solve),
+                     static_cast<double>(solve_age_ns) / 1e9,
+                     timeout_stage,
+                     timeout_point_count,
+                     stale_solve ? 1 : 0, retain_safety_suffix ? 1 : 0,
+                     retain_certified_main ? 1 : 0);
+        if (retain_stopped_recovery_hold) {
+          RCLCPP_WARN(
+              get_logger(),
+              "planner watchdog retained bounded STOPPED_HOLD for measured-state retry "
+              "generation=%lu",
+              static_cast<unsigned long>(active_solve));
+        }
+      }
+    }
+  }
+  if (solve_activity_lock.owns_lock()) solve_activity_lock.unlock();
+
+  Eigen::Matrix<double, 3, 4> pvaj = Eigen::Matrix<double, 3, 4>::Zero();
+  double yaw = 0.0;
+  double yaw_dot = 0.0;
+  bool on_backup_traj = false;
+  navigation_planning::CandidateRole sampled_role =
+      navigation_planning::CandidateRole::kMain;
+  bool traj_finish = false;
+  std::uint64_t trajectory_generation = 0;
+  double trajectory_time_s = 0.0;
+  navigation_world_model::WorldSnapshotIdentity command_world_identity{};
+  std::shared_ptr<const navigation_planning::CandidateBundle> sampled_bundle;
+  auto episode = execution_authority_.snapshot();
+  bool safety_suffix_active = episode.safetySuffixActive();
+  bool planner_failed = episode.failed();
+  bool planner_available = episode.commandAvailable();
+  bool sampled_command_valid = false;
+  bool sampled_planned_stop_hold = false;
+  if (!planner_available && !planner_failed &&
+      command_execution_lease_failure_latch_.allowsCommandExposure()) return;
+  std::optional<navigation_contracts::msg::NavigationGoal> command_goal;
+  std::optional<navigation_contracts::msg::NavigationGoal> executing_goal;
+  navigation_execution::ExecutionAuthoritySnapshot execution_at_command;
+  std::uint64_t goal_epoch_at_command = 0U;
+  std::uint64_t command_goal_epoch_at_command = 0U;
+  std::shared_ptr<const navigation_execution::ExecutionStateLease> execution_state;
+  std::int64_t execution_receive_steady_ns = 0;
+  execution_state = execution_state_store_.load();
+  execution_receive_steady_ns = execution_state ? execution_state->state.receive_stamp_ns : 0;
+  const auto execution_source_ns = execution_state ? execution_state->state.source_stamp_ns : 0;
+  const auto execution_freshness = navigation_contracts::evaluateExecutionStateFreshness(
+      command_ros_time.nanoseconds(), execution_source_ns,
+      navigation_common::steadyClockNowNanoseconds(), execution_receive_steady_ns,
+      data_freshness_window_s_);
+  command_execution_lease_reason_.store(static_cast<int>(execution_freshness.reason));
+  command_execution_source_age_us_.store(static_cast<std::int64_t>(
+      execution_freshness.source_age_ms * 1000.0));
+  command_execution_receive_age_us_.store(static_cast<std::int64_t>(
+      execution_freshness.receive_age_ms * 1000.0));
+  const auto transition_lock_wait_started = std::chrono::steady_clock::now();
+  {
+    std::unique_lock<std::mutex> localization_lock(localization_transition_mutex_);
+    std::unique_lock<std::mutex> input_lock(input_mutex_);
+    std::unique_lock<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    last_command_transition_lock_wait_us_.store(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - transition_lock_wait_started).count(),
+        std::memory_order_release);
+    // These identities and episode facts form one coherent publication
+    // decision. In particular, a same-goal successor may commit between
+    // callbacks; do not combine its fresh episode with an epoch or executing
+    // goal captured before the transition transaction.
+    localization_epoch_at_command =
+        active_localization_epoch_.load(std::memory_order_acquire);
+    command_goal = desired_intent_.goal();
+    execution_at_command = execution_authority_.snapshot();
+    executing_goal = execution_at_command.active_goal
+        ? std::optional<navigation_contracts::msg::NavigationGoal>(
+              *execution_at_command.active_goal)
+        : desired_intent_.goal();
+    goal_epoch_at_command = desired_intent_.revision();
+    command_goal_epoch_at_command = execution_at_command.active
+        ? execution_at_command.active->goal_epoch : 0U;
+    if (!command_goal) {
+      return;
+    }
+    if (!localization_epoch_ready_.load(std::memory_order_acquire) ||
+        active_localization_epoch_.load(std::memory_order_acquire) !=
+            localization_epoch_at_command) {
+      failClosedLocked();
+      pending_goal_owner_.clearGoal();
+
+      return;
+    }
+    const bool lease_already_failed =
+        !command_execution_lease_failure_latch_.allowsCommandExposure();
+    const auto current_execution_state = execution_state_store_.load();
+    if (!lease_already_failed &&
+        !failedExecutionLeaseIsCurrent(execution_state, current_execution_state)) {
+      // L1 was superseded while this callback waited for the transition
+      // lock. L2 owns the next freshness decision; L1 cannot latch failure.
+      return;
+    }
+    const auto current_execution_freshness =
+        navigation_contracts::evaluateExecutionStateFreshness(
+            now().nanoseconds(),
+            current_execution_state ? current_execution_state->state.source_stamp_ns : 0,
+            navigation_common::steadyClockNowNanoseconds(),
+            current_execution_state ? current_execution_state->state.receive_stamp_ns : 0,
+            data_freshness_window_s_);
+    if (!current_execution_freshness.valid() || lease_already_failed) {
+      ++command_execution_lease_rejection_count_;
+      const bool first_failure = !current_execution_freshness.valid() &&
+          command_execution_lease_failure_latch_.tryLatch();
+      if (first_failure) {
+        ++command_execution_lease_terminal_latch_count_;
+      }
+      // Clearing executable command state is unconditional. The latch owns
+      // one-time cancellation/logging only; a solve that races past cancellation
+      // must never resurrect a nominal command for this failed goal.
+      failClosedLocked();
+      const auto failed_pending = pending_goal_owner_.goalSnapshot();
+      (void)pending_goal_owner_.clearIfCurrent(failed_pending);
+      planner_failed = true;
+      safety_suffix_active = false;
+      if (first_failure) {
+        command_lock.unlock();
+        input_lock.unlock();
+        localization_lock.unlock();
+        if (planning_worker_) planning_worker_->cancelActive();
+        RCLCPP_ERROR(
+            get_logger(),
+            "planner backend execution-state lease failed reason=%s source_age_ms=%.3f "
+            "receive_age_ms=%.3f failed_ingress=%lu current_ingress=%lu "
+            "active_generation=%lu active_solve=%lu mutation=applied; publishing terminal EMER",
+            navigation_contracts::executionStateFreshnessReasonName(
+                current_execution_freshness.reason),
+            current_execution_freshness.source_age_ms,
+            current_execution_freshness.receive_age_ms,
+            static_cast<unsigned long>(current_execution_state
+                ? current_execution_state->ingress_sequence : 0U),
+            static_cast<unsigned long>(current_execution_state
+                ? current_execution_state->ingress_sequence : 0U),
+            static_cast<unsigned long>(execution_at_command.activeGeneration()),
+            static_cast<unsigned long>(active_solve));
+        localization_lock.lock();
+        input_lock.lock();
+        command_lock.lock();
+        const bool still_current = command_goal &&
+            desired_intent_.matches(*command_goal, goal_epoch_at_command) &&
+            active_localization_epoch_.load(std::memory_order_acquire) ==
+                localization_epoch_at_command &&
+            failedExecutionLeaseIsCurrent(
+                current_execution_state, execution_state_store_.load()) &&
+            execution_authority_.matchesAuthorityIdentity(execution_at_command);
+        if (!still_current) return;
+      }
+    } else {
+      // These three flags form one executable command decision. Reload them
+      // only after acquiring the same serialization lock used by solve exposure.
+      episode = execution_authority_.snapshot();
+      planner_available = episode.commandAvailable();
+      planner_failed = episode.failed();
+      safety_suffix_active = episode.safetySuffixActive();
+    }
+  }
+  if (planner_available && command_goal_epoch_at_command == 0U) {
+    return;
+  }
+  if (planner_available) {
+    const auto command_bundle_at_sample = execution_authority_.load();
+    const auto sample = command_sampler_.sample(
+        command_ros_time.nanoseconds(), command_goal_epoch_at_command);
+    if (!sample) {
+      RCLCPP_ERROR_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "command sampler returned no point stamp_ns=%lld goal_epoch=%lu "
+          "active_bundle=%d active_generation=%lu pending=%d pending_generation=%lu "
+          "awaiting_activation=%d status=%d timeline_version=%lu",
+          static_cast<long long>(command_ros_time.nanoseconds()),
+          static_cast<unsigned long>(command_goal_epoch_at_command),
+          command_bundle_at_sample ? 1 : 0,
+          command_bundle_at_sample
+              ? static_cast<unsigned long>(command_bundle_at_sample->bundle_generation)
+              : 0UL,
+          sample.bundle ? 1 : 0,
+          sample.bundle ? static_cast<unsigned long>(sample.bundle->bundle_generation) : 0UL,
+          sample.awaiting_activation ? 1 : 0,
+          static_cast<int>(sample.status),
+          static_cast<unsigned long>(sample.timeline_version));
+      if (sample.awaiting_activation) {
+        // A committed candidate may start a few milliseconds after the
+        // publication tick that committed it. Keep the immutable bundle and
+        // wait for its declared sample-validity boundary; do not turn a
+        // scheduling lead into a planner failure or a synthetic emergency.
+        return;
+      }
+      if (!sample.bundle) {
+        // A newer world identity clears the old execution certificate before
+        // recertification. This is a normal pending state, not a planner
+        // failure and must not latch a terminal emergency decision.
+        if (command_goal) {
+          const navigation_execution::ExecutionAuthoritySnapshot expected_timeline{
+              sample.timeline_version, {}, command_bundle_at_sample, {}, 0,
+              {}, {}, 0U, 0U, 0U, {}};
+          (void)clearCommandForCurrentIdentity(
+              *command_goal, goal_epoch_at_command,
+              localization_epoch_at_command, expected_timeline);
+        }
+        return;
+      }
+    } else {
+      const auto point = *sample.point;
+      last_command_sampled_generation_.store(
+          sample.bundle->bundle_generation, std::memory_order_release);
+      last_command_sampled_steady_ns_.store(
+          navigation_common::steadyClockNowNanoseconds(),
+          std::memory_order_release);
+      last_command_sampled_result_.store(1, std::memory_order_release);
+      bool planned_hold_valid = true;
+      sampled_planned_stop_hold = sample.planned_stop_hold;
+      if (sample.planned_stop_hold) {
+        const auto latest_terminal_world = world_snapshot_store_.load();
+        const bool endpoint_known_free = latest_terminal_world &&
+            navigation_world_model::isCellTraversable(
+                latest_terminal_world.view->classify(
+                    point.position_world,
+                    navigation_world_model::GridLayer::kInflated),
+                navigation_world_model::UnknownPolicy::kRequireKnownFree);
+        const bool endpoint_execution_support_valid = execution_state &&
+            execution_freshness.valid() &&
+            execution_state->state.position_world.allFinite();
+        const double endpoint_anchor_error_m = endpoint_execution_support_valid
+            ? (point.position_world - execution_state->state.position_world).norm()
+            : std::numeric_limits<double>::infinity();
+        const auto stopped_hold_assessment = assessExperimentalStoppedHold(
+            tracking_experiment_, endpoint_known_free,
+            endpoint_execution_support_valid, endpoint_anchor_error_m,
+            navigation_contracts::kCommandAnchorErrorLimitM);
+        const bool endpoint_near_execution_state =
+            stopped_hold_assessment.within_anchor_limit;
+        if (!stopped_hold_assessment.accepted) {
+          planned_hold_valid = false;
+          if (command_goal) {
+            const navigation_execution::ExecutionAuthoritySnapshot expected_timeline{
+                sample.timeline_version, {}, sample.bundle, {}, 0,
+                {}, {}, 0U, 0U, 0U, {}};
+            (void)clearCommandForCurrentIdentity(
+                *command_goal, goal_epoch_at_command,
+                localization_epoch_at_command, expected_timeline);
+          }
+          planner_failed = true;
+          safety_suffix_active = false;
+          RCLCPP_ERROR_THROTTLE(
+              get_logger(), *get_clock(), 1000,
+              "execution boundary rejected planned STOPPED_HOLD endpoint "
+              "known_free=%d execution_support_valid=%d near_execution=%d "
+              "anchor_error_m=%.3f anchor_limit_m=%.3f",
+              endpoint_known_free ? 1 : 0,
+              endpoint_execution_support_valid ? 1 : 0,
+              endpoint_near_execution_state ? 1 : 0,
+              endpoint_anchor_error_m,
+              navigation_contracts::kCommandAnchorErrorLimitM);
+        } else if (stopped_hold_assessment.suppression_used) {
+          RCLCPP_WARN_THROTTLE(
+              get_logger(), *get_clock(), 1000,
+              "TRACKING_EXPERIMENT_BYPASS role=STOPPED_HOLD "
+              "gate=stopped_hold_precheck_near_execution_reject "
+              "known_free=1 execution_support_valid=1 "
+              "anchor_error_m=%.3f anchor_limit_m=%.3f; "
+              "precheck-only, final exposure proximity gate remains active; "
+              "diagnostic-only, not qualification evidence",
+              endpoint_anchor_error_m,
+              navigation_contracts::kCommandAnchorErrorLimitM);
+        }
+        pvaj.col(0) = point.position_world;
+        pvaj.col(1).setZero();
+        pvaj.col(2).setZero();
+        pvaj.col(3).setZero();
+      } else {
+        pvaj.col(0) = point.position_world;
+        pvaj.col(1) = point.velocity_world;
+        pvaj.col(2) = point.acceleration_world;
+        pvaj.col(3) = point.jerk_world;
+      }
+      yaw = point.yaw;
+      yaw_dot = sample.planned_stop_hold ? 0.0 : point.yaw_rate;
+      trajectory_generation = sample.bundle->bundle_generation;
+      trajectory_time_s = point.trajectory_time_s;
+      command_world_identity = sample.bundle->world_identity;
+      sampled_bundle = sample.bundle;
+      sampled_role = sample.planned_stop_hold
+          ? stoppedHoldCommandRole(point.role, planned_hold_valid) : point.role;
+      on_backup_traj = sampled_role != navigation_planning::CandidateRole::kMain;
+      if (sample.planned_stop_hold) {
+        if (planned_hold_valid) {
+          std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+          std::lock_guard<std::mutex> input_lock(input_mutex_);
+          std::lock_guard<std::mutex> command_lock(
+              command_execution_lease_failure_latch_.transitionMutex());
+          if (command_goal && (execution_authority_.matchesActive(*command_goal, command_goal_epoch_at_command, localization_epoch_at_command, sample.bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_command))) {
+            (void)execution_authority_.stoppedHold(*sample.bundle);
+          }
+        } else {
+          // clearCommandForCurrentIdentity() performs the serialized
+          // fail-closed transition when this sampled bundle is still current.
+          // A stale sample must not fail-close a newer execution identity.
+        }
+      } else {
+        if (!queueExecutionTimelineActivation(sample.bundle->bundle_generation)) {
+          planner_failed = true;
+          sampled_command_valid = false;
+          {
+            std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+            std::lock_guard<std::mutex> input_lock(input_mutex_);
+            std::lock_guard<std::mutex> command_lock(
+                command_execution_lease_failure_latch_.transitionMutex());
+            const auto current_bundle = execution_authority_.load();
+            if (current_bundle && current_bundle.get() == sample.bundle.get() &&
+                command_goal && (execution_authority_.matchesActive(*command_goal, command_goal_epoch_at_command, localization_epoch_at_command, sample.bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_command))) {
+              execution_authority_.invalidate();
+
+              failClosedLocked();
+            }
+          }
+          if (planning_worker_) planning_worker_->cancelActive();
+          RCLCPP_ERROR_THROTTLE(
+              get_logger(), *get_clock(), 1000,
+              "planner timeline activation synchronization failed generation=%lu",
+              static_cast<unsigned long>(sample.bundle->bundle_generation));
+          return;
+        }
+        // The immutable command was already recorded at its execution-store
+        // commit/activation boundary. Do not let a stale sampler callback
+        // rewrite episode identity outside the transition transaction.
+      }
+      // The sampled role is the execution-side source of truth for a
+      // certified MAIN+BACKUP bundle. World-freshness suspension temporarily
+      // clears the derived atomic flag while preserving the immutable bundle;
+      // when the resumed sampler observes its actual BACKUP interval, restore
+      // the suffix ownership before completion handling. Otherwise a finished
+      // backup is misclassified as a nominal frontier and the runtime replans
+      // the old waypoint behind the vehicle instead of promoting a pending
+      // waypoint at the certified stop boundary.
+      const bool sampled_emergency = !sample.planned_stop_hold &&
+          point.role == navigation_planning::CandidateRole::kEmergency;
+      const bool sampled_safety_suffix = !sample.planned_stop_hold &&
+          point.role == navigation_planning::CandidateRole::kBackup;
+      const auto sampled_event = sampled_emergency
+          ? ExecutionRecoveryEvent::kEmergencyCommitted
+          : ExecutionRecoveryEvent::kBackupActivated;
+      const auto sampled_episode = execution_authority_.snapshot();
+      const bool sampled_policy_alignment_needed =
+          (sampled_safety_suffix || sampled_emergency) &&
+          (sampled_episode.lifecycle.phase != ExecutionPhase::kTrackingBackup ||
+           !sampled_episode.safetySuffixActive() ||
+           transitionExecutionRecovery(
+               sampled_episode.lifecycle.recovery, sampled_event) !=
+               sampled_episode.lifecycle.recovery);
+      if (sampled_policy_alignment_needed) {
+        std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+        std::lock_guard<std::mutex> input_lock(input_mutex_);
+        std::lock_guard<std::mutex> command_lock(
+            command_execution_lease_failure_latch_.transitionMutex());
+        const auto current_bundle = execution_authority_.load();
+        const bool exact_execution_identity = current_bundle && executing_goal &&
+            current_bundle.get() == sample.bundle.get() &&
+            (execution_authority_.matchesActive(*executing_goal, command_goal_epoch_at_command, localization_epoch_at_command, sample.bundle->bundle_generation) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_command));
+        if (exact_execution_identity) {
+          execution_authority_.observeSampledSafetyRole(
+              *sample.bundle, point.role);
+        }
+      }
+      traj_finish = sample.planned_stop_hold || point.finished;
+      sampled_command_valid = planned_hold_valid;
+      if (traj_finish) {
+        const auto command_route_snapshot = command_goal
+            ? decodeRouteSnapshot(*command_goal) : std::nullopt;
+        const bool coincident_pass_through_stop = command_route_snapshot.has_value() &&
+            navigation_mission::passThroughNextWaypointIsCoincidentStop(
+                *command_route_snapshot);
+        const bool effective_terminal_goal = command_goal &&
+            (command_goal->behavior ==
+                 navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP ||
+             coincident_pass_through_stop);
+        bool endpoint_reaches_goal = false;
+        if (effective_terminal_goal) {
+          const auto& target_message = plannerTarget(*command_goal);
+          const Eigen::Vector3d target_position{
+              pointFromMessage(target_message, 0),
+              pointFromMessage(target_message, 1),
+              pointFromMessage(target_message, 2)};
+          endpoint_reaches_goal =
+              (point.position_world - target_position).norm() <=
+              goalCompletionTolerance(*command_goal);
+        }
+        const bool terminal_endpoint_contract =
+            terminalStopEndpointContractValid(
+                effective_terminal_goal, sample.bundle->kind,
+                sample.bundle->role, point.role);
+        const bool terminal_hold_committed = endpoint_reaches_goal &&
+            terminal_endpoint_contract;
+        terminal_bundle_generation_.store(
+            terminal_hold_committed ? sample.bundle->bundle_generation : 0U,
+            std::memory_order_release);
+        if (terminal_hold_committed && planning_worker_) {
+          // The terminal witness supersedes only a solve for this completed
+          // execution identity. Keep the complete lifecycle transaction while
+          // asking the worker to cancel: a newer desired goal may already be
+          // active, and a bare cancelActive() would interrupt its solve.
+          std::lock_guard<std::mutex> localization_lock(
+              localization_transition_mutex_);
+          std::lock_guard<std::mutex> input_lock(input_mutex_);
+          std::lock_guard<std::mutex> command_lock(
+              command_execution_lease_failure_latch_.transitionMutex());
+          const auto current_timeline = execution_authority_.snapshot();
+          const auto& current_execution_goal = current_timeline.active_goal;
+          const bool completed_identity_current = current_timeline.active &&
+              current_timeline.active.get() == sample.bundle.get() &&
+              current_execution_goal && executing_goal &&
+              current_execution_goal->mission_id == executing_goal->mission_id &&
+              current_execution_goal->waypoint_index == executing_goal->waypoint_index &&
+              current_execution_goal->request_id == executing_goal->request_id &&
+              current_timeline.active->goal_epoch == command_goal_epoch_at_command &&
+              current_timeline.active->localization_epoch == localization_epoch_at_command &&
+              active_localization_epoch_.load(std::memory_order_acquire) ==
+                  localization_epoch_at_command;
+          const bool desired_identity_current = command_goal &&
+              (desired_intent_.matches(*command_goal, goal_epoch_at_command) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_command));
+          const bool same_mission_handover = current_execution_goal && command_goal &&
+              current_execution_goal->mission_id == command_goal->mission_id;
+          if (completed_identity_current && desired_identity_current &&
+              same_mission_handover) {
+            (void)planning_worker_->cancelActiveIfExecutionIdentity(
+                sample.bundle->localization_epoch,
+                sample.bundle->goal_epoch,
+                sample.bundle->request_id,
+                sample.bundle->bundle_generation);
+          }
+        }
+      }
+    }
+    // The safety suffix contains the dynamically continuous main prefix up to
+    // planner backend's backup switch plus the braking polynomial. Once frozen by a
+    // failed hot replan, the whole suffix is safety-owned.
+    if (sampled_command_valid && safety_suffix_active &&
+        sampled_role == navigation_planning::CandidateRole::kMain) {
+      on_backup_traj = true;
+    }
+    if (traj_finish && sampled_command_valid && sampled_bundle) {
+      // Completion is recorded only after the sampled immutable bundle is
+      // still the active command for the current executing identity.
+      // A stale endpoint must not trigger PlanFromRest for a replacement goal.
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const auto current_timeline = execution_authority_.snapshot();
+      const auto current_bundle = current_timeline.active;
+      const auto& current_execution_goal = current_timeline.active_goal;
+      const bool command_exposure_allowed =
+          command_execution_lease_failure_latch_.allowsCommandExposure();
+      const bool exact_current_bundle = current_bundle &&
+          current_bundle.get() == sampled_bundle.get() &&
+          current_bundle->bundle_generation == sampled_bundle->bundle_generation &&
+          current_bundle->localization_epoch ==
+              active_localization_epoch_.load(std::memory_order_acquire);
+      const bool exact_execution_identity = current_bundle &&
+          current_execution_goal && executing_goal &&
+          current_execution_goal->mission_id == executing_goal->mission_id &&
+          current_execution_goal->waypoint_index == executing_goal->waypoint_index &&
+          current_execution_goal->request_id == executing_goal->request_id &&
+          current_bundle->goal_epoch == command_goal_epoch_at_command &&
+          current_bundle->localization_epoch == localization_epoch_at_command;
+      const bool exact_desired_identity = command_goal &&
+          (desired_intent_.matches(*command_goal, goal_epoch_at_command) && active_localization_epoch_.load(std::memory_order_acquire) == (localization_epoch_at_command));
+      if (current_timeline.lifecycle.exposure !=
+              navigation_execution::ExecutionExposure::kFailed &&
+          command_exposure_allowed &&
+          exact_current_bundle && exact_execution_identity && exact_desired_identity) {
+        trajectory_completion_witness_ = TrajectoryCompletionWitness{
+            sampled_bundle->bundle_generation,
+            current_timeline.version,
+            sampled_bundle->localization_epoch,
+            sampled_bundle->goal_epoch,
+            sampled_bundle->request_id,
+            current_execution_goal->mission_id,
+            current_execution_goal->waypoint_index};
+      }
+    }
+  } else {
+    // A rest-to-rest solve can fail before a command has ever been committed. Emit an
+    // explicit terminal status so External Mode enters its PX4 Hold path;
+    // never synthesize a zero-velocity nominal command from this state.
+    pvaj.setZero();
+  }
+
+  if (command_world_identity.generation == 0U) {
+    command_world_identity = world_snapshot_store_.load().identity;
+  }
+  navigation_contracts::msg::NavigationCommand command;
+  navigation_contracts::msg::NavigationExecutionDiagnostics diagnostic;
+  const auto execution_trace_snapshot = execution_trace_store_.load();
+  const bool trace_matches_command = execution_trace_snapshot && executing_goal &&
+      executionTraceMatchesCommand(
+          *execution_trace_snapshot,
+          localization_epoch_at_command,
+          command_goal_epoch_at_command,
+          executing_goal->request_id,
+          trajectory_generation);
+  const ExecutionTraceSnapshot causal_trace = trace_matches_command
+      ? *execution_trace_snapshot : ExecutionTraceSnapshot{};
+  command.header.frame_id = planning_frame_;
+  command.header.stamp = navigation_common::secondsToRosTime(now_seconds).value_or(
+      builtin_interfaces::msg::Time{});
+  command.localization_epoch = localization_epoch_at_command;
+  command.goal_epoch = command_goal_epoch_at_command;
+  if (executing_goal) {
+    command.mission_id = executing_goal->mission_id;
+    command.waypoint_index = executing_goal->waypoint_index;
+    command.request_id = executing_goal->request_id;
+  }
+  command.world_generation = command_world_identity.generation;
+  command.world_revision = command_world_identity.revision;
+  command.world_observation_stamp = navigation_common::nanosecondsToRosTime(
+      command_world_identity.observation_stamp_ns).value_or(builtin_interfaces::msg::Time{});
+  command.bundle_generation = trajectory_generation;
+  const auto continuation_window = sampled_command_valid && sampled_bundle && executing_goal &&
+      sampled_role == navigation_planning::CandidateRole::kMain &&
+      !sampled_planned_stop_hold && !safety_suffix_active && !traj_finish
+      ? certifiedMainContinuationWindow(
+            *sampled_bundle, *executing_goal, localization_epoch_at_command,
+            command_goal_epoch_at_command, traj_finish)
+      : std::nullopt;
+  const bool continuation_handoff_ready = continuation_window.has_value() &&
+      certifiedMainContinuationHandoffReady(
+          *continuation_window, command_ros_time.nanoseconds());
+  command.certified_main_continuation = continuation_handoff_ready;
+  command.continuation_boundary_stamp_ns = continuation_handoff_ready
+      ? static_cast<std::uint64_t>(continuation_window->boundary_stamp_ns) : 0U;
+  const auto command_id = advanceMonotonicId(command_id_);
+  if (!command_id) {
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    execution_authority_.invalidate();
+
+    failClosedLocked();
+    RCLCPP_ERROR(get_logger(), "command sample id exhausted");
+    return;
+  }
+  command.sample_id = *command_id;
+  command.trajectory_time_s = trajectory_time_s;
+  diagnostic.analytic_sample_role = sampled_command_valid
+      ? static_cast<std::uint8_t>(sampled_role)
+      : navigation_contracts::msg::NavigationExecutionDiagnostics::ANALYTIC_ROLE_UNKNOWN;
+  diagnostic.backup_available = sampled_bundle && sampled_bundle->backup_available;
+  diagnostic.backup_start_time_s = diagnostic.backup_available
+      ? sampled_bundle->backup_start_time_s : 0.0;
+  diagnostic.time_to_backup_start_s = diagnostic.backup_available
+      ? sampled_bundle->backup_start_time_s - trajectory_time_s : 0.0;
+  diagnostic.safety_suffix_active = safety_suffix_active;
+  diagnostic.execution_recovery_state = static_cast<std::uint8_t>(
+      episode.lifecycle.recovery);
+  diagnostic.anchor_error_m = causal_trace.anchor_error_m;
+  diagnostic.projected_anchor_error_m = causal_trace.projected_anchor_error_m;
+  diagnostic.retained_tracking_limit_m = causal_trace.retained_tracking_limit_m;
+  diagnostic.relative_anchor_speed_mps = causal_trace.relative_anchor_speed_mps;
+  diagnostic.committed_suffix_usable = causal_trace.committed_suffix_usable;
+  diagnostic.sampled_path_clear = causal_trace.sampled_path_clear;
+  diagnostic.tracking_certificate_exceeded = causal_trace.tracking_certificate_exceeded;
+  diagnostic.projected_tracking_certificate_exceeded =
+      causal_trace.projected_tracking_certificate_exceeded;
+  command.emergency_authorization_reason = causal_trace.emergency_authorization_reason;
+  diagnostic.causal_planning_cycle_id = causal_trace.planning_cycle_id;
+  diagnostic.causal_timestamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+      0, causal_trace.timestamp_ns));
+  command.emergency_candidate_commit_result = static_cast<std::uint8_t>(std::clamp(
+      causal_trace.emergency_candidate_commit_result, 0, 255));
+  diagnostic.evaluation_now_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+      0, causal_trace.evaluation_now_ns));
+  diagnostic.execution_state_source_stamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+      0, causal_trace.execution_state_source_stamp_ns));
+  diagnostic.execution_state_receive_stamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+      0, causal_trace.execution_state_receive_stamp_ns));
+  diagnostic.execution_state_source_age_ms = causal_trace.execution_state_source_age_ms;
+  diagnostic.execution_state_receive_age_ms = causal_trace.execution_state_receive_age_ms;
+  diagnostic.committed_bundle_start_stamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+      0, causal_trace.committed_bundle_start_stamp_ns));
+  diagnostic.measured_position_at_state_source.x =
+      causal_trace.measured_position_at_state_source.x();
+  diagnostic.measured_position_at_state_source.y =
+      causal_trace.measured_position_at_state_source.y();
+  diagnostic.measured_position_at_state_source.z =
+      causal_trace.measured_position_at_state_source.z();
+  diagnostic.measured_velocity_at_state_source.x =
+      causal_trace.measured_velocity_at_state_source.x();
+  diagnostic.measured_velocity_at_state_source.y =
+      causal_trace.measured_velocity_at_state_source.y();
+  diagnostic.measured_velocity_at_state_source.z =
+      causal_trace.measured_velocity_at_state_source.z();
+  diagnostic.committed_command_position_at_now.x =
+      causal_trace.committed_command_position_at_now.x();
+  diagnostic.committed_command_position_at_now.y =
+      causal_trace.committed_command_position_at_now.y();
+  diagnostic.committed_command_position_at_now.z =
+      causal_trace.committed_command_position_at_now.z();
+  diagnostic.committed_command_velocity_at_now.x =
+      causal_trace.committed_command_velocity_at_now.x();
+  diagnostic.committed_command_velocity_at_now.y =
+      causal_trace.committed_command_velocity_at_now.y();
+  diagnostic.committed_command_velocity_at_now.z =
+      causal_trace.committed_command_velocity_at_now.z();
+  diagnostic.committed_command_position_at_state_source.x =
+      causal_trace.committed_command_position_at_state_source.x();
+  diagnostic.committed_command_position_at_state_source.y =
+      causal_trace.committed_command_position_at_state_source.y();
+  diagnostic.committed_command_position_at_state_source.z =
+      causal_trace.committed_command_position_at_state_source.z();
+  diagnostic.committed_command_velocity_at_state_source.x =
+      causal_trace.committed_command_velocity_at_state_source.x();
+  diagnostic.committed_command_velocity_at_state_source.y =
+      causal_trace.committed_command_velocity_at_state_source.y();
+  diagnostic.committed_command_velocity_at_state_source.z =
+      causal_trace.committed_command_velocity_at_state_source.z();
+  diagnostic.anchor_error_raw_m = causal_trace.anchor_error_raw_m;
+  diagnostic.anchor_error_time_aligned_m = causal_trace.anchor_error_time_aligned_m;
+  diagnostic.command_motion_over_state_age_m = causal_trace.command_motion_over_state_age_m;
+  diagnostic.velocity_residual_time_aligned_mps = causal_trace.velocity_residual_time_aligned_mps;
+  diagnostic.retained_elapsed_s = causal_trace.retained_elapsed_s;
+  diagnostic.committed_bundle_duration_s = causal_trace.committed_bundle_duration_s;
+  diagnostic.committed_safety_transition_time_s = causal_trace.committed_safety_transition_time_s;
+  diagnostic.retained_validate_without_new_commit = causal_trace.validate_without_new_commit;
+  diagnostic.retained_fresh_vehicle_state = causal_trace.retained_fresh_vehicle_state;
+  diagnostic.retained_committed_command_available = causal_trace.retained_committed_command_available;
+  diagnostic.retained_command_anchor_valid = causal_trace.retained_command_anchor_valid;
+  diagnostic.current_vehicle_state_known_free = causal_trace.current_vehicle_state_known_free;
+  diagnostic.retained_safety_trajectory_available =
+      causal_trace.retained_safety_trajectory_available;
+  diagnostic.retained_terminal_stop = causal_trace.retained_terminal_stop;
+  diagnostic.retained_committed_role = static_cast<std::int8_t>(std::clamp(
+      causal_trace.retained_committed_role, -128, 127));
+  diagnostic.retained_recovery_state_before = causal_trace.retained_recovery_state_before;
+  command.state_source_stamp = execution_state
+      ? navigation_common::nanosecondsToRosTime(execution_state->state.source_stamp_ns).value_or(
+          builtin_interfaces::msg::Time{})
+      : builtin_interfaces::msg::Time{};
+  const auto command_time_ns = command_ros_time.nanoseconds();
+  const auto valid_until_ns = command_time_ns >
+          std::numeric_limits<std::int64_t>::max() - command_stream_timeout_ns_
+      ? std::numeric_limits<std::int64_t>::max()
+      : command_time_ns + command_stream_timeout_ns_;
+  command.valid_until = navigation_common::nanosecondsToRosTime(valid_until_ns).value_or(
+      builtin_interfaces::msg::Time{});
+  const bool emergency_braking = sampled_command_valid &&
+      sampled_role == navigation_planning::CandidateRole::kEmergency;
+  // A validated STOPPED_HOLD is the explicit endpoint witness used while a
+  // terminal backup settles. Planner failure must not relabel that exact hold
+  // as REJECTED; doing so makes External Mode hand over before measured stop.
+  // The hold can only be marked valid after the known-free and near-execution
+  // checks above. No ordinary MAIN sample receives this exception.
+  const bool main_trajectory_rejected = planner_failed && !on_backup_traj &&
+      !emergency_braking && !(sampled_planned_stop_hold && sampled_command_valid);
+  if (main_trajectory_rejected) {
+    RCLCPP_ERROR_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "publishing rejected command planner_failed=%d planner_available=%d "
+        "sampled_valid=%d sampled_bundle=%d generation=%lu role=%d "
+        "safety_suffix=%d execution_freshness=%d",
+        planner_failed ? 1 : 0,
+        planner_available ? 1 : 0,
+        sampled_command_valid ? 1 : 0, sampled_bundle ? 1 : 0,
+        static_cast<unsigned long>(trajectory_generation),
+        static_cast<int>(sampled_role), safety_suffix_active ? 1 : 0,
+        execution_freshness.valid() ? 1 : 0);
+  }
+  command.status = emergency_braking
+                       ? navigation_contracts::msg::NavigationCommand::STATUS_BRAKING
+                       : main_trajectory_rejected
+                       ? navigation_contracts::msg::NavigationCommand::STATUS_REJECTED
+                       : traj_finish
+                       ? navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED
+                       : navigation_contracts::msg::NavigationCommand::STATUS_READY;
+  command.role = emergency_braking
+                     ? navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY
+                     : main_trajectory_rejected
+                     ? navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY
+                     : on_backup_traj
+                     ? navigation_contracts::msg::NavigationCommand::ROLE_BACKUP
+                     : navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+  diagnostic.reason_code = emergency_braking ? 2U : main_trajectory_rejected ? 1U : 0U;
+  command.position.x = pvaj(0, 0);
+  command.position.y = pvaj(1, 0);
+  command.position.z = pvaj(2, 0);
+  command.velocity.x = pvaj(0, 1);
+  command.velocity.y = pvaj(1, 1);
+  command.velocity.z = pvaj(2, 1);
+  command.acceleration.x = pvaj(0, 2);
+  command.acceleration.y = pvaj(1, 2);
+  command.acceleration.z = pvaj(2, 2);
+  command.jerk.x = pvaj(0, 3);
+  command.jerk.y = pvaj(1, 3);
+  command.jerk.z = pvaj(2, 3);
+  // Preserve the yaw/rate sampled from the candidate that passed certification;
+  // execution must not introduce an uncoupled post-certificate heading step.
+  command.yaw = yaw;
+  command.yaw_rate = yaw_dot;
+  bool command_published = false;
+  const auto publish_ros_command = [this, &command, &command_published] {
+    const auto publish_started = std::chrono::steady_clock::now();
+    command_publisher_->publish(command);
+    command_published = true;
+    last_publish_us_.store(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - publish_started).count(),
+        std::memory_order_release);
+  };
+  if (sampled_command_valid) {
+    bool exposed = false;
+    bool publication_boundary_evaluated = false;
+    bool final_command_lease_valid = false;
+    bool final_bundle_lease_valid = false;
+    bool final_stopped_hold_support_valid = false;
+    double final_stopped_hold_anchor_error_m =
+        std::numeric_limits<double>::quiet_NaN();
+    std::int64_t final_authorization_ros_ns = 0;
+    std::int64_t final_authorization_steady_ns = 0;
+    navigation_execution::TimestampFreshness final_world_freshness =
+        navigation_execution::TimestampFreshness::INVALID;
+    navigation_contracts::ExecutionStateFreshness final_execution_freshness;
+    std::shared_ptr<const navigation_execution::ExecutionStateLease>
+        final_execution_state;
+    const auto store_publish_started = std::chrono::steady_clock::now();
+    {
+      // Pin the latest state only after acquiring the canonical transition
+      // locks. Propagated odometry uses the same localization -> state-store
+      // order, so this witness cannot change before the exposure callback.
+      // Freshness itself is evaluated inside publishIfCurrent(): waiting for
+      // the timeline mutex must not consume a decision made at an earlier time.
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      final_execution_state = execution_state_store_.load();
+      const auto final_execution = execution_authority_.snapshot();
+      const bool execution_identity_current =
+          sampled_bundle && final_execution.active.get() == sampled_bundle.get() &&
+          final_execution.active_goal == execution_at_command.active_goal &&
+          sampled_bundle->goal_epoch == command_goal_epoch_at_command &&
+          active_localization_epoch_.load(std::memory_order_acquire) ==
+              localization_epoch_at_command;
+      if (localization_epoch_ready_.load(std::memory_order_acquire) &&
+          execution_identity_current &&
+          final_execution_state && final_execution_state->state.finite() &&
+          final_execution_state->state.localization_epoch ==
+              localization_epoch_at_command &&
+          final_execution.lifecycle.exposure ==
+              navigation_execution::ExecutionExposure::kAvailable &&
+          command_execution_lease_failure_latch_.allowsCommandExposure()) {
+        exposed = execution_authority_.publishIfCurrent(
+            sampled_bundle, command_goal_epoch_at_command,
+            [&, final_execution_state](
+                const navigation_execution::ExecutionLifecycleState&
+                    authorized_lifecycle) {
+              publication_boundary_evaluated = true;
+              const auto authorization_ros_ns = now().nanoseconds();
+              const auto authorization_steady_ns =
+                  navigation_common::steadyClockNowNanoseconds();
+              final_authorization_ros_ns = authorization_ros_ns;
+              final_authorization_steady_ns = authorization_steady_ns;
+              final_execution_freshness =
+                  navigation_contracts::evaluateExecutionStateFreshness(
+                      authorization_ros_ns,
+                      final_execution_state->state.source_stamp_ns,
+                      authorization_steady_ns,
+                      final_execution_state->state.receive_stamp_ns,
+                      data_freshness_window_s_);
+              final_world_freshness =
+                  assessWorldTemporal(true, sampled_bundle->world_identity,
+                                      authorization_ros_ns,
+                                      data_freshness_window_ns_).sourceTimeResult();
+              final_command_lease_valid =
+                  navigation_contracts::commandValidAt(command, authorization_ros_ns);
+              final_bundle_lease_valid = sampled_planned_stop_hold ||
+                  (authorization_ros_ns >= sampled_bundle->valid_from_ns &&
+                   authorization_ros_ns <= sampled_bundle->valid_until_ns);
+              if (sampled_planned_stop_hold) {
+                final_stopped_hold_anchor_error_m =
+                    (pvaj.col(0) - final_execution_state->state.position_world).norm();
+              }
+              final_stopped_hold_support_valid = !sampled_planned_stop_hold ||
+                  (final_execution_state->state.position_world.allFinite() &&
+                   final_stopped_hold_anchor_error_m <=
+                       navigation_contracts::kCommandAnchorErrorLimitM);
+              command_execution_lease_reason_.store(
+                  static_cast<int>(final_execution_freshness.reason),
+                  std::memory_order_release);
+              command_execution_source_age_us_.store(static_cast<std::int64_t>(
+                  final_execution_freshness.source_age_ms * 1000.0),
+                  std::memory_order_release);
+              command_execution_receive_age_us_.store(static_cast<std::int64_t>(
+                  final_execution_freshness.receive_age_ms * 1000.0),
+                  std::memory_order_release);
+              if (!final_execution_freshness.valid() ||
+                  final_world_freshness !=
+                      navigation_execution::TimestampFreshness::VALID ||
+                  !final_command_lease_valid || !final_bundle_lease_valid ||
+                  !final_stopped_hold_support_valid) {
+                return false;
+              }
+              // This is the state lease that actually authorized exposure;
+              // do not publish the earlier callback-start state as provenance.
+              command.state_source_stamp = navigation_common::nanosecondsToRosTime(
+                  final_execution_state->state.source_stamp_ns).value_or(
+                      builtin_interfaces::msg::Time{});
+              diagnostic.execution_authorization =
+                  navigation_contracts::msg::NavigationExecutionDiagnostics::
+                      EXECUTION_AUTHORIZATION_GRANTED;
+              diagnostic.execution_authorization_steady_ns =
+                  static_cast<std::uint64_t>(
+                      std::max<std::int64_t>(0, authorization_steady_ns));
+              // Bind policy telemetry to the same execution snapshot that
+              // authorized this exact exposure. In particular, the first
+              // sampled BACKUP command must not carry a stale pre-sample
+              // safety/recovery value.
+              diagnostic.safety_suffix_active =
+                  authorized_lifecycle.safety ==
+                  navigation_execution::ExecutionSafetyOwnership::kSafetySuffix;
+              diagnostic.execution_recovery_state = static_cast<std::uint8_t>(
+                  authorized_lifecycle.recovery);
+              command.mode_activation_id = mission_progress_
+                  ? mission_activation_applied_.value_or(0U)
+                  : mode_activation_id_seen_.load(std::memory_order_acquire);
+              rememberMissionCommandIssued(command, true);
+              publish_ros_command();
+              return true;
+            });
+      }
+    }
+    last_command_store_publish_us_.store(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - store_publish_started).count(),
+        std::memory_order_release);
+    if (!exposed) {
+      if (publication_boundary_evaluated && sampled_planned_stop_hold &&
+          !final_stopped_hold_support_valid) {
+        // Exact in-transaction facts, logged only after releasing all owner
+        // and timeline locks. Precheck bypass telemetry is not a final veto
+        // witness. No authority, limits or recovery disposition changes here.
+        RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 1000,
+            "STOPPED_HOLD final exposure veto generation=%lu request=%lu "
+            "goal_epoch=%lu localization_epoch=%lu "
+            "world=(%lu,%lu,%lu,%lld) state_ingress=%lu "
+            "state_source_ns=%lld state_receive_steady_ns=%lld "
+            "authorization_ros_ns=%lld authorization_steady_ns=%lld "
+            "anchor_error_m=%.9g anchor_limit_m=%.9g "
+            "execution_freshness=%s world_freshness=%d "
+            "command_lease_valid=%d bundle_lease_valid=%d hold_support_valid=0 "
+            "endpoint=(%.9g,%.9g,%.9g) measured=(%.9g,%.9g,%.9g)",
+            static_cast<unsigned long>(sampled_bundle->bundle_generation),
+            static_cast<unsigned long>(sampled_bundle->request_id),
+            static_cast<unsigned long>(sampled_bundle->goal_epoch),
+            static_cast<unsigned long>(sampled_bundle->localization_epoch),
+            static_cast<unsigned long>(sampled_bundle->world_identity.localization_epoch),
+            static_cast<unsigned long>(sampled_bundle->world_identity.generation),
+            static_cast<unsigned long>(sampled_bundle->world_identity.revision),
+            static_cast<long long>(sampled_bundle->world_identity.observation_stamp_ns),
+            static_cast<unsigned long>(final_execution_state->ingress_sequence),
+            static_cast<long long>(final_execution_state->state.source_stamp_ns),
+            static_cast<long long>(final_execution_state->state.receive_stamp_ns),
+            static_cast<long long>(final_authorization_ros_ns),
+            static_cast<long long>(final_authorization_steady_ns),
+            final_stopped_hold_anchor_error_m,
+            navigation_contracts::kCommandAnchorErrorLimitM,
+            navigation_contracts::executionStateFreshnessReasonName(
+                final_execution_freshness.reason),
+            static_cast<int>(final_world_freshness),
+            final_command_lease_valid ? 1 : 0, final_bundle_lease_valid ? 1 : 0,
+            pvaj(0, 0), pvaj(1, 0), pvaj(2, 0),
+            final_execution_state->state.position_world.x(),
+            final_execution_state->state.position_world.y(),
+            final_execution_state->state.position_world.z());
+      }
+      if (publication_boundary_evaluated &&
+          final_world_freshness !=
+              navigation_execution::TimestampFreshness::VALID) {
+        ++world_snapshot_freshness_rejection_count_;
+        if (planning_worker_) planning_worker_->cancelActive();
+        suspendCommandForWorldFreshness(execution_at_command);
+        return;
+      }
+      if (publication_boundary_evaluated &&
+          !final_execution_freshness.valid()) {
+        ++command_execution_lease_rejection_count_;
+        bool first_failure = false;
+        bool sampled_execution_still_current = false;
+        std::uint64_t current_ingress_sequence = 0U;
+        std::uint64_t current_active_generation = 0U;
+        {
+          std::lock_guard<std::mutex> localization_lock(
+              localization_transition_mutex_);
+          std::lock_guard<std::mutex> input_lock(input_mutex_);
+          std::lock_guard<std::mutex> command_lock(
+              command_execution_lease_failure_latch_.transitionMutex());
+          const auto current_execution = execution_authority_.snapshot();
+          const auto current_bundle = current_execution.active;
+          const auto current_state_lease = execution_state_store_.load();
+          current_ingress_sequence = current_state_lease
+              ? current_state_lease->ingress_sequence : 0U;
+          current_active_generation = current_execution.activeGeneration();
+          sampled_execution_still_current =
+              execution_authority_.matchesAuthorityIdentity(execution_at_command) &&
+              failedExecutionLeaseIsCurrent(
+                  final_execution_state, current_state_lease) &&
+              active_localization_epoch_.load(std::memory_order_acquire) ==
+                  localization_epoch_at_command &&
+              current_bundle && sampled_bundle &&
+              current_bundle.get() == sampled_bundle.get();
+          if (sampled_execution_still_current) {
+            first_failure = command_execution_lease_failure_latch_.tryLatch();
+            if (first_failure) {
+              ++command_execution_lease_terminal_latch_count_;
+            }
+            failClosedLocked();
+            const auto failed_pending = pending_goal_owner_.goalSnapshot();
+            (void)pending_goal_owner_.clearIfCurrent(failed_pending);
+          }
+        }
+        if (sampled_execution_still_current && first_failure && planning_worker_) {
+          planning_worker_->cancelActive();
+        }
+        if (sampled_execution_still_current) {
+          RCLCPP_ERROR(
+              get_logger(),
+              "execution-state lease expired at command authorization "
+              "reason=%s source_age_ms=%.3f receive_age_ms=%.3f "
+              "failed_ingress=%lu current_ingress=%lu active_generation=%lu mutation=current_failclosed",
+              navigation_contracts::executionStateFreshnessReasonName(
+                  final_execution_freshness.reason),
+              final_execution_freshness.source_age_ms,
+              final_execution_freshness.receive_age_ms,
+              static_cast<unsigned long>(final_execution_state
+                  ? final_execution_state->ingress_sequence : 0U),
+              static_cast<unsigned long>(current_ingress_sequence),
+              static_cast<unsigned long>(current_active_generation));
+        }
+        return;
+      }
+      if (publication_boundary_evaluated &&
+          (!final_command_lease_valid || !final_bundle_lease_valid)) {
+        ++command_publication_deadline_miss_count_;
+        RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 1000,
+            "dropping command that expired before authorization "
+            "command_lease=%d bundle_lease=%d generation=%lu",
+            final_command_lease_valid ? 1 : 0,
+            final_bundle_lease_valid ? 1 : 0,
+            static_cast<unsigned long>(trajectory_generation));
+        return;
+      }
+      // The world or goal advanced between sampling and publication. Never
+      // expose the stale pointer. Mapping recertification deliberately copies
+      // the same immutable bundle with a newer world identity, however, and a
+      // planner commit may also supersede this sample. Preserve availability
+      // only when the store now owns a non-older, valid bundle for the same
+      // active epochs; the next timer tick will sample and transactionally
+      // expose that exact pointer. A callback that still owns the sampled
+      // execution fails closed when no valid replacement remains; a callback
+      // that lost ownership is discard-only.
+      // Re-enter the complete execution transaction before deciding whether
+      // this callback may fail closed. A callback that lost its active or
+      // executing identity is discard-only; only the still-current owner may
+      // clear the command lease. Read the current command epoch here rather
+      // than reusing the epoch sampled before the long message assembly.
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const auto current_timeline = execution_authority_.snapshot();
+      const auto current_bundle = current_timeline.active;
+      const auto current_localization_epoch = active_localization_epoch_.load(
+          std::memory_order_acquire);
+      const auto current_command_goal_epoch = current_bundle
+          ? current_bundle->goal_epoch : 0U;
+      const bool sampled_execution_still_current =
+          localization_epoch_ready_.load(std::memory_order_acquire) &&
+          execution_authority_.isCurrentSnapshot(execution_at_command) &&
+          (!publication_boundary_evaluated ||
+           failedExecutionLeaseIsCurrent(
+               final_execution_state, execution_state_store_.load())) &&
+          current_timeline.active_goal == execution_at_command.active_goal &&
+          command_goal_epoch_at_command == current_command_goal_epoch &&
+          localization_epoch_at_command == current_localization_epoch &&
+          current_bundle && sampled_bundle &&
+          current_bundle.get() == sampled_bundle.get() &&
+          current_bundle->bundle_generation == sampled_bundle->bundle_generation;
+      const bool has_superseding_bundle = current_bundle && sampled_bundle &&
+          (current_bundle.get() != sampled_bundle.get() ||
+           current_bundle->bundle_generation > sampled_bundle->bundle_generation);
+      const bool superseded_by_valid_bundle = has_superseding_bundle &&
+          supersedingBundleMayRemainAvailable(
+              sampled_bundle ? sampled_bundle->bundle_generation : 0U,
+              current_bundle->bundle_generation,
+              current_bundle->localization_epoch,
+              current_bundle->goal_epoch,
+              current_localization_epoch,
+              current_command_goal_epoch,
+              current_bundle->valid_until_ns,
+              command_ros_time.nanoseconds(),
+              current_bundle->valid(),
+              execution_authority_.snapshot().failed(),
+              command_execution_lease_failure_latch_.allowsCommandExposure());
+      switch (classifyStaleCommandPublication(
+          sampled_execution_still_current, superseded_by_valid_bundle)) {
+        case StaleCommandPublicationDisposition::kDropStale:
+        case StaleCommandPublicationDisposition::kRetainSuperseding:
+          // The sampled callback is stale or a newer valid bundle owns the
+          // same execution. In both cases the current execution remains
+          // untouched and the next timer callback owns publication.
+          break;
+        case StaleCommandPublicationDisposition::kFailClosed:
+
+          failClosedLocked();
+          break;
+      }
+      return;
+    }
+    // A local admission receipt may now consume the exact issued command.
+  } else {
+    diagnostic.execution_authorization = navigation_contracts::msg::NavigationExecutionDiagnostics::
+        EXECUTION_AUTHORIZATION_REJECTED;
+    diagnostic.execution_authorization_steady_ns = static_cast<std::uint64_t>(
+        std::max<std::int64_t>(0, navigation_common::steadyClockNowNanoseconds()));
+    publish_ros_command();
+  }
+  if (command_published && execution_diagnostics_publisher_) {
+    // Observer output runs after the authoritative command publication and
+    // outside the execution transaction. Missing diagnostics never vetoes a
+    // command or synthesizes a Core/PX4 authorization witness.
+    diagnostic.header = command.header;
+    diagnostic.mode_activation_id = command.mode_activation_id;
+    diagnostic.localization_epoch = command.localization_epoch;
+    diagnostic.goal_epoch = command.goal_epoch;
+    diagnostic.mission_id = command.mission_id;
+    diagnostic.waypoint_index = command.waypoint_index;
+    diagnostic.request_id = command.request_id;
+    diagnostic.bundle_generation = command.bundle_generation;
+    diagnostic.bundle_owner_cycle_id = sampled_bundle
+        ? sampled_bundle->producer_planning_cycle_id : 0U;
+    diagnostic.bundle_source = sampled_bundle
+        ? static_cast<std::uint8_t>(sampled_bundle->source) : 0U;
+    diagnostic.sample_id = command.sample_id;
+    diagnostic.world_generation = command.world_generation;
+    diagnostic.world_revision = command.world_revision;
+    diagnostic.world_observation_stamp = command.world_observation_stamp;
+    try {
+      execution_diagnostics_publisher_->publish(diagnostic);
+    } catch (const std::exception& error) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                           "execution diagnostics publish failed: %s", error.what());
+    }
+  }
+  ++command_publish_count_;
+  ++cycle_success_count_;
+}
+
+}  // namespace navigation_runtime

@@ -1,0 +1,1153 @@
+---
+# AS-IS interface inventory pinned to main@7e0b850. Rates marked NOT_MEASURED
+# are code/config expectations only; they are not runtime observations.
+- topic: /clock
+  type: rosgraph_msgs/msg/Clock
+  scope: sitl_only
+  publishers:
+    - node: ros_gz_parameter_bridge
+      at: src/uav_simulation/bridge/px4_mid360_control_bridge.yaml:4
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: Gazebo world clock bridge
+      created_when: always_in_sitl_runner
+  subscribers:
+    - node: world_observation_gate
+      at: tools/runtime/world_observation_gate.py:54
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _on_clock
+      callback_group: default
+      created_when: always
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:523
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _clock
+      callback_group: default
+      created_when: always
+    - node: closed_loop_characterization
+      at: tools/runtime/closed_loop_characterization.py:171
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _clock
+      callback_group: default
+      created_when: characterization_mode
+  rate: NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Runner expects 100 Hz in config/runtime/common.yaml, but this ICD records no runtime measurement."
+
+- topic: /lidar/imu
+  type: sensor_msgs/msg/Imu
+  scope: product
+  publishers:
+    - node: ros_gz_parameter_bridge
+      at: src/uav_simulation/bridge/px4_mid360_control_bridge.yaml:10
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: Gazebo IMU bridge
+      created_when: SITL_runner
+  subscribers:
+    - node: fast_lio_node
+      at: src/estimation/fast_lio_ros/src/fast_lio_node.cpp:192
+      qos: {reliability: "best_effort unless input.qos_reliability=reliable; livox_custom selects reliable depth 256", durability: volatile, history: keep_last, depth: "100 or 256"}
+      callback: onImu
+      callback_group: default
+      created_when: always
+  rate: NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "The bridge is declarative ros_gz; its offered QoS is not encoded in product source."
+
+- topic: /lidar/points
+  type: sensor_msgs/msg/PointCloud2
+  scope: product
+  publishers:
+    - node: gz_lidar_bridge
+      at: src/uav_simulation/src/gz_lidar_bridge.cpp:52
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      trigger: latest-only Gazebo PointCloud callback
+      created_when: SITL_runner
+  subscribers:
+    - node: fast_lio_node
+      at: src/estimation/fast_lio_ros/src/fast_lio_node.cpp:206
+      qos: {reliability: "best_effort unless input.qos_reliability=reliable", durability: volatile, history: keep_last, depth: 100}
+      callback: onLidar
+      callback_group: default
+      created_when: input.lidar_message_type=pointcloud2
+    - node: fast_lio_node
+      at: src/estimation/fast_lio_ros/src/fast_lio_node.cpp:199
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 256}
+      callback: onLivoxCustom
+      callback_group: default
+      created_when: input.lidar_message_type=livox_custom
+    - node: visibility_bridge
+      at: src/uav_simulation/src/visibility_bridge.cpp:43
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: publishCloud
+      callback_group: default
+      created_when: SITL_runner_non_characterization
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:535
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _raw_lidar
+      callback_group: default
+      created_when: always
+  rate: NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "The Livox CustomMsg branch uses a separate subscription at fast_lio_node.cpp:199."
+
+- topic: /lidar/free_space_endpoints
+  type: sensor_msgs/msg/PointCloud2
+  scope: sitl_only
+  publishers:
+    - node: gz_visibility_bridge
+      at: src/uav_simulation/src/visibility_bridge.cpp:41
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: converted organized visibility cloud
+      created_when: runner starts visibility_bridge
+  subscribers:
+    - node: fast_lio_node
+      at: src/estimation/fast_lio_ros/src/fast_lio_node.cpp:214
+      qos: {reliability: "best_effort unless input.qos_reliability=reliable", durability: volatile, history: keep_last, depth: 100}
+      callback: onVisibilityCloud
+      callback_group: default
+      created_when: input.visibility_points_topic is non-empty
+  rate: NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "Product mapping can require this input while its only publisher is SITL-only."
+
+- topic: /initial_state_prior
+  type: nav_msgs/msg/Odometry
+  scope: product
+  publishers: []
+  subscribers:
+    - node: fast_lio_node
+      at: src/estimation/fast_lio_ros/src/fast_lio_node.cpp:222
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 100}
+      callback: onInitialStatePrior
+      callback_group: default
+      created_when: initial_prior.source=topic
+  rate: NOT_MEASURED
+  qos_compatible: false
+  recorded_in_evidence_bag: false
+  notes: "No product publisher found; default configuration uses source=zero."
+
+- topic: /lio/odometry_corrected
+  type: nav_msgs/msg/Odometry
+  scope: product
+  publishers:
+    - node: fast_lio_node
+      at: src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:114
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: corrected estimator publication
+      created_when: always
+  subscribers:
+    - node: world_observation_gate
+      at: tools/runtime/world_observation_gate.py:56
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _on_odom
+      callback_group: default
+      created_when: fault-injection gate
+    - node: closed_loop_characterization
+      at: tools/runtime/closed_loop_characterization.py:176
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _lio_state
+      callback_group: default
+      created_when: characterization_mode
+  rate: NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "The runner monitor also observes this topic through its dynamic TopicSpec."
+
+- topic: /lio/registered_points
+  type: sensor_msgs/msg/PointCloud2
+  scope: evidence_only
+  publishers:
+    - node: fast_lio_node
+      at: src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:117
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: registered point publication
+      created_when: output.publish_registered_points=true
+  subscribers: []
+  rate: NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "No product subscriber found in the baseline."
+
+- topic: /lio/mapping_observation
+  type: navigation_contracts/msg/RegisteredScan
+  scope: product
+  publishers:
+    - node: fast_lio_node
+      at: src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:120
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: registered scan publication
+      created_when: always
+  subscribers:
+    - node: navigation_runtime_node
+      at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: onRegisteredScan
+      callback_group: propagated_state_callback_group (reentrant)
+      created_when: always, topic may be runner-overridden
+    - node: world_observation_gate
+      at: tools/runtime/world_observation_gate.py:43
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _on_scan
+      callback_group: default
+      created_when: world_observation_fault_duration_ms>0
+  rate: NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Code publisher is reliable depth 10; the intended mappingObservation helper is best_effort depth 1 but is not used (see findings). The offered reliable QoS is compatible with a best_effort request under ROS 2 reliability rules."
+
+- topic: /test/world_gate/mapping_observation
+  type: navigation_contracts/msg/RegisteredScan
+  scope: sitl_only
+  publishers:
+    - node: world_observation_gate
+      at: tools/runtime/world_observation_gate.py:41
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: forward scan outside configured drop window
+      created_when: world_observation_fault_duration_ms>0
+  subscribers:
+    - node: navigation_runtime_node
+      at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: onRegisteredScan
+      callback_group: propagated_state_callback_group (reentrant)
+      created_when: runner overrides navigation_runtime.registered_scan_topic
+  rate: NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "The topic is a test-only relay; it is not a product publisher."
+
+- topic: /lio/health
+  type: navigation_contracts/msg/EstimatorHealth
+  scope: product
+  publishers:
+    - node: fast_lio_node
+      at: src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:122
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: estimator health publication
+      created_when: always
+  subscribers:
+    - node: navigation_runtime_node
+      at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1730
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 10}
+      callback: onEstimatorHealth
+      callback_group: default
+      created_when: always
+    - node: px4_navigation_external_mode_state_input
+      at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:337
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 10}
+      callback: onEstimatorHealth
+      callback_group: paired state-input executor
+      created_when: mode process starts
+    - node: world_observation_gate
+      at: tools/runtime/world_observation_gate.py:58
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _on_health
+      callback_group: default
+      created_when: fault-injection gate
+  rate: 2 Hz diagnostics-related publication; health event rate NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "Estimator output QoS is reliable while all product readers request best_effort; ROS 2 reliability compatibility permits this direction."
+
+- topic: /lio/odometry_propagated
+  type: navigation_contracts/msg/PropagatedOdometry
+  scope: product
+  publishers:
+    - node: fast_lio_node
+      at: src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:18
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: propagated odometry worker publication
+      created_when: always
+  subscribers:
+    - node: navigation_runtime_node
+      at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1734
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: onPropagatedOdometry
+      callback_group: propagated_state_callback_group (reentrant)
+      created_when: always
+    - node: px4_navigation_external_mode_state_input
+      at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:331
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 1}
+      callback: onOdometry
+      callback_group: paired state-input executor
+      created_when: mode process starts
+    - node: px4_external_odometry_bridge_node
+      at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:101
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 20}
+      callback: on_lio
+      callback_group: default
+      created_when: external odometry bridge starts
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:526
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _propagated_odometry
+      callback_group: default
+      created_when: mission observer starts
+  rate: configured 50 Hz; NOT_MEASURED at runtime
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "The product has both reliable and best_effort readers; the latter is intentional latest-state consumption."
+
+- topic: /lio/diagnostics
+  type: diagnostic_msgs/msg/DiagnosticArray
+  scope: product
+  publishers:
+    - node: fast_lio_node
+      at: src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:124
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: estimator/transport/propagated diagnostic timers
+      created_when: always
+  subscribers:
+    - node: px4_external_odometry_bridge_node
+      at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:106
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 20}
+      callback: on_lio_diagnostics
+      callback_group: default
+      created_when: external odometry bridge starts
+    - node: closed_loop_characterization
+      at: tools/runtime/closed_loop_characterization.py:177
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _lio_diagnostics
+      callback_group: default
+      created_when: characterization_mode
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:531
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _diagnostics
+      callback_group: default
+      created_when: mission observer starts
+  rate: 2 Hz snapshot plus transport/propagated events; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "String diagnostics are still used as a product gate by the external odometry bridge."
+
+- topic: /lio/odometry_transport_trace
+  type: navigation_contracts/msg/OdometryTransportTrace
+  scope: evidence_only
+  publishers:
+    - node: fast_lio_node
+      at: src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:32
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 256}
+      trigger: propagated transport witness
+      created_when: diagnostics.state_transport_trace_enabled=true and use_sim_time=true
+  subscribers: []
+  rate: per propagated sample when enabled; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "Observer-only trace."
+
+- topic: /navigation/odometry_ingress_trace
+  type: navigation_contracts/msg/OdometryTransportTrace
+  scope: evidence_only
+  publishers:
+    - node: px4_navigation_external_mode
+      at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:198
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 256}
+      trigger: adapter odometry callback witness
+      created_when: diagnostics.state_transport_trace_enabled=true and use_sim_time=true
+  subscribers: []
+  rate: per adapter odometry callback when enabled; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "Observer-only trace."
+
+- topic: /navigation/goal
+  type: navigation_contracts/msg/NavigationGoal
+  scope: product
+  publishers:
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:517
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: mission/goal publication
+      created_when: observer starts mission
+    - node: dataset_shadow_planning
+      at: tools/runtime/dataset_shadow_planning.py:123
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: shadow goal publication
+      created_when: shadow run
+    - node: send_goal
+      at: tools/runtime/send_goal.py:87
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: manual goal loop
+      created_when: command invocation
+  subscribers:
+    - node: navigation_runtime_node
+      at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 1}
+      callback: onGoal
+      callback_group: default
+      created_when: always
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:564
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _goal
+      callback_group: default
+      created_when: mission observer starts
+  rate: event-driven; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Manual and SITL observer publishers are harness inputs, not product authority."
+
+- topic: /navigation/mode_status
+  type: navigation_contracts/msg/NavigationModeStatus
+  scope: product
+  publishers:
+    - node: px4_navigation_external_mode
+      at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:283
+      qos: {reliability: reliable, durability: transient_local, history: keep_last, depth: 1}
+      trigger: lifecycle/status publication
+      created_when: mode process starts
+  subscribers:
+    - node: navigation_runtime_node
+      at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743
+      qos: {reliability: reliable, durability: transient_local, history: keep_last, depth: 1}
+      callback: onModeStatus
+      callback_group: default
+      created_when: always
+    - node: world_observation_gate
+      at: tools/runtime/world_observation_gate.py:50
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _on_mode_status
+      callback_group: default
+      created_when: fault-injection gate
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:570
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _mode_status
+      callback_group: default
+      created_when: mission observer starts
+  rate: event-driven plus adapter boundary timer 20 Hz; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Runtime requests transient_local; Python observers use volatile and do not receive historical latched data."
+
+- topic: /navigation/navigation_command
+  type: navigation_contracts/msg/NavigationCommand
+  scope: product
+  publishers:
+    - node: navigation_runtime_node
+      at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1747
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 1}
+      trigger: command_timer_ (create_wall_timer; contract rate 50 Hz)
+      created_when: always after runtime setup
+  subscribers:
+    - node: px4_navigation_external_mode
+      at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:272
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 1}
+      callback: NavigationMode::onNavigationCommand
+      callback_group: mode executor default
+      created_when: mode process starts
+    - node: world_observation_gate
+      at: tools/runtime/world_observation_gate.py:46
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _on_command
+      callback_group: default
+      created_when: fault-injection gate
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:550
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _navigation_command
+      callback_group: default
+      created_when: mission observer starts
+    - node: dataset_shadow_planning
+      at: tools/runtime/dataset_shadow_planning.py:186
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 10}
+      callback: on_command
+      callback_group: default
+      created_when: shadow run
+  rate: configured 50 Hz; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Core-to-adapter command path."
+
+- topic: /navigation/execution_diagnostics
+  type: navigation_contracts/msg/NavigationExecutionDiagnostics
+  scope: evidence_only
+  publishers:
+    - node: navigation_runtime_node
+      at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1749
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      trigger: exact sampled command observation
+      created_when: always
+  subscribers:
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:553
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _navigation_execution_diagnostics
+      callback_group: default
+      created_when: mission observer starts
+  rate: configured command rate; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Observer-only by message contract."
+
+- topic: /navigation/command_admission
+  type: navigation_contracts/msg/NavigationCommandAdmission
+  scope: product
+  publishers:
+    - node: px4_navigation_external_mode
+      at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:285
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: adapter admits one exact command sample
+      created_when: mode process starts
+  subscribers:
+    - node: navigation_runtime_node
+      at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1754
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: onCommandAdmission
+      callback_group: default
+      created_when: mission_file is non-empty
+    - node: world_observation_gate
+      at: tools/runtime/world_observation_gate.py:50
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _on_admission
+      callback_group: default
+      created_when: fault-injection gate
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:557
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _navigation_command_admission
+      callback_group: default
+      created_when: mission observer starts
+  rate: event-driven; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Runtime subscriber is conditional on mission_progress_; this creates an asymmetric interface when no mission_file is loaded."
+
+- topic: /navigation/command_rejection
+  type: navigation_contracts/msg/NavigationCommandRejection
+  scope: evidence_only
+  publishers:
+    - node: px4_navigation_external_mode
+      at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:288
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 20}
+      trigger: adapter rejects command admission
+      created_when: mode process starts
+  subscribers:
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:561
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _navigation_command_rejection
+      callback_group: default
+      created_when: mission observer starts
+  rate: event-driven; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Observer-only by message contract."
+
+- topic: /navigation/mission_progress
+  type: navigation_contracts/msg/NavigationMissionProgress
+  scope: product
+  publishers:
+    - node: navigation_runtime_node
+      at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1758
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: mission progress timer / Core transition receipt
+      created_when: mission_file is non-empty
+  subscribers:
+    - node: px4_navigation_external_mode
+      at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:291
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: NavigationMode::onMissionProgress
+      callback_group: mode executor default
+      created_when: mode process starts
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:565
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _mission_progress
+      callback_group: default
+      created_when: mission observer starts
+  rate: mission timer 20 Hz while mission exists; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Publisher is conditional while adapter subscriber is unconditional."
+
+- topic: /navigation/mission_complete
+  type: std_msgs/msg/Bool
+  scope: evidence_only
+  publishers:
+    - node: navigation_runtime_node
+      at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1761
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 1}
+      trigger: Core mission completion transition
+      created_when: mission_file is non-empty
+  subscribers:
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:568
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _mission_complete
+      callback_group: default
+      created_when: mission observer starts
+  rate: event-driven; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Legacy/compatibility mirror; typed mission progress is the authoritative receipt."
+
+- topic: /navigation/diagnostics
+  type: diagnostic_msgs/msg/DiagnosticArray
+  scope: product
+  publishers:
+    - node: navigation_runtime_node
+      at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:852
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 5}
+      trigger: mapping/planning/runtime diagnostic publication
+      created_when: always
+    - node: px4_navigation_external_mode
+      at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:297
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 50}
+      trigger: PX4 input trace and alignment witness
+      created_when: mode process starts
+  subscribers:
+    - node: world_observation_gate
+      at: tools/runtime/world_observation_gate.py:60
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _on_diagnostics
+      callback_group: default
+      created_when: fault-injection gate
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:533
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _diagnostics
+      callback_group: default
+      created_when: mission observer starts
+  rate: runtime event-driven plus adapter trace worker; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "String DiagnosticStatus channels are parsed by the SITL observer/judge and one product PX4 bridge gate."
+
+- topic: /fmu/in/vehicle_visual_odometry
+  type: px4_msgs/msg/VehicleOdometry
+  scope: product
+  publishers:
+    - node: px4_external_odometry_bridge_node
+      at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:96
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 10}
+      trigger: PropagatedOdometry conversion and external odometry gate
+      created_when: external odometry bridge starts
+  subscribers:
+    - node: px4_fmu
+      at: px4_msgs VehicleOdometry input contract (MESSAGE_VERSION=0)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      callback: PX4 estimator input
+      callback_group: PX4
+      created_when: PX4 transport active
+  rate: configured propagated state rate; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Topic has no version suffix because VehicleOdometry.MESSAGE_VERSION=0."
+
+- topic: /fmu/in/vehicle_command
+  type: px4_msgs/msg/VehicleCommand
+  scope: sitl_only
+  publishers:
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:518
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 20}
+      trigger: observer arm/mode/land command
+      created_when: mission observer starts
+    - node: closed_loop_characterization
+      at: tools/runtime/closed_loop_characterization.py:170
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      trigger: characterization command
+      created_when: characterization_mode
+    - node: offboard_scenario
+      at: tools/runtime/offboard_scenario.py:75
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      trigger: offboard scenario command
+      created_when: offboard scenario
+  subscribers:
+    - node: px4_fmu
+      at: px4_msgs VehicleCommand input contract (MESSAGE_VERSION=0)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      callback: PX4 vehicle command input
+      callback_group: PX4
+      created_when: PX4 transport active
+  rate: event-driven; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "SITL scenario input to PX4; no product publisher is created in src/."
+
+- topic: /fmu/in/offboard_control_mode
+  type: px4_msgs/msg/OffboardControlMode
+  scope: sitl_only
+  publishers:
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:519
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 20}
+      trigger: observer offboard heartbeat
+      created_when: mission observer starts
+    - node: closed_loop_characterization
+      at: tools/runtime/closed_loop_characterization.py:168
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      trigger: characterization tick
+      created_when: characterization_mode
+    - node: offboard_scenario
+      at: tools/runtime/offboard_scenario.py:73
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      trigger: offboard heartbeat
+      created_when: offboard scenario
+  subscribers:
+    - node: px4_fmu
+      at: px4_msgs OffboardControlMode input contract (MESSAGE_VERSION=0)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: keep_last, depth: NOT_STATICALLY_DECLARED}
+      callback: PX4 offboard control mode input
+      callback_group: PX4
+      created_when: PX4 transport active
+  rate: scenario-dependent; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "SITL-only control stream."
+
+- topic: /fmu/out/vehicle_odometry
+  type: px4_msgs/msg/VehicleOdometry
+  scope: product
+  publishers:
+    - node: px4_fmu
+      at: px4_msgs VehicleOdometry output contract (MESSAGE_VERSION=0)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 estimator output
+      created_when: PX4 transport active
+  subscribers:
+    - node: px4_odometry_bridge_node
+      at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:89
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: on_odometry
+      callback_group: default
+      created_when: SITL runner starts px4_odometry_bridge_node
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "SITL-only PX4 output path."
+
+- topic: /fmu/out/vehicle_local_position_v1
+  type: px4_msgs/msg/VehicleLocalPosition
+  scope: product
+  publishers:
+    - node: px4_fmu
+      at: px4_ros2 getMessageNameVersion<VehicleLocalPosition> (MESSAGE_VERSION=1)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 local position output
+      created_when: PX4 transport active
+  subscribers:
+    - node: px4_odometry_bridge_node
+      at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:92
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: record_local_reset_metadata
+      callback_group: default
+      created_when: SITL runner starts bridge
+    - node: px4_navigation_external_mode_state_input
+      at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:343
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: onPx4LocalPosition
+      callback_group: paired state-input executor
+      created_when: mode process starts
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:536
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _local_position
+      callback_group: default
+      created_when: mission observer starts
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Version suffix is generated by px4_ros2/getMessageNameVersion."
+
+- topic: /fmu/out/vehicle_attitude
+  type: px4_msgs/msg/VehicleAttitude
+  scope: product
+  publishers:
+    - node: px4_fmu
+      at: px4_msgs VehicleAttitude output contract (MESSAGE_VERSION=0)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 attitude output
+      created_when: PX4 transport active
+  subscribers:
+    - node: px4_odometry_bridge_node
+      at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:97
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: record_attitude_reset_metadata
+      callback_group: default
+      created_when: SITL runner starts bridge
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Used for reset metadata only."
+
+- topic: /fmu/out/vehicle_global_position
+  type: px4_msgs/msg/VehicleGlobalPosition
+  scope: sitl_only
+  publishers:
+    - node: px4_fmu
+      at: px4_msgs VehicleGlobalPosition output contract (MESSAGE_VERSION=0)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: keep_last, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 global position output
+      created_when: PX4 transport active
+  subscribers:
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:537
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 20}
+      callback: _global_position
+      callback_group: default
+      created_when: mission observer starts
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "Observer-only global position input."
+
+- topic: /fmu/out/timesync_status
+  type: px4_msgs/msg/TimesyncStatus
+  scope: product
+  publishers:
+    - node: px4_fmu
+      at: px4_msgs TimesyncStatus output contract (MESSAGE_VERSION=0)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 time-sync status
+      created_when: PX4 transport active
+  subscribers:
+    - node: px4_odometry_bridge_node
+      at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:102
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: transport evidence lambda
+      callback_group: default
+      created_when: SITL runner starts bridge
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "Bridge records fields but deliberately does not apply estimated_offset."
+
+- topic: /fmu/out/vehicle_status_v1
+  type: px4_msgs/msg/VehicleStatus
+  scope: product
+  publishers:
+    - node: px4_fmu
+      at: px4_ros2 getMessageNameVersion<VehicleStatus> (MESSAGE_VERSION=1)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 vehicle status output
+      created_when: PX4 transport active
+  subscribers:
+    - node: px4_navigation_external_mode
+      at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:2593
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: onVehicleStatus via SharedSubscription
+      callback_group: px4_ros2 mode executor
+      created_when: mode executor registration
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:540
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _status
+      callback_group: default
+      created_when: mission observer starts
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "SharedSubscription creates the actual rclcpp subscription in external/px4_ros2_interface_lib/.../shared_subscription.hpp:143-149."
+
+- topic: /fmu/in/trajectory_setpoint
+  type: px4_msgs/msg/TrajectorySetpoint
+  scope: product
+  publishers:
+    - node: px4_navigation_external_mode
+      at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/control/setpoint_types/experimental/trajectory.cpp:16
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 1}
+      trigger: NavigationMode::updateSetpoint through TrajectorySetpointType at 50 Hz
+      created_when: mode process starts and PX4 external mode active
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:522
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      trigger: observer takeoff/setpoint command
+      created_when: mission observer starts
+    - node: closed_loop_characterization
+      at: tools/runtime/closed_loop_characterization.py:169
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      trigger: characterization tick 50 Hz
+      created_when: characterization_mode
+    - node: offboard_scenario
+      at: tools/runtime/offboard_scenario.py:74
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      trigger: offboard tick 20 Hz
+      created_when: offboard scenario
+  subscribers:
+    - node: px4_fmu
+      at: px4_msgs TrajectorySetpoint input contract (MESSAGE_VERSION=0)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      callback: PX4 trajectory setpoint input
+      callback_group: PX4
+      created_when: PX4 transport active
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:545
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _setpoint
+      callback_group: default
+      created_when: mission observer starts
+  rate: product 50 Hz; tools NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Mode registration uses px4_ros2::NodeWithModeExecutor and mode id kModeName; no product action/service interface from px4_ros2 was found beyond SharedSubscription and TrajectorySetpointType."
+
+- topic: /fmu/out/vehicle_local_position_setpoint
+  type: px4_msgs/msg/VehicleLocalPositionSetpoint
+  scope: evidence_only
+  publishers:
+    - node: px4_fmu
+      at: PX4 output contract
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 effective local-position setpoint
+      created_when: PX4 transport active
+  subscribers:
+    - node: closed_loop_characterization
+      at: tools/runtime/closed_loop_characterization.py:174
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _px4_sp
+      callback_group: default
+      created_when: characterization_mode
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Observer-only effective-setpoint layer."
+
+- topic: /fmu/out/vehicle_attitude_setpoint
+  type: px4_msgs/msg/VehicleAttitudeSetpoint
+  scope: evidence_only
+  publishers:
+    - node: px4_fmu
+      at: PX4 output contract (MESSAGE_VERSION=1)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 effective attitude setpoint
+      created_when: PX4 transport active
+  subscribers:
+    - node: runtime_monitor
+      at: tools/runtime/monitor.py:750
+      qos: {reliability: "runtime.streams.px4_attitude_setpoint or observer default", durability: volatile, history: keep_last, depth: NOT_STATICALLY_DECLARED}
+      callback: _px4_attitude_setpoint_payload
+      callback_group: default
+      created_when: non-dataset runtime monitor and px4_msgs type available
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Evidence-only effective-setpoint stream; monitor reads the payload, not a product safety gate."
+
+- topic: /fmu/out/vehicle_thrust_setpoint
+  type: px4_msgs/msg/VehicleThrustSetpoint
+  scope: evidence_only
+  publishers:
+    - node: px4_fmu
+      at: PX4 output contract
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 effective thrust setpoint
+      created_when: PX4 transport active
+  subscribers:
+    - node: runtime_monitor
+      at: tools/runtime/monitor.py:756
+      qos: {reliability: "runtime.streams.px4_thrust_setpoint or observer default", durability: volatile, history: keep_last, depth: NOT_STATICALLY_DECLARED}
+      callback: _px4_thrust_setpoint_payload
+      callback_group: default
+      created_when: non-dataset runtime monitor and px4_msgs type available
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Evidence-only effective-setpoint stream; not consumed by product nodes."
+
+- topic: /fmu/out/actuator_motors
+  type: px4_msgs/msg/ActuatorMotors
+  scope: evidence_only
+  publishers:
+    - node: px4_fmu
+      at: PX4 output contract (MESSAGE_VERSION=0)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 actuator allocation output
+      created_when: PX4 transport active
+  subscribers:
+    - node: runtime_monitor
+      at: tools/runtime/monitor.py:762
+      qos: {reliability: "runtime.streams.px4_actuator_motors or observer default", durability: volatile, history: keep_last, depth: NOT_STATICALLY_DECLARED}
+      callback: _px4_actuator_motors_payload
+      callback_group: default
+      created_when: non-dataset runtime monitor and px4_msgs type available
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Evidence-only actuator witness; no product consumer found."
+
+- topic: /fmu/out/estimator_status
+  type: px4_msgs/msg/EstimatorStatus
+  scope: evidence_only
+  publishers:
+    - node: px4_fmu
+      at: PX4 output contract
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 estimator status output
+      created_when: PX4 transport active
+  subscribers:
+    - node: runtime_monitor
+      at: tools/runtime/monitor.py:738
+      qos: {reliability: "runtime.streams.estimator_status or observer default", durability: volatile, history: keep_last, depth: NOT_STATICALLY_DECLARED}
+      callback: lambda payload
+      callback_group: default
+      created_when: non-dataset runtime monitor and px4_msgs type available
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: true
+  notes: "Monitor extracts selected estimator flags; no product safety gate reads this topic."
+
+- topic: /fmu/out/vehicle_command_ack
+  type: px4_msgs/msg/VehicleCommandAck
+  scope: sitl_only
+  publishers:
+    - node: px4_fmu
+      at: PX4 output contract
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 command acknowledgement
+      created_when: PX4 transport active
+  subscribers:
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:571
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _ack
+      callback_group: default
+      created_when: mission observer starts
+  rate: event-driven; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "Not a product node input."
+
+- topic: /fmu/out/mode_completed
+  type: px4_msgs/msg/ModeCompleted
+  scope: sitl_only
+  publishers:
+    - node: px4_fmu
+      at: px4_msgs ModeCompleted output contract (MESSAGE_VERSION=0)
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: volatile, history: keep_last, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 external mode completion
+      created_when: PX4 transport active
+  subscribers:
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:543
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 20}
+      callback: _mode_completed
+      callback_group: default
+      created_when: mission observer starts
+    - node: px4_navigation_external_mode
+      at: src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:488
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 1}
+      callback: mode completion callback
+      callback_group: px4_ros2 mode executor
+      created_when: mode executor registration
+  rate: event-driven; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "The product subscription is created inside the pinned px4_ros2 interface library."
+
+- topic: /fmu/out/vehicle_land_detected
+  type: px4_msgs/msg/VehicleLandDetected
+  scope: sitl_only
+  publishers:
+    - node: px4_fmu
+      at: PX4 output contract
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: PX4 land detector output
+      created_when: PX4 transport active
+  subscribers:
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:544
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _land_detected
+      callback_group: default
+      created_when: mission observer starts
+    - node: offboard_scenario
+      at: tools/runtime/offboard_scenario.py:78
+      qos: {reliability: best_effort, durability: volatile, history: keep_last, depth: 1}
+      callback: _land_detected
+      callback_group: default
+      created_when: offboard scenario
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "SITL observer input."
+
+- topic: /sim/ground_truth/odometry
+  type: nav_msgs/msg/Odometry
+  scope: sitl_only
+  publishers:
+    - node: ros_gz_parameter_bridge
+      at: src/uav_simulation/bridge/px4_mid360_control_bridge.yaml:17
+      qos: {reliability: NOT_STATICALLY_DECLARED, durability: NOT_STATICALLY_DECLARED, history: NOT_STATICALLY_DECLARED, depth: NOT_STATICALLY_DECLARED}
+      trigger: Gazebo truth bridge
+      created_when: SITL_runner
+  subscribers:
+    - node: external_mode_scenario
+      at: tools/runtime/external_mode_scenario.py:534
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _ground_truth
+      callback_group: default
+      created_when: mission observer starts
+    - node: closed_loop_characterization
+      at: tools/runtime/closed_loop_characterization.py:175
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      callback: _ground_truth
+      callback_group: default
+      created_when: characterization_mode
+  rate: NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "Evaluation-only; must not feed product navigation."
+
+- topic: /px4/estimator_odometry
+  type: nav_msgs/msg/Odometry
+  scope: sitl_only
+  publishers:
+    - node: px4_odometry_bridge_node
+      at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:85
+      qos: {reliability: reliable, durability: volatile, history: keep_last, depth: 10}
+      trigger: PX4 odometry conversion
+      created_when: SITL runner starts bridge
+  subscribers: []
+  rate: PX4 scheduler; NOT_MEASURED
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "No product subscriber found."
+
+- topic: /px4/diagnostics
+  type: diagnostic_msgs/msg/DiagnosticArray
+  scope: sitl_only
+  publishers:
+    - node: px4_odometry_bridge_node
+      at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:86
+      qos: {reliability: reliable, durability: transient_local, history: keep_last, depth: 1}
+      trigger: bridge periodic health snapshot
+      created_when: SITL runner starts bridge
+  subscribers: []
+  rate: 2 Hz
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "No product subscriber found."
+
+- topic: /px4/sample_odometry_at_time
+  interface_kind: service
+  type: navigation_contracts/srv/SampleOdometryAtTime
+  scope: sitl_only
+  publishers: []
+  subscribers: []
+  services:
+    - node: px4_odometry_bridge_node
+      at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:115
+      callback: SampleOdometryAtTime service lambda
+      created_when: SITL runner starts bridge
+  clients: []
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "No create_client call found in product or runtime tools."
+
+- topic: __px4_ros2_interface_lib__
+  interface_kind: library_interface
+  type: px4_ros2_interface_lib/ModeRegistration
+  scope: product
+  publishers: []
+  subscribers: []
+  qos_compatible: true
+  recorded_in_evidence_bag: false
+  notes: "Mode registration: px4_ros2::NodeWithModeExecutor at src/px4/px4_navigation_external_mode/src/main.cpp:13-15, instance at :35-39; NavigationMode inherits ModeBase at navigation_mode_node.cpp:171-174 and NavigationModeExecutor inherits ModeExecutorBase at :2584-2587. No product action/service interface from px4_ros2 was found beyond SharedSubscription and TrajectorySetpointType."

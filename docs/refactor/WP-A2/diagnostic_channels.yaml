@@ -1,0 +1,1334 @@
+---
+source_baseline: main@7e0b850
+notes: "DiagnosticStatus.name is a string channel; this inventory is static and does not claim runtime emission frequency. navigation_planning/planner is retained as an evidence/parser compatibility alias with no baseline publisher."
+channels:
+- name: navigation_planning/planner
+  publishers: []
+  keys: []
+  parsers:
+  - node: report.py
+    at: tools/runtime/report.py:2660
+    use: judge
+    keys_read: name-only alias compatibility
+  - node: planner_trace.py
+    at: tools/runtime/planner_trace.py:968
+    use: judge
+    keys_read: name-only alias compatibility
+  use: judge
+  notes: "Legacy/fixture alias accepted by tooling; no publisher is present in product src at this baseline."
+- name: fast_lio/estimator
+  publishers:
+  - at: src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:735
+  keys:
+  - key: absolute_guard_recovery_failed
+    value_type: bool-as-string
+  - key: absolute_guard_triggered
+    value_type: string
+  - key: corrected_estimate_valid
+    value_type: bool-as-string
+  - key: correction_accepted_count
+    value_type: bool-as-string
+  - key: correction_rejected_count
+    value_type: bool-as-string
+  - key: crop_performed
+    value_type: string
+  - key: gravity_odom_x_m_s2
+    value_type: string
+  - key: gravity_odom_y_m_s2
+    value_type: string
+  - key: gravity_odom_z_m_s2
+    value_type: string
+  - key: ikfom_solver_only_us
+    value_type: string
+  - key: imu_drop_count
+    value_type: uint/int-as-string
+  - key: imu_received_count
+    value_type: uint/int-as-string
+  - key: last_failure_code
+    value_type: string
+  - key: last_failure_reason
+    value_type: string
+  - key: last_lidar_correction_time_ns
+    value_type: uint/int-as-string
+  - key: lidar_drop_count
+    value_type: uint/int-as-string
+  - key: lidar_processed_count
+    value_type: uint/int-as-string
+  - key: lidar_received_count
+    value_type: uint/int-as-string
+  - key: lio_generation
+    value_type: uint/int-as-string
+  - key: lio_public_frame_generation
+    value_type: uint/int-as-string
+  - key: lio_public_frame_generation_valid
+    value_type: bool-as-string
+  - key: map_insertion_frozen
+    value_type: uint/int-as-string
+  - key: map_maintenance_us
+    value_type: string
+  - key: map_point_count
+    value_type: uint/int-as-string
+  - key: map_size_after_insert
+    value_type: uint/int-as-string
+  - key: map_size_after_maintenance
+    value_type: string
+  - key: measurement_callback_count
+    value_type: uint/int-as-string
+  - key: measurement_model_us
+    value_type: string
+  - key: navigation_valid
+    value_type: bool-as-string
+  - key: observability_rejection_count
+    value_type: uint/int-as-string
+  - key: output_time_ns
+    value_type: uint/int-as-string
+  - key: pose_covariance_available
+    value_type: bool-as-string
+  - key: queue_maximum
+    value_type: string
+  - key: recovery_covariance_clamp_count
+    value_type: uint/int-as-string
+  - key: recovery_covariance_maximum_eigenvalue_after_clamp
+    value_type: string
+  - key: recovery_covariance_maximum_eigenvalue_before_clamp
+    value_type: string
+  - key: state
+    value_type: string
+  - key: status
+    value_type: string
+  - key: timestamp_regression_count
+    value_type: uint/int-as-string
+  - key: translation_observability_max_eigenvalue
+    value_type: uint/int-as-string
+  - key: translation_observability_min_eigenvalue
+    value_type: uint/int-as-string
+  - key: translation_observability_ratio
+    value_type: uint/int-as-string
+  - key: translation_observability_valid
+    value_type: bool-as-string
+  - key: twist_covariance_available
+    value_type: bool-as-string
+  - key: valid_point_count_busy_count
+    value_type: bool-as-string
+  parsers:
+  - node: px4_external_odometry_bridge_node
+    at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:158
+    use: safety_gate
+    keys_read: static key reads in consumer
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:1005
+    use: judge
+    keys_read: static key reads in consumer
+  - node: report.py
+    at: tools/runtime/report.py:1540
+    use: judge
+    keys_read: static key reads in consumer
+  - node: external_mode_scenario.py
+    at: tools/runtime/external_mode_scenario.py:1005
+    use: judge
+    keys_read: static key reads in consumer
+  use: safety_gate
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: fast_lio/propagated_odometry
+  publishers:
+  - at: src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:911
+  keys:
+  - key: last_applied_correction_time_ns
+    value_type: uint/int-as-string
+  - key: last_correction_time_ns
+    value_type: uint/int-as-string
+  - key: last_published_time_ns
+    value_type: uint/int-as-string
+  - key: last_received_correction_time_ns
+    value_type: uint/int-as-string
+  - key: last_replay_runtime_us
+    value_type: float-as-string
+  - key: last_replay_sample_count
+    value_type: uint/int-as-string
+  - key: latest_imu_time_ns
+    value_type: uint/int-as-string
+  - key: load_shedding_count
+    value_type: uint/int-as-string
+  - key: maximum_imu_batch_size
+    value_type: string
+  - key: maximum_replay_runtime_us
+    value_type: float-as-string
+  - key: navigation_valid
+    value_type: bool-as-string
+  - key: next_publish_deadline_ns
+    value_type: uint/int-as-string
+  - key: propagated_time_ns
+    value_type: uint/int-as-string
+  - key: publication_count
+    value_type: uint/int-as-string
+  - key: publication_skip_count
+    value_type: uint/int-as-string
+  - key: queue_overflow_count
+    value_type: uint/int-as-string
+  - key: reanchor_count
+    value_type: uint/int-as-string
+  - key: replay_count
+    value_type: uint/int-as-string
+  - key: replay_in_progress
+    value_type: string
+  - key: requires_reanchor
+    value_type: string
+  - key: stale_stop_count
+    value_type: uint/int-as-string
+  - key: status
+    value_type: string
+  - key: timestamp_regression_count
+    value_type: uint/int-as-string
+  - key: worker_failed
+    value_type: bool-as-string
+  - key: worker_failure_message
+    value_type: float-as-string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:733
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: fast_lio/transport
+  publishers:
+  - at: src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:844
+  keys:
+  - key: correction_accepted_count
+    value_type: bool-as-string
+  - key: correction_rejected_count
+    value_type: bool-as-string
+  - key: imu_drop_count
+    value_type: uint/int-as-string
+  - key: imu_received_count
+    value_type: uint/int-as-string
+  - key: lidar_drop_count
+    value_type: uint/int-as-string
+  - key: lidar_received_count
+    value_type: uint/int-as-string
+  - key: pose_covariance_available
+    value_type: bool-as-string
+  - key: processing_lag_ns
+    value_type: uint/int-as-string
+  - key: processing_worker_failed
+    value_type: bool-as-string
+  - key: processing_worker_failure_message
+    value_type: float-as-string
+  - key: queue_depth
+    value_type: float-as-string
+  - key: queue_maximum
+    value_type: string
+  - key: scan_processing_p95_us
+    value_type: string
+  - key: timestamp_regression_count
+    value_type: uint/int-as-string
+  - key: transport_ok
+    value_type: bool-as-string
+  - key: twist_covariance_available
+    value_type: bool-as-string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:733
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: navigation_external_mode/ALIGNMENT_LATCH_WITNESS
+  publishers:
+  - at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:695
+  keys:
+  - key: alignment_basis
+    value_type: string
+  - key: alignment_basis_matrix_ned_from_enu
+    value_type: string
+  - key: lio_child_frame_id
+    value_type: uint/int-as-string
+  - key: lio_correction_fresh
+    value_type: string
+  - key: lio_covariance_valid
+    value_type: bool-as-string
+  - key: lio_frame_id
+    value_type: uint/int-as-string
+  - key: lio_navigation_valid
+    value_type: bool-as-string
+  - key: lio_observability_valid
+    value_type: bool-as-string
+  - key: lio_propagation_valid
+    value_type: bool-as-string
+  - key: px4_dead_reckoning
+    value_type: string
+  - key: px4_vxy_valid
+    value_type: bool-as-string
+  - key: px4_vz_valid
+    value_type: bool-as-string
+  - key: px4_xy_valid
+    value_type: bool-as-string
+  - key: px4_z_valid
+    value_type: bool-as-string
+  - key: stationary_history_available
+    value_type: bool-as-string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:769
+    use: judge
+    keys_read: static key reads in consumer
+  - node: external_mode_scenario.py
+    at: tools/runtime/external_mode_scenario.py:769
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: navigation_external_mode/PX4_INPUT_SETPOINT
+  publishers:
+  - at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:554
+  keys:
+  - key: bundle_generation
+    value_type: uint/int-as-string
+  - key: causal_planning_cycle_id
+    value_type: uint/int-as-string
+  - key: command_present
+    value_type: bool-as-string
+  - key: goal_epoch
+    value_type: uint/int-as-string
+  - key: mission_id
+    value_type: uint/int-as-string
+  - key: request_id
+    value_type: uint/int-as-string
+  - key: role
+    value_type: string
+  - key: sample_id
+    value_type: uint/int-as-string
+  - key: setpoint_boundary
+    value_type: string
+  - key: setpoint_update_duration_ns
+    value_type: uint/int-as-string
+  - key: state_input_present
+    value_type: bool-as-string
+  - key: state_localization_epoch
+    value_type: uint/int-as-string
+  - key: state_sequence
+    value_type: uint/int-as-string
+  - key: velocity_only_cap_mps
+    value_type: float-as-string
+  - key: velocity_only_gain_s_inv
+    value_type: float-as-string
+  - key: velocity_only_limited_count
+    value_type: uint/int-as-string
+  - key: velocity_only_max_acceleration_mps2
+    value_type: float-as-string
+  - key: velocity_only_max_jerk_mps3
+    value_type: float-as-string
+  - key: velocity_only_reason
+    value_type: float-as-string
+  - key: waypoint_index
+    value_type: uint/int-as-string
+  - key: world_generation
+    value_type: uint/int-as-string
+  - key: world_observation_stamp_ns
+    value_type: uint/int-as-string
+  - key: world_revision
+    value_type: uint/int-as-string
+  - key: yaw_ned
+    value_type: string
+  - key: yaw_rate_ned
+    value_type: string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:783
+    use: judge
+    keys_read: static key reads in consumer
+  - node: analyze_h10.py
+    at: tools/runtime/analyze_h10.py:130
+    use: judge
+    keys_read: static key reads in consumer
+  - node: world_observation_gate
+    at: tools/runtime/world_observation_gate.py:235
+    use: judge
+    keys_read: static key reads in consumer
+  - node: external_mode_scenario.py
+    at: tools/runtime/external_mode_scenario.py:783
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: navigation_mapping/world_model
+  publishers:
+  - at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1522
+  keys:
+  - key: command_revalidation_fast_path_count
+    value_type: bool-as-string
+  - key: command_revalidation_full_count
+    value_type: bool-as-string
+  - key: last_update_attempt_stamp_ns
+    value_type: uint/int-as-string
+  - key: mapping_allocated_voxel_count
+    value_type: uint/int-as-string
+  - key: mapping_base_planning_state_change_count
+    value_type: uint/int-as-string
+  - key: mapping_base_pose_x_mm
+    value_type: string
+  - key: mapping_base_pose_y_mm
+    value_type: string
+  - key: mapping_base_pose_z_mm
+    value_type: string
+  - key: mapping_dirty_aabb_voxel_count
+    value_type: uint/int-as-string
+  - key: mapping_dirty_chunk_count
+    value_type: uint/int-as-string
+  - key: mapping_discarded_missing_sensor_origin
+    value_type: uint/int-as-string
+  - key: mapping_discarded_sensor_origin_contract
+    value_type: uint/int-as-string
+  - key: mapping_free_space_endpoint_count
+    value_type: uint/int-as-string
+  - key: mapping_free_space_processed_count
+    value_type: uint/int-as-string
+  - key: mapping_free_space_skipped_count
+    value_type: uint/int-as-string
+  - key: mapping_inflated_planning_state_change_count
+    value_type: uint/int-as-string
+  - key: mapping_inflated_planning_state_change_count_valid
+    value_type: bool-as-string
+  - key: mapping_input_point_count
+    value_type: uint/int-as-string
+  - key: mapping_outcome_above_ceiling_count
+    value_type: uint/int-as-string
+  - key: mapping_outcome_accumulated_count
+    value_type: uint/int-as-string
+  - key: mapping_outcome_below_ground_count
+    value_type: uint/int-as-string
+  - key: mapping_outcome_callback_owned_count
+    value_type: uint/int-as-string
+  - key: mapping_outcome_empty_cloud_count
+    value_type: uint/int-as-string
+  - key: mapping_outcome_slide_only_count
+    value_type: uint/int-as-string
+  - key: mapping_outcome_updated_count
+    value_type: uint/int-as-string
+  - key: mapping_sensor_origin_x_mm
+    value_type: uint/int-as-string
+  - key: mapping_sensor_origin_y_mm
+    value_type: uint/int-as-string
+  - key: mapping_sensor_origin_z_mm
+    value_type: uint/int-as-string
+  - key: mapping_update_outcome
+    value_type: string
+  - key: observation_accounting_valid
+    value_type: bool-as-string
+  - key: observation_accounting_violation_count
+    value_type: uint/int-as-string
+  - key: observation_stamp_ns
+    value_type: uint/int-as-string
+  - key: world_generation
+    value_type: uint/int-as-string
+  - key: world_revision
+    value_type: uint/int-as-string
+  - key: world_snapshot_bytes
+    value_type: string
+  - key: world_snapshot_copied_bytes
+    value_type: string
+  - key: world_snapshot_deferred_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_export_base_cells
+    value_type: string
+  - key: world_snapshot_export_inflated_cells
+    value_type: string
+  - key: world_snapshot_export_mode
+    value_type: string
+  - key: world_snapshot_freshness_rejection_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_full_bytes
+    value_type: string
+  - key: world_snapshot_full_export_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_full_export_reason
+    value_type: string
+  - key: world_snapshot_full_reason_empty_patch_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_full_reason_invalid_region_count
+    value_type: bool-as-string
+  - key: world_snapshot_full_reason_no_current_count
+    value_type: bool-as-string
+  - key: world_snapshot_full_reason_patch_depth_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_full_reason_patch_too_large_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_full_reason_whole_world_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_live_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_live_owned_bytes
+    value_type: string
+  - key: world_snapshot_owned_bytes
+    value_type: string
+  - key: world_snapshot_patch_depth
+    value_type: float-as-string
+  - key: world_snapshot_patch_export_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_peak_live_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_peak_live_owned_bytes
+    value_type: string
+  - key: world_snapshot_published
+    value_type: string
+  - key: world_snapshot_published_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_reused_bytes
+    value_type: string
+  - key: world_snapshot_shared_metadata_bytes
+    value_type: string
+  - key: world_transaction_events_produced
+    value_type: uint/int-as-string
+  - key: world_transaction_runtime_instance_id
+    value_type: uint/int-as-string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:755
+    use: judge
+    keys_read: static key reads in consumer
+  - node: runner.py
+    at: tools/runtime/runner.py:2161
+    use: judge
+    keys_read: static key reads in consumer
+  - node: external_mode_scenario.py
+    at: tools/runtime/external_mode_scenario.py:755
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: navigation_runtime/exact_optimization_failure_injection
+  publishers:
+  - at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:6042
+  keys:
+  - key: planning_cycle_id
+    value_type: uint/int-as-string
+  - key: solve_generation
+    value_type: uint/int-as-string
+  - key: desired_revision
+    value_type: uint/int-as-string
+  - key: desired_request
+    value_type: uint/int-as-string
+  - key: active_request
+    value_type: uint/int-as-string
+  - key: active_generation
+    value_type: uint/int-as-string
+  - key: active_lineage
+    value_type: uint/int-as-string
+  - key: authority_version
+    value_type: uint/int-as-string
+  - key: current_authority_version
+    value_type: uint/int-as-string
+  - key: pending_at_solve
+    value_type: bool-as-string
+  - key: pending_current
+    value_type: bool-as-string
+  - key: desired_current
+    value_type: bool-as-string
+  - key: snapshot_current
+    value_type: bool-as-string
+  - key: authority_identity_current
+    value_type: bool-as-string
+  - key: exposure_allowed
+    value_type: bool-as-string
+  - key: state_fresh
+    value_type: bool-as-string
+  - key: world_fresh
+    value_type: bool-as-string
+  - key: key_valid
+    value_type: bool-as-string
+  - key: transition_kind
+    value_type: int-as-string
+  - key: active_bundle_valid
+    value_type: bool-as-string
+  - key: active_interval_valid
+    value_type: bool-as-string
+  - key: eligible
+    value_type: bool-as-string
+  - key: localization_epoch
+    value_type: uint/int-as-string
+  - key: world_generation
+    value_type: uint/int-as-string
+  - key: world_revision
+    value_type: uint/int-as-string
+  - key: original_planner_status
+    value_type: int-as-string
+  - key: injected_planner_status
+    value_type: int-as-string
+  - key: ros_stamp_ns
+    value_type: uint/int-as-string
+  - key: steady_stamp_ns
+    value_type: uint/int-as-string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:981
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: navigation_runtime/execution_activation_witness
+  publishers:
+  - at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:8710
+  keys:
+  - key: activation_stamp_ns
+    value_type: uint/int-as-string
+  - key: bundle_generation
+    value_type: uint/int-as-string
+  - key: bundle_owner_cycle_id
+    value_type: uint/int-as-string
+  - key: bundle_source
+    value_type: string
+  - key: goal_epoch
+    value_type: uint/int-as-string
+  - key: localization_epoch
+    value_type: uint/int-as-string
+  - key: pending_snapshot_version
+    value_type: bool-as-string
+  - key: request_id
+    value_type: uint/int-as-string
+  - key: world_generation
+    value_type: uint/int-as-string
+  - key: world_revision
+    value_type: uint/int-as-string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:960
+    use: judge
+    keys_read: static key reads in consumer
+  - node: external_mode_scenario.py
+    at: tools/runtime/external_mode_scenario.py:960
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: navigation_runtime/execution_pending_superseded_witness
+  publishers:
+  - at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2393
+  - at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:3371
+  keys:
+  - key: admission_goal_epoch
+    value_type: uint/int-as-string
+  - key: bundle_generation
+    value_type: uint/int-as-string
+  - key: bundle_owner_cycle_id
+    value_type: uint/int-as-string
+  - key: bundle_source
+    value_type: string
+  - key: current_snapshot_version
+    value_type: bool-as-string
+  - key: goal_epoch
+    value_type: uint/int-as-string
+  - key: localization_epoch
+    value_type: uint/int-as-string
+  - key: previous_snapshot_version
+    value_type: uint/int-as-string
+  - key: replacement_bundle_generation
+    value_type: uint/int-as-string
+  - key: request_id
+    value_type: uint/int-as-string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:914
+    use: judge
+    keys_read: static key reads in consumer
+  - node: external_mode_scenario.py
+    at: tools/runtime/external_mode_scenario.py:914
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: navigation_runtime/heading_rebind_admission_witness
+  publishers:
+  - at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:3920
+  keys:
+  - key: activation_stamp_ns
+    value_type: uint/int-as-string
+  - key: bundle_generation
+    value_type: uint/int-as-string
+  - key: bundle_source
+    value_type: string
+  - key: goal_epoch
+    value_type: uint/int-as-string
+  - key: localization_epoch
+    value_type: uint/int-as-string
+  - key: parent_bundle_generation
+    value_type: uint/int-as-string
+  - key: request_id
+    value_type: uint/int-as-string
+  - key: world_generation
+    value_type: uint/int-as-string
+  - key: world_revision
+    value_type: uint/int-as-string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:896
+    use: judge
+    keys_read: static key reads in consumer
+  - node: external_mode_scenario.py
+    at: tools/runtime/external_mode_scenario.py:896
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: navigation_runtime/planner
+  publishers:
+  - at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:4099
+  - at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:6638
+  keys:
+  - key: command_execution_lease_failed
+    value_type: bool-as-string
+  - key: command_execution_lease_reason
+    value_type: string
+  - key: command_execution_lease_rejection_count
+    value_type: uint/int-as-string
+  - key: command_execution_lease_terminal_latch_count
+    value_type: uint/int-as-string
+  - key: command_execution_receive_age_us
+    value_type: float-as-string
+  - key: command_execution_source_age_us
+    value_type: float-as-string
+  - key: command_publication_deadline_miss_count
+    value_type: uint/int-as-string
+  - key: cycle_count
+    value_type: uint/int-as-string
+  - key: execution_acceleration_estimated
+    value_type: float-as-string
+  - key: execution_episode_command_available
+    value_type: bool-as-string
+  - key: execution_episode_failure_latched
+    value_type: string
+  - key: execution_episode_generation
+    value_type: uint/int-as-string
+  - key: execution_episode_goal_epoch
+    value_type: uint/int-as-string
+  - key: execution_episode_phase
+    value_type: string
+  - key: execution_jerk_estimated
+    value_type: float-as-string
+  - key: execution_recovery_state
+    value_type: string
+  - key: execution_timeline_invariant_violation_count
+    value_type: uint/int-as-string
+  - key: future_execution_state_count
+    value_type: uint/int-as-string
+  - key: future_mapping_input_count
+    value_type: uint/int-as-string
+  - key: invalid_corrected_pose_count
+    value_type: bool-as-string
+  - key: invalid_execution_state_count
+    value_type: bool-as-string
+  - key: localization_epoch
+    value_type: uint/int-as-string
+  - key: localization_epoch_ready
+    value_type: uint/int-as-string
+  - key: mapping_allocated_voxel_count
+    value_type: uint/int-as-string
+  - key: mapping_free_space_endpoint_count
+    value_type: uint/int-as-string
+  - key: mapping_free_space_processed_count
+    value_type: uint/int-as-string
+  - key: mapping_free_space_skipped_count
+    value_type: uint/int-as-string
+  - key: mapping_input_point_count
+    value_type: uint/int-as-string
+  - key: optimizer_deferred_count
+    value_type: uint/int-as-string
+  - key: optimizer_renewal_due_count
+    value_type: uint/int-as-string
+  - key: planning_backend_entry_steady_ns
+    value_type: uint/int-as-string
+  - key: planning_backend_exit_steady_ns
+    value_type: uint/int-as-string
+  - key: planning_callback_start_steady_ns
+    value_type: uint/int-as-string
+  - key: planning_failure_reason
+    value_type: string
+  - key: planning_failure_stage
+    value_type: float-as-string
+  - key: planning_key_success_count
+    value_type: uint/int-as-string
+  - key: planning_key_unavailable_count
+    value_type: bool-as-string
+  - key: planning_outcome
+    value_type: string
+  - key: planning_submit_count
+    value_type: uint/int-as-string
+  - key: planning_timer_expected_steady_ns
+    value_type: uint/int-as-string
+  - key: planning_worker_accepted
+    value_type: bool-as-string
+  - key: planning_worker_cancelled
+    value_type: string
+  - key: planning_worker_completed
+    value_type: string
+  - key: planning_worker_enqueue_time_steady_ns
+    value_type: uint/int-as-string
+  - key: planning_worker_exact_duplicates
+    value_type: string
+  - key: planning_worker_last_submit_disposition
+    value_type: float-as-string
+  - key: planning_worker_rejected_invalid
+    value_type: bool-as-string
+  - key: planning_worker_rejected_lower_priority
+    value_type: bool-as-string
+  - key: planning_worker_rejected_stopped
+    value_type: bool-as-string
+  - key: planning_worker_replaced_pending
+    value_type: bool-as-string
+  - key: planning_worker_start_steady_ns
+    value_type: uint/int-as-string
+  - key: planning_worker_started
+    value_type: string
+  - key: planning_worker_submitted
+    value_type: string
+  - key: processing_exception_count
+    value_type: uint/int-as-string
+  - key: registered_scan_epoch
+    value_type: uint/int-as-string
+  - key: registered_scan_sequence
+    value_type: uint/int-as-string
+  - key: route_active_waypoint_index
+    value_type: bool-as-string
+  - key: route_revision
+    value_type: uint/int-as-string
+  - key: route_snapshot_valid
+    value_type: bool-as-string
+  - key: same_identity_renewal_eligible_ordinal
+    value_type: uint/int-as-string
+  - key: same_identity_renewal_injection_fired
+    value_type: uint/int-as-string
+  - key: same_identity_renewal_target_ordinal
+    value_type: uint/int-as-string
+  - key: solve_stage_name
+    value_type: float-as-string
+  - key: stale_execution_state_count
+    value_type: uint/int-as-string
+  - key: stale_input_count
+    value_type: uint/int-as-string
+  - key: stale_mapping_input_count
+    value_type: uint/int-as-string
+  - key: trajectory_publish_count
+    value_type: uint/int-as-string
+  - key: worker_discarded_future_count
+    value_type: uint/int-as-string
+  - key: worker_discarded_invalid_count
+    value_type: bool-as-string
+  - key: worker_discarded_stale_count
+    value_type: uint/int-as-string
+  - key: world_freshness_command_recovery_count
+    value_type: uint/int-as-string
+  - key: world_freshness_command_suspend_count
+    value_type: uint/int-as-string
+  - key: world_freshness_suspended_bundle_generation
+    value_type: uint/int-as-string
+  - key: world_generation
+    value_type: uint/int-as-string
+  - key: world_revision
+    value_type: uint/int-as-string
+  - key: world_snapshot_bytes
+    value_type: string
+  - key: world_snapshot_deferred_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_export_base_cells
+    value_type: string
+  - key: world_snapshot_export_inflated_cells
+    value_type: string
+  - key: world_snapshot_export_mode
+    value_type: string
+  - key: world_snapshot_freshness_rejection_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_full_export_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_full_export_reason
+    value_type: string
+  - key: world_snapshot_full_reason_empty_patch_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_full_reason_invalid_region_count
+    value_type: bool-as-string
+  - key: world_snapshot_full_reason_no_current_count
+    value_type: bool-as-string
+  - key: world_snapshot_full_reason_patch_depth_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_full_reason_patch_too_large_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_full_reason_whole_world_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_live_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_live_owned_bytes
+    value_type: string
+  - key: world_snapshot_owned_bytes
+    value_type: string
+  - key: world_snapshot_patch_depth
+    value_type: float-as-string
+  - key: world_snapshot_patch_export_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_peak_live_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_peak_live_owned_bytes
+    value_type: string
+  - key: world_snapshot_published
+    value_type: string
+  - key: world_snapshot_published_count
+    value_type: uint/int-as-string
+  - key: world_snapshot_shared_metadata_bytes
+    value_type: string
+  - key: world_transaction_events_produced
+    value_type: uint/int-as-string
+  - key: world_transaction_runtime_instance_id
+    value_type: uint/int-as-string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:981
+    use: judge
+    keys_read: static key reads in consumer
+  - node: world_observation_gate
+    at: tools/runtime/world_observation_gate.py:236
+    use: judge
+    keys_read: name-only
+  - node: analyze_e5_temporal_alignment.py
+    at: tools/runtime/analyze_e5_temporal_alignment.py:111
+    use: judge
+    keys_read: static key reads in consumer
+  - node: evaluation.py
+    at: tools/runtime/evaluation.py:1775
+    use: judge
+    keys_read: static key reads in consumer
+  - node: external_mode_scenario.py
+    at: tools/runtime/external_mode_scenario.py:981
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: navigation_runtime/planner_path
+  publishers:
+  - at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:7453
+  keys:
+  - key: planner_path_snapshot_json
+    value_type: string
+  parsers:
+  - node: html_report.py
+    at: tools/runtime/html_report.py:480
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: navigation_runtime/recovery_retry_witness
+  publishers:
+  - at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:6262
+  keys:
+  - key: active_generation
+    value_type: bool-as-string
+  - key: after_failed
+    value_type: bool-as-string
+  - key: goal_epoch
+    value_type: uint/int-as-string
+  - key: identity_current
+    value_type: bool-as-string
+  - key: localization_epoch
+    value_type: uint/int-as-string
+  - key: planning_cycle_id
+    value_type: uint/int-as-string
+  - key: request_id
+    value_type: uint/int-as-string
+  - key: terminal_hold_pending
+    value_type: bool-as-string
+  - key: timeout
+    value_type: float-as-string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:936
+    use: judge
+    keys_read: static key reads in consumer
+  - node: external_mode_scenario.py
+    at: tools/runtime/external_mode_scenario.py:936
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: navigation_runtime/retained_command_decision
+  publishers:
+  - at: src/runtime/navigation_runtime/include/navigation_runtime/retained_decision_observation.hpp:98
+  keys:
+  - key: after_bundle_generation
+    value_type: uint/int-as-string
+  - key: after_command_available
+    value_type: bool-as-string
+  - key: after_episode_generation
+    value_type: uint/int-as-string
+  - key: after_failure_latched
+    value_type: string
+  - key: after_timeline_version
+    value_type: uint/int-as-string
+  - key: aligned_error_m
+    value_type: float-as-string
+  - key: anchor_valid
+    value_type: bool-as-string
+  - key: backup_available
+    value_type: bool-as-string
+  - key: body_known_free
+    value_type: string
+  - key: callback_request_current
+    value_type: bool-as-string
+  - key: captured_bundle_generation
+    value_type: uint/int-as-string
+  - key: captured_end_ros_ns
+    value_type: uint/int-as-string
+  - key: captured_timeline_version
+    value_type: uint/int-as-string
+  - key: captured_valid_until_ros_ns
+    value_type: bool-as-string
+  - key: captured_world_generation
+    value_type: uint/int-as-string
+  - key: captured_world_localization_epoch
+    value_type: uint/int-as-string
+  - key: captured_world_observation_ns
+    value_type: uint/int-as-string
+  - key: captured_world_revision
+    value_type: uint/int-as-string
+  - key: committed_suffix_usable
+    value_type: bool-as-string
+  - key: delivery_evaluated
+    value_type: string
+  - key: desired_goal_epoch
+    value_type: uint/int-as-string
+  - key: desired_request_id
+    value_type: uint/int-as-string
+  - key: disposition
+    value_type: float-as-string
+  - key: duration_s
+    value_type: float-as-string
+  - key: elapsed_s
+    value_type: string
+  - key: emergency_admission_attempted
+    value_type: string
+  - key: emergency_authorization_reason
+    value_type: string
+  - key: emergency_identity_delivered
+    value_type: uint/int-as-string
+  - key: emergency_preparation_attempted
+    value_type: float-as-string
+  - key: emergency_prepared
+    value_type: string
+  - key: emergency_store_admitted
+    value_type: string
+  - key: evaluated_bundle_generation
+    value_type: uint/int-as-string
+  - key: evaluation_ros_ns
+    value_type: uint/int-as-string
+  - key: event_sequence
+    value_type: uint/int-as-string
+  - key: expected_bundle_generation
+    value_type: uint/int-as-string
+  - key: expected_end_ros_ns
+    value_type: uint/int-as-string
+  - key: expected_valid_until_ros_ns
+    value_type: bool-as-string
+  - key: expected_world_generation
+    value_type: uint/int-as-string
+  - key: expected_world_localization_epoch
+    value_type: uint/int-as-string
+  - key: expected_world_observation_ns
+    value_type: uint/int-as-string
+  - key: expected_world_revision
+    value_type: uint/int-as-string
+  - key: failed_before_event
+    value_type: bool-as-string
+  - key: final_anchor_valid
+    value_type: bool-as-string
+  - key: final_body_known_free
+    value_type: string
+  - key: final_bridge_usable
+    value_type: bool-as-string
+  - key: final_experimental_support_valid
+    value_type: bool-as-string
+  - key: final_freshness_reason
+    value_type: string
+  - key: final_path_status
+    value_type: string
+  - key: final_phase_status
+    value_type: string
+  - key: final_predicted_error_m
+    value_type: float-as-string
+  - key: final_receive_age_ms
+    value_type: float-as-string
+  - key: final_source_age_ms
+    value_type: float-as-string
+  - key: final_source_error_m
+    value_type: float-as-string
+  - key: final_state_receive_steady_ns
+    value_type: uint/int-as-string
+  - key: final_state_source_ros_ns
+    value_type: uint/int-as-string
+  - key: final_witness_age_bounded
+    value_type: float-as-string
+  - key: freshness_reason
+    value_type: string
+  - key: freshness_ros_ns
+    value_type: uint/int-as-string
+  - key: freshness_steady_ns
+    value_type: uint/int-as-string
+  - key: goal_epoch
+    value_type: uint/int-as-string
+  - key: initial_bridge_usable
+    value_type: bool-as-string
+  - key: localization_epoch
+    value_type: uint/int-as-string
+  - key: lock_recheck_ros_ns
+    value_type: uint/int-as-string
+  - key: lock_recheck_steady_ns
+    value_type: uint/int-as-string
+  - key: measured_vx_mps
+    value_type: float-as-string
+  - key: measured_vy_mps
+    value_type: float-as-string
+  - key: measured_vz_mps
+    value_type: float-as-string
+  - key: measured_x_m
+    value_type: string
+  - key: measured_y_m
+    value_type: string
+  - key: measured_z_m
+    value_type: string
+  - key: monitor_window_current
+    value_type: bool-as-string
+  - key: owner_snapshot_current
+    value_type: bool-as-string
+  - key: pinned_world_generation
+    value_type: uint/int-as-string
+  - key: pinned_world_localization_epoch
+    value_type: uint/int-as-string
+  - key: pinned_world_observation_ns
+    value_type: uint/int-as-string
+  - key: pinned_world_revision
+    value_type: uint/int-as-string
+  - key: planning_cycle_id
+    value_type: uint/int-as-string
+  - key: previous_emit_duration_us
+    value_type: float-as-string
+  - key: projected_certificate_exceeded
+    value_type: string
+  - key: projected_error_m
+    value_type: float-as-string
+  - key: published_before_event
+    value_type: string
+  - key: purpose
+    value_type: string
+  - key: raw_error_m
+    value_type: float-as-string
+  - key: receive_age_ms
+    value_type: float-as-string
+  - key: request_id
+    value_type: uint/int-as-string
+  - key: schema_version
+    value_type: uint/int-as-string
+  - key: solve_generation
+    value_type: uint/int-as-string
+  - key: source_age_ms
+    value_type: float-as-string
+  - key: source_sample_valid
+    value_type: bool-as-string
+  - key: start_ros_ns
+    value_type: uint/int-as-string
+  - key: state_fresh
+    value_type: string
+  - key: state_ingress_sequence
+    value_type: uint/int-as-string
+  - key: state_receive_steady_ns
+    value_type: uint/int-as-string
+  - key: state_source_ros_ns
+    value_type: uint/int-as-string
+  - key: suppressed_before_event
+    value_type: string
+  - key: tracking_certificate_exceeded
+    value_type: string
+  - key: tracking_limit_m
+    value_type: string
+  - key: validated_world_generation
+    value_type: bool-as-string
+  - key: validated_world_localization_epoch
+    value_type: bool-as-string
+  - key: validated_world_observation_ns
+    value_type: bool-as-string
+  - key: validated_world_revision
+    value_type: bool-as-string
+  - key: world_blocked_role
+    value_type: string
+  - key: world_blocked_time_s
+    value_type: float-as-string
+  - key: world_blocked_x_m
+    value_type: string
+  - key: world_blocked_y_m
+    value_type: string
+  - key: world_blocked_z_m
+    value_type: string
+  - key: world_cell_observed
+    value_type: bool-as-string
+  - key: world_cell_state
+    value_type: string
+  - key: world_curve_bound_m
+    value_type: string
+  - key: world_curve_tolerance_m
+    value_type: string
+  - key: world_failure_code
+    value_type: string
+  - key: world_reused_unchanged_certificate
+    value_type: string
+  - key: world_sample_count
+    value_type: uint/int-as-string
+  - key: world_tube_failure_code
+    value_type: string
+  - key: world_unknown_policy
+    value_type: string
+  - key: world_unsafe_interval_end_s
+    value_type: uint/int-as-string
+  - key: world_validation_attempted
+    value_type: bool-as-string
+  - key: world_validation_valid
+    value_type: bool-as-string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:827
+    use: judge
+    keys_read: static key reads in consumer
+  - node: external_mode_scenario.py
+    at: tools/runtime/external_mode_scenario.py:827
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: navigation_runtime/world_transaction_witness
+  publishers:
+  - at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:3501
+  keys:
+  - key: active_validation_path
+    value_type: bool-as-string
+  - key: disposition
+    value_type: float-as-string
+  - key: event_kind
+    value_type: string
+  - key: event_ros_stamp_ns
+    value_type: uint/int-as-string
+  - key: event_steady_stamp_ns
+    value_type: uint/int-as-string
+  - key: execution_localization_epoch
+    value_type: uint/int-as-string
+  - key: pending_validation_path
+    value_type: bool-as-string
+  - key: producer_event_sequence
+    value_type: uint/int-as-string
+  - key: runtime_instance_id
+    value_type: uint/int-as-string
+  - key: temporal_assessment_reason
+    value_type: string
+  - key: transaction_key
+    value_type: uint/int-as-string
+  parsers:
+  - node: external_mode_scenario
+    at: tools/runtime/external_mode_scenario.py:737
+    use: judge
+    keys_read: static key reads in consumer
+  - node: external_mode_scenario.py
+    at: tools/runtime/external_mode_scenario.py:737
+    use: judge
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.
+- name: px4_odometry_bridge
+  publishers:
+  - at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:460
+  keys:
+  - key: bridge_node_now_ns
+    value_type: uint/int-as-string
+  - key: bridge_use_sim_time
+    value_type: uint/int-as-string
+  - key: buffer_size
+    value_type: string
+  - key: continuity_valid
+    value_type: bool-as-string
+  - key: conversion_rejected_count
+    value_type: bool-as-string
+  - key: diagnostic_schema_version
+    value_type: uint/int-as-string
+  - key: frame_generation
+    value_type: uint/int-as-string
+  - key: last_valid_sample_time_ns
+    value_type: bool-as-string
+  - key: output_child_frame
+    value_type: string
+  - key: output_frame
+    value_type: string
+  - key: output_topic
+    value_type: string
+  - key: output_valid
+    value_type: bool-as-string
+  - key: post_reset_stable
+    value_type: string
+  - key: post_reset_stable_sample_count
+    value_type: uint/int-as-string
+  - key: post_reset_stable_samples_required
+    value_type: bool-as-string
+  - key: px4_ros_output_stamp_ns
+    value_type: uint/int-as-string
+  - key: px4_timestamp_sample_ns
+    value_type: uint/int-as-string
+  - key: reset_event_generation
+    value_type: uint/int-as-string
+  - key: reset_generation
+    value_type: uint/int-as-string
+  - key: reset_observation_status
+    value_type: string
+  - key: reset_suppressed_count
+    value_type: uint/int-as-string
+  - key: source
+    value_type: string
+  - key: startup_origin_rebased
+    value_type: string
+  - key: startup_rebaseline_count
+    value_type: uint/int-as-string
+  - key: startup_rebaseline_generation
+    value_type: uint/int-as-string
+  - key: state
+    value_type: string
+  - key: time_generation
+    value_type: uint/int-as-string
+  - key: timestamp_rejected_count
+    value_type: bool-as-string
+  - key: timesync_estimated_offset_us
+    value_type: float-as-string
+  - key: timesync_observed_offset_us
+    value_type: bool-as-string
+  - key: timesync_remote_timestamp_us
+    value_type: uint/int-as-string
+  - key: timesync_round_trip_time_us
+    value_type: float-as-string
+  - key: timesync_source_protocol
+    value_type: float-as-string
+  - key: timesync_status_received
+    value_type: float-as-string
+  - key: timesync_status_received_at_ns
+    value_type: uint/int-as-string
+  - key: world_convention
+    value_type: string
+  parsers:
+  - node: monitor.py
+    at: tools/runtime/monitor.py:535
+    use: observability
+    keys_read: static key reads in consumer
+  use: judge
+  notes: DiagnosticStatus/KeyValue is string-encoded on the wire; value_type is the
+    producer intent inferred from the C++ conversion helper.

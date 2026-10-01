@@ -1,0 +1,772 @@
+area,file,loc,depth,questions,notes
+R1,src/planning/navigation_planning_backend/include/planner_core/planner.hpp,755,FULL,Q1;Q3;Q5;Q7;Q9;Q12,"Planner class state: ~80 mutable members, 5 mutexes, staged/retained candidate slots, generation reservation; many diagnostics read by const accessors without locks."
+R1,src/planning/navigation_planning_backend/include/planner_core/absolute_deadline.hpp,120,FULL,Q7;Q9;Q10;Q12,Dual sim/steady deadline; overload hazard R1-04.
+R1,src/planning/navigation_planning_backend/include/planner_core/command_time.hpp,135,FULL,Q10;Q12,ns/double trajectory-time conversion; hot-replan window ULP tolerance correct; evaluator role issue lives in planner.cpp (R1-01).
+R1,src/planning/navigation_planning_backend/include/planner_core/trajectory_world_validator.hpp,851,FULL,Q4;Q6;Q10;Q11;Q12,"Verified: dt=clamp(0.5*res/max(0.1,|v|),2ms,50ms) with chord-halving; curve deviation A*dt^2/8 bound correct; shifted-binomial acceleration bound correct for col0=highest-order coeff layout; tube enumeration capped at 4096 cells; exact float role partition (R1-06); dead policy helper (R1-05)."
+R1,src/planning/navigation_planning_backend/src/planner_core/planner.cpp,6212,FULL,Q1;Q3;Q4;Q5;Q6;Q7;Q8;Q9;Q10;Q11;Q12,"Read fully in 15 chunks. Pipeline: plan() -> setRouteSnapshot/setWorldModelView/setState -> planInitialFromStoppedStateImpl | planSuccessorFromExecutionAnchorImpl | (dead) emergency -> generateExpTraj (splice check, guide, A*, corner window, SFC, speed governor, MINCO, yaw, flatness) -> generateBackupTrajectory (visibility, backward switch search, braking seed, CIRI, KNOWN_FREE sweep, optional L-BFGS) -> buildCandidate -> authorizeAndStage (yaw certs, route regression, latest-world sweep, commitIfCurrentOrUnaffected) -> exportStagedCommandCandidate (closures). Findings R1-01..R1-23."
+R1,src/planning/navigation_planning_backend/include/planner_core/backup_braking.hpp,729,FULL,Q6;Q10;Q12,"Verified numerically (out/R1/check_backup_braking.py): stop polynomial terminal V/A/J=0 (residual 3e-12), steady-cruise extrema v, 15v/(8T), 10v/(sqrt3 T^2) exact; C3 smoothstep coefficients (-20,70,-84,35) correct; power->Bernstein conversion correct; jerk-limited stop time/distance formulas correct."
+R1,src/planning/navigation_planning_backend/include/planner_core/route_regression_certificate.hpp,277,FULL,Q6;Q10;Q12,Progress extrema via roots of tangent.v(tau) plus interval ends: correct. First leg not covered (R1-24); std::set allocation per piece/role on admission path (minor).
+R1,src/planning/navigation_planning_backend/src/planner_core/corridor_generator.cpp,629,FULL,Q4;Q6;Q8;Q10;Q11;Q12,"Seed-line greedy extension with continuous oracle, overlap depth check (min_overlap_threshold, 0.01 hard), route-boundary gate cell = CIRI point cell n inner cube r/sqrt3 of acceptance ball (correct containment). Query box == boundary box (R1-27); UNKNOWN not in CIRI (R1-28); stdout logging (R1-29). max_loop 1000."
+R1,src/planning/navigation_planning_backend/src/planner_core/ciri.cpp,456,FULL,Q10;Q11;Q12,"FIRI-style decomposition: greedy nearest boundary/point in ellipsoid frame, tangent planes at robot_r, MVIE iterations; infeasible if point within robot_r-0.01 of seed. findEllipsoid: C matrix computed then unused (dead), robot_r added to major axis then undone by ratio scaling. Per-plane O(N) rescans; bounded by deadline checks."
+R1,src/planning/navigation_planning_backend/src/planner_core/astar.cpp,1212,FULL,Q4;Q6;Q8;Q10;Q11;Q12,"26-connected weighted A* (weight 1..5, DIAG/MANH/EUCL in cell units, cost sqrt(dx2+dy2+dz2) cells, horizon compared as horizon/res cells -> units consistent); lazy-deletion open set with float-equality stale check; steady-clock deadline per iteration; virtual start shell <=3 cells; direct-segment fast path; escape search (Dijkstra). Findings R1-30..R1-33."
+R1,src/planning/navigation_planning_backend/include/planner_core/route_yaw_reference.hpp,67,FULL,Q7;Q10;Q12,Config fields unused (R1-35).
+R1,src/planning/navigation_planning_backend/src/planner_core/route_yaw_reference.cpp,219,FULL,Q6;Q10;Q12,"Leg-bearing yaw via atan2 of xy direction (ENU, yaw from +x CCW); unwrapNear not nearest to unwrapped anchor (R1-34); projectedProgressArc divides by length_m (NaN skipped by isfinite); stepBoundedHeading trapezoidal integration with accel-limited braking correct."
+R1,src/planning/navigation_planning_backend/include/planner_core/config.hpp,477,FULL,Q7;Q9;Q12,"YAML loader + derived safety envelope: robot_r = sum of budgets, visibility horizon = jerk-limited stop + 2*v*replan_dt + robot_r (validated <= cap), deadline ordering A* attempt<=total<solve<=replan_forward_dt, backup >= exp limits, sample_traj_dt = evidence_res / effective cruise. Defaults: yaw_rate 1.5 (A6), vehicle_radius 0.35 (R-08). Findings R1-36, R1-37."
+R1,src/planning/navigation_planning_backend/include/planner_core/corridor_generator.h,154,FULL,Q3;Q12,Atomic stage/point counters for watchdog; getLatestCloud() mutating getter (clears diagnostics); unused failed_traj_log ofstream; stage mapping conflict R1-38.
+R1,src/planning/navigation_planning_backend/include/planner_core/ciri.h,150,INTERFACE,Q1;Q12,"Vendored FIRI interface (MIT, Zhepei Wang); distancePointToSegment fails closed on non-finite; unused failed_log/debug_en."
+R1,src/planning/navigation_planning_backend/include/planner_core/planner_result.hpp,79,FULL,Q5;Q12,PlannerResultCode enum (3..-14) + string table; mapped to PlanningFailureStage by classifyPlannerFailure (outside R1).
+R1,src/planning/navigation_planning_backend/include/planner_core/planning_stage.hpp,49,FULL,Q5;Q9,Stage name table conflicts with generator stage codes (R1-38).
+R1,src/planning/navigation_planning_backend/include/planner_core/replan_contract.hpp,118,FULL,Q5;Q6;Q9,Result->outcome mapping; CANDIDATE_REJECTED collapse (R1-40).
+R1,src/planning/navigation_planning_backend/include/planner_core/hot_replan_recovery.hpp,94,FULL,Q6;Q10,"Splice envelope: pos allowance = budget + a h^2/2, vel allowance = a h: dimensionally correct; recovery classifier 3 states."
+R1,src/planning/navigation_planning_backend/include/planner_core/guide_endpoint.hpp,31,FULL,Q10,Inclusive snap of guide end to goal within tolerance.
+R1,src/planning/navigation_planning_backend/include/planner_core/altitude_route_projection.hpp,54,FULL,Q10;Q12,"Climb-then-constant-altitude projection, every edge certified by caller; harmless static_cast<float> on double Vec3f."
+R1,src/planning/navigation_planning_backend/include/planner_core/boundary_velocity_recovery.hpp,91,FULL,Q10;Q12,Overspeed recovery: suffix after 1.15 x jerk-limited stop time of the excess speed must be under cap; magic 1.15 margin. Not called from planner.cpp (used by traj_opt).
+R1,src/planning/navigation_planning_backend/include/planner_core/kinematic_state_boundary.hpp,144,FULL,Q7;Q10,Verified degree-7 C3 connector boundary matrix and descending-power coefficient mapping; estimated a/j zeroed for command boundary (cf. R1-14).
+R1,src/planning/navigation_planning_backend/include/planner_core/route_backbone.hpp,133,FULL,Q7;Q10,"Local A* target along active leg: projected arc + sqrt((2*horizon)^2 - lateral^2), clamped to active boundary; outgoing goal for shallow pass-through when anchor already inside ball. First leg (index 0) not supported (same gap as R1-24)."
+R1,src/planning/navigation_planning_backend/include/planner_core/guide_vertical_envelope.hpp,201,FULL,Q10;Q12,"Per-cell z-bounds = seed z range +- 1 inflated voxel, guide-wide fallback at seams, re-verifies full-dimensional overlap via vertex enumeration (sound)."
+R1,src/planning/navigation_planning_backend/include/planner_core/evidence_speed_governor.hpp,244,FULL,Q10;Q12,"Verified closed-form speed caps from stop-polynomial extrema: floor S/(2dt), sqrt(16AS/15), cbrt(2*sqrt3*J*S^2/5) are exact inversions of T=max(4dt,15v/8A,sqrt(10v/(sqrt3 J))) with support vT/2. State input mismatch with command boundary: R1-14."
+R1,src/planning/navigation_planning_backend/include/planner_core/route_boundary_timing.hpp,423,FULL,Q10;Q12,"5 ms probe + 32-step bisection first-visit (sampling, documented as non-proof); ceil-to-ns canonical entry keeps inside sample; switch window +-2 ns; guide timestamp spreading keeps strict monotonicity. No defect found."
+R1,src/planning/navigation_planning_backend/include/planner_core/pass_through_terminal_velocity.hpp,527,FULL,Q10;Q12,Verified: jerk-limited max dv (jT^2/4 | aT - a^2/j) and its inverse; centripetal cap sqrt(r a); terminal cap 2L/T - v_in; route window inside acceptance ball (0.75 r). Duplicate corner literal R1-42.
+R1,src/planning/navigation_planning_backend/include/planner_core/fov_checker.h,208,FULL,Q10;Q12,OMNI FOV only (CONE throws); planes in body frame rotated toward guide; interior check on wrong polytope (R1-41).
+R1,src/planning/navigation_planning_backend/include/planner_core/corridor_plane_validation.hpp,111,FULL,Q10,Continuous half-space violation via derivative roots of n.p(t) (descending coefficient derivative correct) + endpoints.
+R1,src/planning/navigation_planning_backend/include/planner_core/optimized_nominal_candidate.hpp,151,FULL,Q9;Q10,"Corridor (unnormalised, R1-43), route-gate junction, V/A/J with overspeed recovery, flatness."
+R1,src/planning/navigation_planning_backend/include/planner_core/deterministic_nominal_seed.hpp,314,FULL,Q9;Q10,"Seed certificate with normalised planes, roundoff-bounded boundary/junction PVAJ residuals, strict V/A/J; retry scales s>=max(v/V, sqrt(a/A), cbrt(j/J)) correct time-scaling law."
+R1,src/planning/navigation_planning_backend/include/planner_core/corridor_bezier_seed.hpp,564,SKIM,Q1;Q10,"Used only by traj_opt nominal optimizer (R2 scope): degree-7 Hermite seed, Bernstein control-point containment, duration-compatibility root intervals. Structure skimmed via symbol index; no deep math verification."
+R1,src/planning/navigation_planning_backend/include/planner_core/log_utils.hpp,275,SKIM,Q1;Q11,LogOneReplan diagnostic record (viz/serialisation); copied by value in getLatestReplanLog; not on command path.
+R1,src/planning/navigation_planning_backend/src/planner_core/nominal_problem_snapshot_writer.cpp,163,FULL,Q3;Q11;Q12,"Bounded (capacity 4) background writer thread, drops on full queue, retains WorldModelViewPtr per job; writeStats does file I/O on worker after each job and synchronously in ctor/dtor. Env-gated, diagnostic only."
+R1,src/planning/navigation_planning_backend/src/planner_core/nominal_problem_snapshot_writer.hpp,58,FULL,Q3,"Writer interface; atomics for counters, mutex+cv queue."
+R2,src/planning/navigation_planning_backend/CMakeLists.txt,224,FULL,Q1;Q2;Q9;Q12,Static lib; planner_core sources compiled here; tests read runtime planner.yaml from source tree (R-04 family); FAST fixture made by regex-replacing backup_allow_unknown; install(DIRECTORY include/) exports all private headers.
+R2,src/planning/navigation_planning_backend/package.xml,26,FULL,Q1;Q2,"Deps: world_model, mission, planning, rog_map_vendor; test dep navigation_mapping."
+R2,src/planning/navigation_planning_backend/include/navigation_planning_backend/planner.hpp,22,FULL,Q1;Q2,Re-export shim of planner_core headers + RET_CODE aliases.
+R2,src/planning/navigation_planning_backend/include/navigation_planning_backend/route_yaw_reference.hpp,6,FULL,Q1;Q2,Public shim to planner_core/route_yaw_reference.hpp.
+R2,src/planning/navigation_planning_backend/include/utils/header/backward.hpp,5,FULL,Q12,No-op stub.
+R2,src/planning/navigation_planning_backend/include/utils/header/color_msg_utils.hpp,154,SKIM,Q12,ROS1/ROS2 ColorRGBA helper; viz only.
+R2,src/planning/navigation_planning_backend/include/utils/header/color_text.hpp,3,FULL,Q2,Forward to navigation_math.
+R2,src/planning/navigation_planning_backend/include/utils/header/eigen_alias.hpp,3,FULL,Q2,Forward to navigation_math.
+R2,src/planning/navigation_planning_backend/include/utils/header/fmt_eigen.hpp,3,FULL,Q2,Forward to navigation_math.
+R2,src/planning/navigation_planning_backend/include/utils/header/scope_timer.hpp,3,FULL,Q2,Forward to navigation_math.
+R2,src/planning/navigation_planning_backend/include/utils/header/type_utils.hpp,5,FULL,Q2;Q12,Forward + pulls <iostream> and ROS std_msgs Color into every math header (piece.h includes it).
+R2,src/planning/navigation_planning_backend/include/utils/header/yaml_loader.hpp,3,FULL,Q2,Forward to navigation_math.
+R2,src/planning/navigation_planning_backend/include/data_structure/base/piece.h,119,FULL,Q1;Q10;Q12,Coefficient layout col(0)=t^D ... col(D)=const; serialize().
+R2,src/planning/navigation_planning_backend/src/utils/piece.cpp,382,FULL,Q6;Q10;Q11;Q12,Verified pos/vel/acc/jerk/snap Horner-like eval and normalized coefficient scaling (T^k); max-rate via root of d|v|^2/ds; check*Rate via Sturm countRoots on |Tv|^2-vmax^2T^2. Correct.
+R2,src/planning/navigation_planning_backend/include/data_structure/base/trajectory.h,168,FULL,Q1;Q10;Q12,Piece vector + start_WT (wall time double s).
+R2,src/planning/navigation_planning_backend/src/utils/trajectory.cpp,536,FULL,Q6;Q10;Q11;Q12,"Verified Taylor re-expansion matrices (deg 5,7) in getPartialTrajectoryByTime; boundary conventions in locatePieceIdx/locateSliceStart/End; clamp beyond end."
+R2,src/planning/navigation_planning_backend/include/utils/optimization/minco.h,167,FULL,Q1;Q12,"DEAD: duplicate MINCO_S2/S3/S4 declarations in namespace optimization_utils; never included, no definitions."
+R2,src/planning/navigation_planning_backend/include/traj_opt/minco.h,195,FULL,Q1;Q10,Live MINCO declarations (traj_opt). Only MINCO_S4NU used (nominal + backup).
+R2,src/planning/navigation_planning_backend/src/utils/minco.cpp,906,FULL,Q10;Q11;Q12,"S4NU verified: constraint rows (snap/crackle/6th continuity, waypoint, P/V/A/J continuity), snap-energy integral coefficients, dE/dT, dE/dc, adjoint time gradient B1/B2 rows. S2/S3 (~480 LOC) unused. No N>=1 guard in setParameters."
+R2,src/planning/navigation_planning_backend/include/utils/optimization/banded_system.h,89,FULL,Q10,Pivot-free banded LU; copy deleted.
+R2,src/planning/navigation_planning_backend/src/utils/banded_system.cpp,111,FULL,Q10;Q12,No pivot magnitude check; zero pivot -> inf/NaN caught only by callers' allFinite (costFunctional mask 8).
+R2,src/planning/navigation_planning_backend/include/traj_opt/nominal_trajectory_optimizer.hpp,771,FULL,Q1;Q5;Q7;Q9;Q12,"ExpTrajOpt state, diagnostics/snapshot structs, NominalSolveStatus, revocation helper, public baseline_only_ member."
+R2,src/planning/navigation_planning_backend/src/traj_opt/nominal_trajectory_optimizer.cpp,3923,FULL,Q3;Q4;Q5;Q6;Q8;Q10;Q11;Q12,"FULL for 743-3923 (checkpoint, monitor, constraintsFunctional, costFunctional, corridor processing, setup, optimize retry ladder, public entry points). JSON snapshot writer 45-740 SKIM (diagnostic only)."
+R2,src/planning/navigation_planning_backend/include/traj_opt/trajectory_dynamics.hpp,168,FULL,Q6;Q7;Q9;Q10,"Sampled flatness screen (body rate/thrust) at uniform period + exact junctions; bounded sample count; yaw optional (nullptr -> yaw=0, dpsi=0)."
+R2,src/planning/navigation_planning_backend/include/utils/geometry/quadrotor_flatness.hpp,322,SKIM,Q7;Q10,"Upstream GCOPTER flatness forward verified (thrust in N: z.(m a + dv w + m g); omg(2) adds dpsi; singular when z2->-1 guarded only by final isfinite). backward() INTERFACE (auto-diff style, not re-derived). No tilt output/limit."
+R2,src/planning/navigation_planning_backend/include/traj_opt/config.hpp,283,FULL,Q7;Q9;Q12,"Config loader+validate; flatness params loaded with non-physical defaults (grav 1.0, mass 1.0) and only a printf on missing key."
+R2,src/planning/navigation_planning_backend/include/traj_opt/backup_trajectory_optimizer.hpp,200,FULL,Q1;Q5;Q12,"BackupTrajOpt state; split time ts optimized in [t_0,t_e] via sin map."
+R2,src/planning/navigation_planning_backend/src/traj_opt/backup_trajectory_optimizer.cpp,933,FULL,Q4;Q6;Q10;Q11;Q12,"Verified costFunctional gradients (uniform-time dT_i/dT=1/N, ts gradient via head-state adjoint), ts interval map, post-solve gates. Refinement is DISABLED in product (planner.yaml backup_refinement_enabled: false)."
+R2,src/planning/navigation_planning_backend/include/utils/optimization/lbfgs.h,349,SKIM,Q10;Q12,"Parameter defaults: max_iterations=0 (unbounded), max_linesearch=64."
+R2,src/planning/navigation_planning_backend/src/utils/lbfgs.cpp,445,FULL,Q6;Q10;Q12,"Lewis-Overton line search; on ls<0 x restored to xp but callback side-effect state reflects last trial; on success last evaluation == returned x. Termination only by delta/past, iteration cap, or monitor callback."
+R2,src/planning/navigation_planning_backend/include/utils/optimization/optimization_utils.h,101,SKIM,Q1,Gcopter<EIGENVEC> helper declarations.
+R2,src/planning/navigation_planning_backend/src/utils/optimization_utils.cpp,326,FULL,Q10;Q12,"Verified tau<->T diffeomorphism + gradient, smoothedL1, sin/asin interval map, forwardP/backwardP (tiny NLS return code ignored), norm restriction layer."
+R2,src/planning/navigation_planning_backend/include/utils/geometry/polynomial_state_roundoff.hpp,87,FULL,Q10,gamma_n forward-error bound per derivative; terminal-rest check within roundoff. Correct.
+R2,src/planning/navigation_planning_backend/include/utils/geometry/geometry_utils.h,766,FULL,Q10;Q12,"Time allocators (PM allocator defective, see R2-17; jerk-limited continuation profile verified), path subdivision/truncation helpers; ellipse/FOV helpers INTERFACE."
+R2,src/planning/navigation_planning_backend/src/utils/geometry_utils.cpp,1024,SKIM,Q10;Q12,"Checked findInterior/findInteriorDist (normalized LP), transitionRepresentable, overlap (unnormalized), enumerateVs (dual quickhull), filterVs, normalizeNextYaw (remainder), quaternion_to_ypr (asin unclamped -> pitch NaN at gimbal lock; yaw via atan2 unaffected), angle_add assert. Ellipsoid distance/FOV helpers not reviewed."
+R2,src/planning/navigation_planning_backend/include/utils/optimization/root_finder.h,240,INTERFACE,Q10,Vendored (Z. Wang). countRoots returns -1 on invalid -> callers ==0 test fails closed.
+R2,src/planning/navigation_planning_backend/src/utils/root_finder.cpp,864,INTERFACE,Q10,countRoots zero-tolerance/leading-coefficient trimming reviewed; Sturm internals not re-derived.
+R2,src/planning/navigation_planning_backend/include/traj_opt/yaw_traj_opt.h,66,FULL,Q1;Q6,Yaw planner API + diagnostics.
+R2,src/planning/navigation_planning_backend/src/traj_opt/yaw_traj_opt.cpp,117,FULL,Q6;Q10,Single quintic over full position duration; full turn -> hold -> free-terminal stop -> bisection on scale. Stopping displacement 0.5 v0 T + a0 T^2/12 verified numerically (OUT/R2/yaw_stop_check.py).
+R2,src/planning/navigation_planning_backend/include/data_structure/exp_traj.h,168,FULL,Q9;Q12,"Three copies of time origin (start_WT_, pos_traj_.start_WT, yaw_traj_.start_WT); setEmpty keeps stale trajectories/backup interval."
+R2,src/planning/navigation_planning_backend/include/data_structure/backup_traj.h,140,FULL,Q9;Q12,robot_p_ uninitialized; setSFC forces SetKnownFree(true) (flag has no safety consumer).
+R2,src/planning/navigation_planning_backend/include/data_structure/cmd_traj.h,683,FULL,Q3;Q5;Q6;Q9;Q11;Q12,Planner ACK/history store behind one mutex; candidate role partition; monotonic ns start check; trajectoryFinite 101-sample validation run twice per commit.
+R2,src/planning/navigation_planning_backend/include/navigation_planning_backend/planner_facade.hpp,132,FULL,Q1;Q2;Q7;Q12,"Pimpl facade; public setters (R-06), plan()/legacy plan* entry points, committed snapshot/validation, getters."
+R2,src/planning/navigation_planning_backend/src/planner_facade.cpp,571,FULL,Q4;Q6;Q9;Q12,Pure delegation + type conversion; validateCommittedTrajectory unchanged-region reuse (epoch-checked in world model); evaluator closures copy trajectories (shared_ptr).
+R2,src/planning/navigation_planning_backend/include/planner_runtime_context/planner_runtime_context.hpp,92,FULL,Q3;Q9;Q11;Q12,Logging via fmt::print(stdout) with fmt::runtime format strings (scan OUT/R2/fmt_check.py found no placeholder/arg mismatch in traj_opt/facade/planner_core); getSimTime falls back to steady_clock when no clock supplied; viz no-ops.
+R2,src/planning/navigation_planning_backend/include/path_search/astar.h,212,FULL,Q11;Q12,"Header only (impl in planner_core/astar.cpp, R1). Node pool is unordered_map<size_t,unique_ptr<GridNode>> cleared every setup()."
+R2,src/planning/navigation_planning_backend/include/path_search/config.hpp,47,FULL,Q7,A* config with validation.
+R2,src/planning/navigation_planning_backend/include/data_structure/base/polytope.h,239,FULL,Q6;Q10;Q12,Polytope + inline SimplifySFC (terminal-suffix trim with route gates; greedy shortcut otherwise).
+R2,src/planning/navigation_planning_backend/src/utils/polytope.cpp,221,SKIM,Q10;Q12,PointIsInside default margin 0.01 m; plane validation; known-free flag getter non-const.
+R2,src/planning/navigation_planning_backend/include/data_structure/base/ellipsoid.h,117,INTERFACE,Q1,"CIRI ellipsoid container (used by planner_core/ciri, R1)."
+R2,src/planning/navigation_planning_backend/src/utils/ellipsoid.cpp,272,INTERFACE,Q1,Ellipsoid geometry helpers; not re-derived.
+R2,src/planning/navigation_planning_backend/include/utils/geometry/quickhull.h,611,INTERFACE,Q1,"Vendored QuickHull; used via enumerateVs (dual hull) with eps=min(1e-6, defaultEps)."
+R2,src/planning/navigation_planning_backend/src/utils/quickhull.cpp,1025,INTERFACE,Q1,Vendored.
+R2,src/planning/navigation_planning_backend/include/utils/optimization/sdlp.h,186,INTERFACE,Q1;Q10,"Vendored Seidel LP; linprog returns +inf infeasible / -inf unbounded, callers (findInterior, overlap, findInteriorDist) handle both."
+R2,src/planning/navigation_planning_backend/src/utils/sdlp.cpp,578,INTERFACE,Q1,Vendored.
+R2,src/planning/navigation_planning_backend/include/utils/optimization/sdqp.hpp,373,INTERFACE,Q1,Vendored small QP (used by CIRI/MVIE).
+R2,src/planning/navigation_planning_backend/include/utils/optimization/mvie.h,38,INTERFACE,Q1,"MVIE declaration (CIRI, R1)."
+R2,src/planning/navigation_planning_backend/src/utils/mvie.cpp,245,INTERFACE,Q1,Vendored MVIE via L-BFGS; not re-derived.
+R2,src/planning/navigation_planning_backend/include/utils/optimization/polynomial_interpolation.h,344,SKIM,Q10,"minimumJerkInterpolation<dim> verified (quintic continuity rows, 3-row padding, coefficient reversal to Piece layout). Other interpolators not reviewed."
+R2,src/planning/navigation_planning_backend/src/utils/polynomial_interpolation.cpp,27,FULL,Q1,Explicit instantiations only.
+R2,src/planning/navigation_planning_backend/test/replay_nominal_problem_snapshot.cpp,1931,SKIM,Q1,Diagnostic-only offline replay executable (not a CTest); re-runs frozen NominalProblemSnapshot through production setup + certificates.
+R2,src/planning/navigation_planning_backend/test/test_corridor_bezier_seed.cpp,560,SKIM,Q1,"14 tests: corridor-contained Bezier seed construction, junction velocity damping, duration retry/compatibility intervals."
+R2,src/planning/navigation_planning_backend/test/test_exp_optimizer_seed.cpp,1370,SKIM,Q1,"31 tests: seed/warm-start dimension checks, hard certificate stages, deadline/cancellation/incumbent checkpoint semantics, high-speed corridor solves, route-gate junction ball."
+R2,src/planning/navigation_planning_backend/test/test_planner_config.cpp,2161,SKIM,Q1;Q7,"105 tests: config validation, route sphere visits, guide timing transitions, recovery envelopes, free-duration round trip."
+R2,src/planning/navigation_planning_backend/test/test_planner_facade.cpp,3352,SKIM,Q1,"44 tests: facade lifecycle, world revalidation, backup enumeration/cancel, SAFE/FAST product fixtures (reads runtime planner.yaml from source tree), pass-through/route boundary events."
+R2,src/planning/navigation_planning_backend/test/test_planner_runtime_context.cpp,76,FULL,Q1,"4 tests: runtime clock sampling, A* node/open-set defaults."
+R2,src/planning/navigation_planning_backend/test/test_route_backbone.cpp,134,SKIM,Q1,7 tests: route backbone target selection.
+R2,src/planning/navigation_planning_backend/test/test_route_yaw_reference.cpp,333,SKIM,Q1,16 tests: route yaw reference and bounded heading step.
+R2,src/planning/navigation_planning_backend/test/test_simplify_sfc_contract.cpp,129,FULL,Q1,4 tests on SimplifySFC consumer contract; no test with non-representable adjacent cells (R2-24).
+R2,src/planning/navigation_planning_backend/test/test_trajectory.cpp,4314,SKIM,Q1;Q10,"155 tests: slicing/boundary semantics, rate certificates, CmdTraj ACK/commit, sweep validation, yaw, SimplifySFC gates, allocators (only v0=0 long-path and Case-1 short path), malformed-input rejection."
+R3,src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9910,FULL,Q1;Q2;Q3;Q4;Q5;Q6;Q7;Q8;Q9;Q10;Q11;Q12,"Read end-to-end: ctor+mapping lambda 663-1799, ingress 1976-2161, goal/status/mission 2163-2863, admission 2865-3453, scheduling 3577-4008, runCycle 4010-7548, validateRetainedCommand 7564-8587, publishCommand 8590-9908"
+R3,src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp,643,FULL,Q1;Q3;Q7;Q9;Q12,member/lock inventory; plain non-atomic diagnostic fields shared across threads (R3-06)
+R3,src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,1000,FULL,Q5;Q6;Q10;Q12,"pure predicates; projected anchor horizon (R3-10); braking distance deliberately over-approximates jerk term (v*a/j vs exact v*a/2j) - documented, not a defect"
+R3,src/runtime/navigation_runtime/include/navigation_runtime/runtime_boundaries.hpp,311,FULL,Q6;Q10;Q12,"ratePeriod truncation, advanceMonotonicId, solve activity scope"
+R3,src/runtime/navigation_runtime/include/navigation_runtime/desired_planning_intent.hpp,126,FULL,Q5;Q9;Q12,"revision atomic, goal/transition guarded by caller input_mutex_; transition enum kNone/kNewIntent/kHotRetarget"
+R3,src/runtime/navigation_runtime/include/navigation_runtime/planning_worker.hpp,354,FULL,Q3;Q8;Q9;Q12,single worker thread; cancel under worker mutex -> planner solve_commit_mutex (R3-16); ownership claim vs raw alias (R3-17)
+R3,src/runtime/navigation_runtime/include/navigation_runtime/heading_rebind_worker.hpp,124,FULL,Q3;Q12,latest-only worker; swallows exceptions (R3-19)
+R3,src/runtime/navigation_runtime/src/navigation_runtime_main.cpp,11,FULL,Q3,MultiThreadedExecutor with 2 threads
+R3,src/runtime/navigation_runtime/src/mapping_fail_stop.cpp,23,FULL,Q6;Q12,abort() on mapping failure (fail-stop by design)
+R3,src/runtime/navigation_runtime/include/navigation_runtime/mapping_fail_stop.hpp,9,FULL,Q1,declaration only
+R3,src/runtime/navigation_runtime/include/navigation_runtime/localization_epoch_reset.hpp,30,FULL,Q3;Q8,unlocks localization lock during drain; ingress lock stays held (R3-07)
+R3,src/runtime/navigation_runtime/include/navigation_runtime/planning_key.hpp,10,FULL,Q1,alias only
+R3,src/runtime/navigation_runtime/include/navigation_runtime/execution_lifecycle_view.hpp,9,FULL,Q1,alias only
+R3,src/runtime/navigation_runtime/include/navigation_runtime/execution_recovery_state.hpp,11,FULL,Q1;Q5,alias to navigation_execution recovery FSM
+R3,src/runtime/navigation_runtime/include/navigation_runtime/commit_trace.hpp,28,FULL,Q10,__int128 age diff: correct overflow handling
+R3,src/runtime/navigation_runtime/include/navigation_runtime/mapping_observation_contract.hpp,30,FULL,Q10,"quaternion norm check only (not unit) - intentional, normalized downstream"
+R3,src/runtime/navigation_runtime/include/navigation_runtime/path_relative_tracking.hpp,286,FULL,Q10;Q11;Q12,"closest-point search bounded (~140 analytic evals); prediction horizon = state age + interval (correct, contrasts R3-10); raw error mixes now/source time but outer cap adds only phase_window*v"
+R3,src/runtime/navigation_runtime/include/navigation_runtime/kinematic_derivative_estimator.hpp,94,FULL,Q7;Q10;Q12,finite differences at odom rate (noise amplified; flags consumed by planner); hard-coded gap (R3-20)
+R3,src/runtime/navigation_runtime/include/navigation_runtime/world_temporal_assessment.hpp,75,FULL,Q7;Q10,ROS-time source age only; no receive-age leg (asymmetric with execution state)
+R3,src/runtime/navigation_runtime/include/navigation_runtime/trajectory_completion.hpp,53,FULL,Q5;Q12,identity witness value type
+R3,src/runtime/navigation_runtime/include/navigation_runtime/experimental_tracking.hpp,125,FULL,Q10;Q12,SITL experiment only; mixes sample(now) and sampleAtDeclaredStamp(source) APIs (N3 family)
+R3,src/runtime/navigation_runtime/include/navigation_runtime/certified_continuation.hpp,100,FULL,Q6;Q10,"handoff-ready does not require now>=boundary; MissionProgress independently requires physical crossing, so not a defect"
+R3,src/runtime/navigation_runtime/include/navigation_runtime/mission_progress.hpp,120,FULL,Q1;Q5;Q7,single-writer Core mission state; gate/crossing/continuation witnesses
+R3,src/runtime/navigation_runtime/src/mission_progress.cpp,272,FULL,Q5;Q6;Q10;Q11,"secondsToNs uses ceil (4th rounding rule, see R3-08); routeSnapshot rebuilt repeatedly (R3-22); 250 ms crossing gap literal (R3-20)"
+R3,src/runtime/navigation_runtime/src/mission_goal.cpp,68,FULL,Q4;Q12,NavigationGoal builder from MissionProgress
+R3,src/runtime/navigation_runtime/include/navigation_runtime/mission_goal.hpp,16,FULL,Q1,declaration
+R3,src/runtime/navigation_runtime/src/mission_dynamics.cpp,23,FULL,Q12,unused in product (R3-21)
+R3,src/runtime/navigation_runtime/include/navigation_runtime/mission_dynamics.hpp,16,FULL,Q1,declaration
+R3,src/runtime/navigation_runtime/include/navigation_runtime/planning_supervisor.hpp,69,FULL,Q5;Q12,priority enum; 2 values unreachable (R3-23)
+R3,src/runtime/navigation_runtime/include/navigation_runtime/baseline_refinement.hpp,123,FULL,Q5;Q6,"one-shot quality refinement receipt, worker-owned"
+R3,src/runtime/navigation_runtime/include/navigation_runtime/same_identity_renewal_injection.hpp,107,FULL,Q6;Q12,diagnostic fault injection compiled into product path
+R3,src/runtime/navigation_runtime/include/navigation_runtime/execution_trace_snapshot.hpp,180,SKIM,Q4;Q9,mutex store ordered by planning_cycle_id; diagnostic only (fields copied into NavigationCommand/diagnostics)
+R3,src/runtime/navigation_runtime/include/navigation_runtime/retained_decision_observation.hpp,298,SKIM,Q4;Q11,diagnostic KeyValue builder (to_chars/to_string); called after locks released
+R3,src/runtime/navigation_runtime/config/planner.yaml,266,FULL,Q7;Q9,"vehicle_radius 0.35 (R-08), yaw_rate 2.0 (A6); budget conflict R3-24; stale comment R3-25; tracking_error_budget 0.25 => retained tracking limit min(0.25,0.75)"
+R3,src/runtime/navigation_runtime/CMakeLists.txt,227,FULL,Q1;Q12,"copies config/runtime/mapping.yaml as navigation_runtime.yaml; planner.yaml installed separately (two configs, node default loads planner.yaml); -O3 no sanitizer/TSan target"
+R3,src/runtime/navigation_runtime/package.xml,25,FULL,Q1;Q2,"depends on mapping, planning_backend, world_model directly (V1 dup)"
+R3,src/runtime/navigation_runtime/test/execution_authority_lifecycle_fixture.hpp,118,SKIM,Q12,fixture for ExecutionAuthority lifecycle tests
+R3,src/runtime/navigation_runtime/test/test_certified_continuation.cpp,174,SKIM,Q12,12 cases: continuation window + completion witness identity
+R3,src/runtime/navigation_runtime/test/test_desired_execution_boundary.cpp,161,SKIM,Q12,1 case: desired vs execution authority commit boundary with synthetic times (valid_from 1..100 ns)
+R3,src/runtime/navigation_runtime/test/test_desired_planning_intent.cpp,112,SKIM,Q12,5 cases; value semantics only (no concurrency)
+R3,src/runtime/navigation_runtime/test/test_execution_lifecycle.cpp,358,SKIM,Q5;Q12,13 cases over navigation_execution lifecycle transitions
+R3,src/runtime/navigation_runtime/test/test_execution_trace_snapshot.cpp,185,SKIM,Q12,6 cases incl. concurrent readers
+R3,src/runtime/navigation_runtime/test/test_kinematic_derivative_estimator.cpp,63,SKIM,Q10;Q12,3 cases; no noise-amplification or gap-vs-freshness-window test (R3-20)
+R3,src/runtime/navigation_runtime/test/test_localization_epoch_reset.cpp,91,SKIM,Q3;Q12,drain relock semantics; no executor-starvation test (R3-07)
+R3,src/runtime/navigation_runtime/test/test_mapping_fail_stop.cpp,31,SKIM,Q12,death tests
+R3,src/runtime/navigation_runtime/test/test_mission_dynamics.cpp,85,SKIM,Q12,tests the unused loader only (R3-21)
+R3,src/runtime/navigation_runtime/test/test_mission_progress.cpp,540,SKIM,Q5;Q12,14 cases: crossing/continuation/stop confirmation; good coverage
+R3,src/runtime/navigation_runtime/test/test_navigation_runtime_shutdown.cpp,1011,SKIM,Q3;Q12,12 cases incl. real-node epoch-reset drain and shutdown join
+R3,src/runtime/navigation_runtime/test/test_navigation_runtime_terminal_monitor.cpp,2165,SKIM,Q6;Q12,"62 cases via test peer calling runCycle/validateRetainedCommand/commitPlannerCandidate/publishCommand; states built with receive=now and source~now, so aged-lease math (R3-02/09/10/11) and tick drops (R3-15) are not exercised"
+R3,src/runtime/navigation_runtime/test/test_path_relative_tracking.cpp,406,SKIM,Q10;Q12,14 cases incl. figure-eight ambiguity; tracking experiment
+R3,src/runtime/navigation_runtime/test/test_planner_fsm.cpp,1940,SKIM,Q5;Q10;Q12,87 predicate cases; projected bound tested only for interval horizon (no state-age case)
+R3,src/runtime/navigation_runtime/test/test_planning_worker.cpp,523,SKIM,Q3;Q12,12 cases with fake planner; heading worker test does not model shared staged-candidate slot (R3-01)
+R3,src/runtime/navigation_runtime/test/test_retained_decision_observation.cpp,153,SKIM,Q12,6 cases diagnostics
+R3,src/runtime/navigation_runtime/test/test_same_identity_renewal_injection.cpp,415,SKIM,Q12,18 cases incl. world revocation delivery fixture
+R3,src/runtime/navigation_runtime/test/test_world_snapshot_store.cpp,430,SKIM,Q9;Q12,12 cases incl. concurrent publish/authorize/sample
+R3,src/runtime/navigation_runtime/test/test_world_temporal_assessment.cpp,53,SKIM,Q10;Q12,4 boundary cases
+R4,src/estimation/fast_lio_core/include/fast_lio_core/time/clock_domain.hpp,31,FULL,Q1;Q2;Q7;Q9;Q10;Q12,int64 ns with checked overflow arithmetic and clock-domain tagging; no defects
+R4,src/estimation/fast_lio_core/include/fast_lio_core/time/duration.hpp,31,FULL,Q1;Q2;Q7;Q9;Q10;Q12,int64 ns with checked overflow arithmetic and clock-domain tagging; no defects
+R4,src/estimation/fast_lio_core/include/fast_lio_core/time/timestamp.hpp,40,FULL,Q1;Q2;Q7;Q9;Q10;Q12,int64 ns with checked overflow arithmetic and clock-domain tagging; no defects
+R4,src/estimation/fast_lio_core/include/fast_lio_core/time/timestamp_validator.hpp,36,FULL,Q1;Q2;Q7;Q9;Q10;Q12,int64 ns with checked overflow arithmetic and clock-domain tagging; no defects
+R4,src/estimation/fast_lio_core/src/time/duration.cpp,32,FULL,Q1;Q2;Q7;Q9;Q10;Q12,int64 ns with checked overflow arithmetic and clock-domain tagging; no defects
+R4,src/estimation/fast_lio_core/src/time/timestamp.cpp,59,FULL,Q1;Q2;Q7;Q9;Q10;Q12,int64 ns with checked overflow arithmetic and clock-domain tagging; no defects
+R4,src/estimation/fast_lio_core/src/time/timestamp_validator.cpp,59,FULL,Q1;Q2;Q7;Q9;Q10;Q12,int64 ns with checked overflow arithmetic and clock-domain tagging; no defects
+R4,src/estimation/fast_lio_core/include/fast_lio_core/common/constants.hpp,10,FULL,Q1;Q12,Result<T> throws on value() of error / ok-status construction
+R4,src/estimation/fast_lio_core/include/fast_lio_core/common/result.hpp,69,FULL,Q1;Q12,Result<T> throws on value() of error / ok-status construction
+R4,src/estimation/fast_lio_core/include/fast_lio_core/common/status.hpp,44,FULL,Q1;Q12,Result<T> throws on value() of error / ok-status construction
+R4,src/estimation/fast_lio_core/include/fast_lio_core/common/types.hpp,10,FULL,Q1;Q12,Result<T> throws on value() of error / ok-status construction
+R4,src/estimation/fast_lio_core/include/fast_lio_core/sensor/imu_sample.hpp,18,FULL,Q1;Q7;Q10;Q12,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/sensor/lidar_point.hpp,18,FULL,Q1;Q7;Q10;Q12,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/sensor/lidar_scan.hpp,21,FULL,Q1;Q7;Q10;Q12,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/sensor/measurement_group.hpp,27,FULL,Q1;Q7;Q10;Q12,
+R4,src/estimation/fast_lio_core/src/sensor/imu_sample.cpp,15,FULL,Q1;Q7;Q10;Q12,
+R4,src/estimation/fast_lio_core/src/sensor/lidar_scan.cpp,61,FULL,Q1;Q7;Q10;Q12,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/synchronization/measurement_buffer.hpp,61,FULL,Q1;Q3;Q7;Q11,
+R4,src/estimation/fast_lio_core/src/synchronization/measurement_buffer.cpp,163,FULL,Q3;Q4;Q6;Q8;Q11;Q12,R4-01 (reproduced)
+R4,src/estimation/fast_lio_core/include/fast_lio_core/synchronization/measurement_synchronizer.hpp,89,FULL,Q1;Q5;Q7,
+R4,src/estimation/fast_lio_core/src/synchronization/measurement_synchronizer.cpp,187,FULL,Q4;Q6;Q9;Q10;Q12,"R4-02 (reproduced), R4-01"
+R4,src/estimation/fast_lio_core/include/fast_lio_core/pipeline/fast_lio_pipeline.hpp,153,FULL,Q1;Q2;Q3;Q5,
+R4,src/estimation/fast_lio_core/src/pipeline/fast_lio_pipeline.cpp,1665,FULL,Q1;Q3;Q4;Q5;Q6;Q7;Q8;Q9;Q10;Q11;Q12,"R4-03, R4-04; mega-function processInternal ~540 lines"
+R4,src/estimation/fast_lio_core/include/fast_lio_core/pipeline/process_result.hpp,47,FULL,Q4;Q7,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/configuration/estimator_config.hpp,58,FULL,Q7;Q9,MeasurementBufferConfig not loaded from params (defaults 8192/32)
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/fast_lio_node.hpp,118,FULL,Q1;Q3,
+R4,src/estimation/fast_lio_ros/src/fast_lio_node.cpp,862,FULL,Q1;Q3;Q4;Q6;Q7;Q8;Q9;Q11;Q12,"R4-04, R4-05; single worker thread owns pipeline; no pipeline reset path"
+R4,src/estimation/fast_lio_core/include/fast_lio_core/estimation/ikfom_estimator.hpp,108,FULL,Q1;Q4;Q6;Q10;Q12,
+R4,src/estimation/fast_lio_core/src/estimation/ikfom_estimator.cpp,536,FULL,Q1;Q4;Q6;Q10;Q12,predict/correct transactional restore; extrinsic frozen by overwrite; R4-10
+R4,src/estimation/fast_lio_core/include/fast_lio_core/estimation/ikfom_state.hpp,45,FULL,Q1;Q4;Q6;Q10;Q12,IKFoM 23-DoF manifold ordering
+R4,src/estimation/fast_lio_core/src/estimation/ikfom_state.cpp,52,FULL,Q1;Q4;Q6;Q10;Q12,process model + Jacobians match upstream FAST-LIO get_f/df_dx/df_dw
+R4,src/estimation/fast_lio_core/include/fast_lio_core/estimation/manifold_state.hpp,64,FULL,Q1;Q4;Q6;Q10;Q12,
+R4,src/estimation/fast_lio_core/src/estimation/manifold_state.cpp,105,FULL,Q1;Q4;Q6;Q10;Q12,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/estimation/state_estimate.hpp,18,FULL,Q1;Q4;Q6;Q10;Q12,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/initialization/imu_initializer.hpp,43,FULL,Q1;Q5;Q6;Q7;Q10,
+R4,src/estimation/fast_lio_core/src/initialization/imu_initializer.cpp,162,FULL,Q1;Q5;Q6;Q7;Q10,gravity via FromTwoVectors; accel-norm error goes into accel bias
+R4,src/estimation/fast_lio_core/include/fast_lio_core/initialization/initialization_result.hpp,27,FULL,Q1;Q5;Q6;Q7;Q10,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/initialization/initial_state_prior.hpp,60,FULL,Q1;Q5;Q6;Q7;Q10,
+R4,src/estimation/fast_lio_core/src/initialization/initial_state_prior.cpp,59,FULL,Q1;Q5;Q6;Q7;Q10,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/initialization/initial_state_prior_applicator.hpp,24,FULL,Q1;Q5;Q6;Q7;Q10,
+R4,src/estimation/fast_lio_core/src/initialization/initial_state_prior_applicator.cpp,107,FULL,Q1;Q5;Q6;Q7;Q10,lever-arm and yaw math verified
+R4,src/estimation/fast_lio_core/include/fast_lio_core/initialization/initial_state_prior_policy.hpp,86,FULL,Q1;Q5;Q6;Q7;Q10,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/geometry/frame.hpp,23,FULL,Q1;Q9;Q10,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/geometry/frame_ids.hpp,12,FULL,Q1;Q9;Q10,R4-11 (frame_ids hardcoded)
+R4,src/estimation/fast_lio_core/include/fast_lio_core/geometry/pose_interpolator.hpp,21,FULL,Q1;Q9;Q10,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/geometry/rigid_transform.hpp,49,FULL,Q1;Q9;Q10,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/geometry/transform_utils.hpp,13,FULL,Q1;Q9;Q10,
+R4,src/estimation/fast_lio_core/src/geometry/pose_interpolator.cpp,58,FULL,Q1;Q9;Q10,
+R4,src/estimation/fast_lio_core/src/geometry/rigid_transform.cpp,105,FULL,Q1;Q9;Q10,
+R4,src/estimation/fast_lio_core/src/geometry/transform_utils.cpp,15,FULL,Q1;Q9;Q10,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/navigation/angular_velocity_resolver.hpp,32,FULL,Q1;Q7;Q9;Q10,
+R4,src/estimation/fast_lio_core/src/navigation/angular_velocity_resolver.cpp,177,FULL,Q1;Q7;Q9;Q10,"bias-corrected, integer-ns interpolation"
+R4,src/estimation/fast_lio_core/include/fast_lio_core/navigation/base_link_covariance_projector.hpp,74,FULL,Q1;Q7;Q9;Q10,
+R4,src/estimation/fast_lio_core/src/navigation/base_link_covariance_projector.cpp,220,FULL,Q1;Q7;Q9;Q10,pose/twist Jacobians verified against right-perturbation SO3
+R4,src/estimation/fast_lio_core/include/fast_lio_core/navigation/base_link_state_converter.hpp,41,FULL,Q1;Q7;Q9;Q10,
+R4,src/estimation/fast_lio_core/src/navigation/base_link_state_converter.cpp,118,FULL,Q1;Q7;Q9;Q10,lever-arm velocity verified
+R4,src/estimation/fast_lio_core/include/fast_lio_core/navigation/kinematic_state_estimate.hpp,21,FULL,Q1;Q7;Q9;Q10,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/navigation/rigid_body_state.hpp,52,FULL,Q1;Q7;Q9;Q10,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/propagation/imu_state_propagator.hpp,116,FULL,Q1;Q5,
+R4,src/estimation/fast_lio_core/src/propagation/imu_state_propagator.cpp,369,FULL,Q4;Q5;Q6;Q10;Q11,gap threshold = ikfom.maximum_integration_step_ns (not timing.max_imu_gap_s)
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/propagated_odometry_worker.hpp,158,FULL,Q1;Q3;Q5,
+R4,src/estimation/fast_lio_ros/src/propagated_odometry_worker.cpp,639,FULL,Q3;Q4;Q5;Q6;Q8;Q9;Q12,generation/sequence guarded correction handoff; R4-05
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/ros_propagated_odometry_publisher.hpp,49,FULL,Q1,
+R4,src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp,114,FULL,Q4;Q7;Q9,
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/lio_public_frame_generation.hpp,50,FULL,Q1;Q5;Q9,
+R4,src/estimation/fast_lio_ros/src/lio_public_frame_generation.cpp,35,FULL,Q5;Q12,"epoch only advances on pipeline reset, which the node never calls"
+R4,src/estimation/fast_lio_ros/src/ros_odometry_serializer.cpp,55,FULL,Q9;Q10,R4-11
+R4,src/estimation/fast_lio_ros/src/ros_time_converter.cpp,29,FULL,Q10,
+R4,src/estimation/fast_lio_ros/src/ros_transform_publisher.cpp,79,FULL,Q3;Q9,
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/ros_transform_publisher.hpp,38,FULL,Q1,
+R4,src/estimation/fast_lio_ros/src/qos_profiles.cpp,29,FULL,Q7,R-11 known
+R4,src/estimation/fast_lio_ros/src/ros_static_transform_resolver.cpp,44,FULL,Q7;Q12,blocking retry in constructor
+R4,src/estimation/fast_lio_ros/src/ros_imu_adapter.cpp,40,FULL,Q7;Q10,
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/ros_output_publisher.hpp,141,FULL,Q1;Q3,
+R4,src/estimation/fast_lio_ros/src/ros_output_publisher.cpp,956,FULL,Q3;Q4;Q7;Q8;Q9;Q11;Q12,"R4-06, R4-07"
+R4,src/estimation/fast_lio_ros/src/parameter_loader.cpp,687,FULL,Q7;Q9;Q12,A6 (loader defaults vs yaml) known; R4-11
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/ros_lidar_adapter.hpp,59,FULL,Q1;Q7,
+R4,src/estimation/fast_lio_ros/src/ros_lidar_adapter.cpp,278,FULL,Q7;Q10;Q11;Q12,simultaneous scan -> start==end==header
+R4,src/estimation/ikfom_vendor/vendor/IKFoM/IKFoM_toolkit/esekfom/esekfom.hpp,2431,INTERFACE,Q10;Q12,"patched compact update (lines 60-150, 1390-1735) reviewed; R4-09, R4-10"
+R4,src/estimation/fast_lio_core/include/fast_lio_core/deskew/deskew_mode.hpp,30,FULL,Q4;Q6;Q10;Q11,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/deskew/deskew_result.hpp,26,FULL,Q4;Q6;Q10;Q11,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/deskew/scan_deskewer.hpp,31,FULL,Q4;Q6;Q10;Q11,
+R4,src/estimation/fast_lio_core/src/deskew/scan_deskewer.cpp,97,FULL,Q4;Q6;Q10;Q11,R4-15
+R4,src/estimation/fast_lio_core/include/fast_lio_core/estimation/imu_trajectory.hpp,47,FULL,Q4;Q6;Q10;Q11,
+R4,src/estimation/fast_lio_core/src/estimation/imu_trajectory.cpp,123,FULL,Q4;Q6;Q10;Q11,slerp + linear position interpolation
+R4,src/estimation/fast_lio_core/include/fast_lio_core/mapping/ikd_tree_registration_map.hpp,79,FULL,Q3;Q5;Q8;Q11;Q12,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/mapping/local_map_manager.hpp,49,FULL,Q3;Q5;Q8;Q11;Q12,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/mapping/map_insertion_policy.hpp,29,FULL,Q3;Q5;Q8;Q11;Q12,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/mapping/registration_map.hpp,48,FULL,Q3;Q5;Q8;Q11;Q12,frameId hardcoded lio_odom
+R4,src/estimation/fast_lio_core/src/mapping/ikd_tree_registration_map.cpp,306,FULL,Q3;Q5;Q8;Q11;Q12,R4-18; size() may return cached count during async rebuild
+R4,src/estimation/fast_lio_core/src/mapping/local_map_manager.cpp,56,FULL,Q3;Q5;Q8;Q11;Q12,R4-16
+R4,src/estimation/fast_lio_core/src/mapping/map_insertion_policy.cpp,18,FULL,Q3;Q5;Q8;Q11;Q12,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/registration/linearized_measurement.hpp,21,FULL,Q4;Q8;Q10;Q11,
+R4,src/estimation/fast_lio_core/src/registration/linearized_measurement.cpp,23,FULL,Q4;Q8;Q10;Q11,
+R4,src/estimation/fast_lio_core/include/fast_lio_core/registration/plane_estimator.hpp,36,FULL,Q4;Q8;Q10;Q11,
+R4,src/estimation/fast_lio_core/src/registration/plane_estimator.cpp,90,FULL,Q4;Q8;Q10;Q11,planarity gate duplicated with ResidualGate.minimum_planarity
+R4,src/estimation/fast_lio_core/include/fast_lio_core/registration/residual_builder.hpp,123,FULL,Q4;Q8;Q10;Q11,
+R4,src/estimation/fast_lio_core/src/registration/residual_builder.cpp,276,FULL,Q4;Q8;Q10;Q11,point-to-plane residual/Jacobian sign verified; OpenMP 3 threads; R4-17
+R4,src/estimation/fast_lio_core/include/fast_lio_core/registration/residual_gate.hpp,41,FULL,Q4;Q8;Q10;Q11,
+R4,src/estimation/fast_lio_core/src/registration/residual_gate.cpp,55,FULL,Q4;Q8;Q10;Q11,Huber weight
+R4,src/estimation/fast_lio_core/include/fast_lio_core/preprocessing/point_cloud_preprocessor.hpp,41,FULL,Q4;Q10;Q11,voxel keeps first point per voxel
+R4,src/estimation/fast_lio_core/include/fast_lio_core/preprocessing/point_filter.hpp,25,FULL,Q4;Q10;Q11,voxel keeps first point per voxel
+R4,src/estimation/fast_lio_core/include/fast_lio_core/preprocessing/voxel_filter.hpp,23,FULL,Q4;Q10;Q11,voxel keeps first point per voxel
+R4,src/estimation/fast_lio_core/src/preprocessing/point_cloud_preprocessor.cpp,29,FULL,Q4;Q10;Q11,voxel keeps first point per voxel
+R4,src/estimation/fast_lio_core/src/preprocessing/point_filter.cpp,34,FULL,Q4;Q10;Q11,voxel keeps first point per voxel
+R4,src/estimation/fast_lio_core/src/preprocessing/voxel_filter.cpp,62,FULL,Q4;Q10;Q11,voxel keeps first point per voxel
+R4,src/estimation/fast_lio_core/include/fast_lio_core/pipeline/estimator_diagnostics.hpp,317,SKIM,Q5;Q7,enum definitions read; diagnostic struct fields skimmed
+R4,src/estimation/fast_lio_core/src/pipeline/estimator_diagnostics.cpp,75,FULL,Q5,R4-21
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/runtime_diagnostics.hpp,373,FULL,Q3;Q8;Q11,R4-19
+R4,src/estimation/fast_lio_ros/src/main.cpp,24,FULL,Q3,R4-20 single-threaded executor
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/ros_livox_custom_adapter.hpp,46,SKIM,Q1,
+R4,src/estimation/fast_lio_ros/src/ros_livox_custom_adapter.cpp,220,FULL,Q7;Q10;Q12,no Livox tag-based noise filtering; overlap trim
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/parameter_loader.hpp,120,SKIM,Q1,declarations only
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/qos_profiles.hpp,22,SKIM,Q1,declarations only
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/ros_imu_adapter.hpp,21,SKIM,Q1,declarations only
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/ros_odometry_serializer.hpp,20,SKIM,Q1,declarations only
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/ros_static_transform_resolver.hpp,30,SKIM,Q1,declarations only
+R4,src/estimation/fast_lio_ros/include/fast_lio_ros/ros_time_converter.hpp,17,SKIM,Q1,declarations only
+R4,src/estimation/fast_lio_core/test/reference/active_ikfom_measurement_update.hpp,41,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/reference/dense_ikfom_measurement_update.hpp,51,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_angular_velocity_resolver.cpp,83,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_base_link_covariance_projector.cpp,316,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_base_link_state_converter.cpp,304,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_duration.cpp,42,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_fast_lio_pipeline.cpp,826,SKIM,Q12,no test for IMU buffer saturation (R4-01) or next-group behavior after pre-tracking prediction failure (R4-12)
+R4,src/estimation/fast_lio_core/test/test_frame_conventions.cpp,82,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_ikfom_compact_equivalence.cpp,258,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_ikfom_estimator.cpp,395,SKIM,Q12,"symmetry tested over predictions, not over repeated updates after inflation (R4-10)"
+R4,src/estimation/fast_lio_core/test/test_ikfom_incremental_propagation.cpp,248,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_ikfom_jacobians.cpp,63,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_imu_initializer.cpp,91,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_imu_state_propagator.cpp,243,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_initial_state_prior.cpp,101,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_initial_state_prior_pipeline.cpp,381,SKIM,Q12,MissingPredictionBracketFailsClosed stops at first failure; prior covariance block semantics (R4-08) untested
+R4,src/estimation/fast_lio_core/test/test_measurement_buffer.cpp,103,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_measurement_synchronizer.cpp,274,SKIM,Q12,no test for IMU gap straddling a scan boundary (R4-02)
+R4,src/estimation/fast_lio_core/test/test_plane_estimator.cpp,51,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_point_filter.cpp,39,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_pose_interpolator.cpp,70,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_registration_map.cpp,164,SKIM,Q12,guard freeze tested; no recovery path exists (R4-16)
+R4,src/estimation/fast_lio_core/test/test_residual_builder.cpp,191,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_rigid_transform.cpp,78,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_core/test/test_scan_deskewer.cpp,127,SKIM,Q12,no performance test (R4-15)
+R4,src/estimation/fast_lio_core/test/test_timestamp.cpp,46,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_ros/test/test_fast_lio_node_fanout.cpp,23,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_ros/test/test_lio_public_frame_generation.cpp,44,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_ros/test/test_parameter_loader.cpp,446,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_ros/test/test_propagated_odometry_worker.cpp,715,SKIM,Q12,well covered generation/sequence; no test for health producer ordering (R4-06)
+R4,src/estimation/fast_lio_ros/test/test_qos_profiles.cpp,36,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_ros/test/test_ros_imu_adapter.cpp,37,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_ros/test/test_ros_lidar_adapter.cpp,319,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_ros/test/test_ros_livox_custom_adapter.cpp,192,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_ros/test/test_ros_odometry_serializer.cpp,54,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_ros/test/test_ros_propagated_odometry_publisher.cpp,45,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_ros/test/test_ros_time_converter.cpp,44,SKIM,Q12,test names/assertions skimmed for coverage
+R4,src/estimation/fast_lio_ros/test/test_runtime_diagnostics.cpp,157,SKIM,Q12,no bound on populate() cost (R4-19)
+R4,src/estimation/fast_lio_core/CMakeLists.txt,106,SKIM,Q2,build wiring; OpenMP required by core
+R4,src/estimation/fast_lio_core/package.xml,14,SKIM,Q2,build wiring; OpenMP required by core
+R4,src/estimation/fast_lio_ros/CMakeLists.txt,92,SKIM,Q2,build wiring; OpenMP required by core
+R4,src/estimation/fast_lio_ros/package.xml,23,SKIM,Q2,build wiring; OpenMP required by core
+R4,src/estimation/fast_lio_tools/CMakeLists.txt,26,SKIM,Q2,build wiring; OpenMP required by core
+R4,src/estimation/fast_lio_tools/package.xml,16,SKIM,Q2,build wiring; OpenMP required by core
+R4,src/estimation/ikd_tree_vendor/CMakeLists.txt,47,SKIM,Q2,build wiring; OpenMP required by core
+R4,src/estimation/ikd_tree_vendor/package.xml,14,SKIM,Q2,build wiring; OpenMP required by core
+R4,src/estimation/ikfom_vendor/CMakeLists.txt,43,SKIM,Q2,build wiring; OpenMP required by core
+R4,src/estimation/ikfom_vendor/package.xml,16,SKIM,Q2,build wiring; OpenMP required by core
+R4,src/estimation/fast_lio_tools/config/evaluation.yaml,4,FULL,Q7,unused-looking eval config (timing_mode auto not accepted by node validate)
+R4,src/estimation/fast_lio_tools/include/fast_lio_tools/evaluation_config.hpp,12,FULL,Q1,
+R4,src/estimation/fast_lio_tools/src/lio_offline.cpp,390,SKIM,Q1;Q4;Q9,"offline replay: bag order, no propagated worker, no superviseLidarTimeout; IMU adapter exceptions abort run"
+R4,src/estimation/ikd_tree_vendor/LICENSES/ikd-Tree-GPL-2.0.txt,339,SKIPPED,,license text
+R4,src/estimation/ikfom_vendor/LICENSES/IKFoM-GPL-2.0.txt,339,SKIPPED,,license text
+R4,src/estimation/ikd_tree_vendor/test/test_ikd_tree_upstream_smoke.cpp,388,SKIM,Q12,vendor smoke
+R4,src/estimation/ikfom_vendor/test/test_ikfom_upstream_smoke.cpp,21,SKIM,Q12,vendor smoke
+R4,src/estimation/ikd_tree_vendor/vendor/ikd-Tree/ikd-Tree/ikd_Tree.cpp,1524,INTERFACE,Q3;Q8,project-patched (PATCHES.md): Nearest_Search_Into + Search pruning fix reviewed; async rebuild thread + trylock validnum
+R4,src/estimation/ikd_tree_vendor/vendor/ikd-Tree/ikd-Tree/ikd_Tree.h,269,INTERFACE,Q1,includes pcl/point_types.h
+R4,src/estimation/ikfom_vendor/vendor/IKFoM/IKFoM_toolkit/esekfom/util.hpp,82,INTERFACE,Q1,unmodified upstream manifold toolkit (only esekfom.hpp patched)
+R4,src/estimation/ikfom_vendor/vendor/IKFoM/IKFoM_toolkit/mtk/build_manifold.hpp,248,INTERFACE,Q1,unmodified upstream manifold toolkit (only esekfom.hpp patched)
+R4,src/estimation/ikfom_vendor/vendor/IKFoM/IKFoM_toolkit/mtk/src/SubManifold.hpp,123,INTERFACE,Q1,unmodified upstream manifold toolkit (only esekfom.hpp patched)
+R4,src/estimation/ikfom_vendor/vendor/IKFoM/IKFoM_toolkit/mtk/src/mtkmath.hpp,294,INTERFACE,Q1,unmodified upstream manifold toolkit (only esekfom.hpp patched)
+R4,src/estimation/ikfom_vendor/vendor/IKFoM/IKFoM_toolkit/mtk/src/vectview.hpp,168,INTERFACE,Q1,unmodified upstream manifold toolkit (only esekfom.hpp patched)
+R4,src/estimation/ikfom_vendor/vendor/IKFoM/IKFoM_toolkit/mtk/startIdx.hpp,328,INTERFACE,Q1,unmodified upstream manifold toolkit (only esekfom.hpp patched)
+R4,src/estimation/ikfom_vendor/vendor/IKFoM/IKFoM_toolkit/mtk/types/S2.hpp,326,INTERFACE,Q1,unmodified upstream manifold toolkit (only esekfom.hpp patched)
+R4,src/estimation/ikfom_vendor/vendor/IKFoM/IKFoM_toolkit/mtk/types/SEn.hpp,334,INTERFACE,Q1,unmodified upstream manifold toolkit (only esekfom.hpp patched)
+R4,src/estimation/ikfom_vendor/vendor/IKFoM/IKFoM_toolkit/mtk/types/SOn.hpp,365,INTERFACE,Q1,unmodified upstream manifold toolkit (only esekfom.hpp patched)
+R4,src/estimation/ikfom_vendor/vendor/IKFoM/IKFoM_toolkit/mtk/types/vect.hpp,511,INTERFACE,Q1,unmodified upstream manifold toolkit (only esekfom.hpp patched)
+R4,src/estimation/ikfom_vendor/vendor/IKFoM/IKFoM_toolkit/mtk/types/wrapped_cv_mat.hpp,113,INTERFACE,Q1,unmodified upstream manifold toolkit (only esekfom.hpp patched)
+R5,src/common/navigation_common/CMakeLists.txt,39,FULL,Q1;Q2,"INTERFACE lib, C++20, Eigen+builtin_interfaces"
+R5,src/common/navigation_common/include/navigation_common/bounded_spsc_queue.hpp,57,FULL,Q3;Q11;Q12,SPSC with acquire/release correct; uint64 indices; used by adapter trace queue (navigation_mode.hpp:266)
+R5,src/common/navigation_common/include/navigation_common/frame_conventions.hpp,44,FULL,Q10,C_enu_ned and C_flu_frd correct and self-inverse; no quaternion/yaw helper -> each consumer re-derives
+R5,src/common/navigation_common/include/navigation_common/time.hpp,150,FULL,Q7;Q10;Q12,checkedDifference __int128 OK; secondsToRosTime truncates vs secondsToNanoseconds rounds (repro); secondsToRosTime has no product caller
+R5,src/common/navigation_common/package.xml,15,FULL,Q2,description says only frame conventions; package also owns time + SPSC
+R5,src/common/navigation_common/test/test_navigation_common.cpp,104,SKIM,Q10,no test pins secondsToRosTime vs secondsToNanoseconds agreement; frame test is only self-inverse (would pass with identity)
+R5,src/px4/px4_odometry_bridge/include/px4_odometry_bridge/frame_converter.hpp,84,FULL,Q1;Q7;Q10,PX4->ROS sample structs; variance -1 sentinel
+R5,src/px4/px4_odometry_bridge/src/frame_converter.cpp,123,FULL,Q6;Q10;Q12,R_enu_flu = C_enu_ned*R_ned_frd*C_flu_frd correct; velocity/omega correct; output quaternion sign not continuous (repro_bridge_quat_sign.cpp); rotate_variance index check wrong
+R5,src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp,641,FULL,Q1;Q3;Q4;Q5;Q6;Q7;Q9;Q10;Q11;Q12,single-threaded spin; PX4 odom -> /px4/estimator_odometry (ENU/FLU) + sample service; diagnostics built on every sample
+R5,src/px4/px4_odometry_bridge/include/px4_odometry_bridge/time_validator.hpp,56,FULL,Q7;Q10,"defaults 200ms stale/future, 1s restart regression, 10s low-epoch"
+R5,src/px4/px4_odometry_bridge/src/time_validator.cpp,79,FULL,Q5;Q6;Q10,restart branch skips stale/future check
+R5,src/px4/px4_odometry_bridge/include/px4_odometry_bridge/timestamp_conversion.hpp,74,FULL,Q7;Q9,mapping-mode declaration; no offset applied (correct: uXRCE client owns offset)
+R5,src/px4/px4_odometry_bridge/src/timestamp_conversion.cpp,121,FULL,Q6;Q10,ns->us floor truncation; age = publication-measurement both in same domain; OK
+R5,src/px4/px4_odometry_bridge/include/px4_odometry_bridge/topic_version.hpp,27,FULL,Q12,_vN suffix from MESSAGE_VERSION; not applied to timesync_status topic in node (px4_odometry_bridge_node.cpp:103)
+R5,src/px4/px4_odometry_bridge/include/px4_odometry_bridge/frame_generation_policy.hpp,36,FULL,Q5;Q12,strict high-water identity + restart generation policy OK
+R5,src/px4/px4_odometry_bridge/include/px4_odometry_bridge/external_odometry_conversion.hpp,60,FULL,Q1;Q7;Q10,ROS lio_odom ENU/FLU -> PX4 NED/FRD contract doc
+R5,src/px4/px4_odometry_bridge/src/external_odometry_conversion.cpp,177,FULL,Q6;Q10,R_ned_frd = C_ned_enu R_enu_flu C_flu_frd correct; twist body-FLU -> NED correct; omega FLU->FRD correct; covariance blocks symmetry+PSD checked; orientation cov world->body FRD (assumes ROS orientation covariance in world axes)
+R5,src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,543,FULL,Q1;Q3;Q4;Q5;Q6;Q7;Q9;Q10;Q11;Q12,single-threaded; /lio/odometry_propagated + /lio/diagnostics -> /fmu/in/vehicle_visual_odometry; reset_counter derived from diagnostics generation
+R5,src/px4/px4_odometry_bridge/include/px4_odometry_bridge/external_odometry_gate.hpp,39,FULL,Q6,pure AND gate
+R5,src/px4/px4_odometry_bridge/src/external_odometry_gate.cpp,51,FULL,Q6;Q12,reason priority order; lio_fresh is a hard gate
+R5,src/px4/px4_odometry_bridge/include/px4_odometry_bridge/geometric_jump_latch.hpp,35,FULL,Q5;Q10,reset_counter = generation % 256
+R5,src/px4/px4_odometry_bridge/src/geometric_jump_latch.cpp,45,FULL,Q5,latch clears only on strictly newer generation or operator reset
+R5,src/px4/px4_odometry_bridge/include/px4_odometry_bridge/geometric_jump_continuity.hpp,62,FULL,Q5;Q10,
+R5,src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,201,FULL,Q6;Q10;Q12,DtTooSmall/TimestampNotIncreasing reseed trusted=true (repro_jump_dt_small.cpp); angularDistance sign-safe
+R5,src/px4/px4_odometry_bridge/include/px4_odometry_bridge/reset_compensator.hpp,90,FULL,Q5;Q7,ResetObservationStatus enum
+R5,src/px4/px4_odometry_bridge/src/reset_compensator.cpp,255,FULL,Q5;Q6;Q10,position continuity T+R p consistent under its own model; velocity reset applied as permanent additive offset; heading reset rotates positions (PX4 semantics assumption)
+R5,src/px4/px4_odometry_bridge/include/px4_odometry_bridge/odometry_ring_buffer.hpp,55,FULL,Q7;Q11,deque capacity 512 / 2 s
+R5,src/px4/px4_odometry_bridge/src/odometry_ring_buffer.cpp,142,FULL,Q6;Q10,lower_bound O(log n); Eigen slerp shortest-path (R5-03 does not affect interpolation); any non-increasing push clears whole buffer
+R5,src/px4/px4_odometry_bridge/include/px4_odometry_bridge/reference_point_converter.hpp,29,FULL,Q12,unused
+R5,src/px4/px4_odometry_bridge/src/reference_point_converter.cpp,22,FULL,Q10;Q12,dead code; lever arm rotated by wrong matrix if base_from_source rotation != I
+R5,src/px4/px4_odometry_bridge/CMakeLists.txt,100,SKIM,Q1;Q2,core lib (incl. unused reference_point_converter) + 2 executables + 6 gtests
+R5,src/px4/px4_odometry_bridge/package.xml,18,SKIM,Q2,
+R5,src/px4/px4_odometry_bridge/test/test_external_odometry_conversion.cpp,196,SKIM,Q10,frame/covariance conversion pinned; no quaternion sign test
+R5,src/px4/px4_odometry_bridge/test/test_external_odometry_gate.cpp,62,SKIM,Q6,
+R5,src/px4/px4_odometry_bridge/test/test_geometric_jump_continuity.cpp,172,SKIM,Q6,no test for jump at dt<minimum_continuity_dt_s (R5-08)
+R5,src/px4/px4_odometry_bridge/test/test_geometric_jump_latch.cpp,56,SKIM,Q5,
+R5,src/px4/px4_odometry_bridge/test/test_px4_odometry_bridge.cpp,731,SKIM,Q6;Q10,"QuaternionSignProducesTheSameOrientation checks rotation only, not output sign continuity; velocity-reset offset pinned at 402-425; no node-level tests"
+R5,src/px4/px4_odometry_bridge/test/test_timestamp_conversion.cpp,166,SKIM,Q10,
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/navigation_mode.hpp,311,FULL,Q1;Q3;Q7;Q9,~100 mutable members under one trajectory_mutex_; SPSC trace queue + worker thread
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,508,FULL,Q6;Q10;Q12,"adapt(): R=C_enu_ned*Rz(delta), yaw_ned = yaw_px4 - (yaw_ref - yaw_lio), yaw_rate sign flip: all correct; witness self-certified by caller"
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/local_frame_alignment.hpp,41,FULL,Q7;Q9;Q10,translation-only LIO->PX4 alignment (no yaw)
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/tracking_envelope.hpp,88,FULL,Q6;Q10,box decomposition admits sqrt(2)*L; discontinuous at speed 1e-3 (repro_tracking_envelope.cpp)
+R5,src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2703,FULL,Q1;Q3;Q4;Q5;Q6;Q7;Q8;Q9;Q10;Q11;Q12,"read 40-455,686-720,821-1142,1143-1424,1425-2703; skimmed 560-686 and 720-820 trace/witness formatting. Threads: mode node (updateSetpoint 50 Hz, onNavigationCommand, 50 ms boundary/handover wall timers), state-input node thread (odometry/health/PX4 local position), trace worker thread"
+R5,src/px4/px4_navigation_external_mode/src/main.cpp,86,FULL,Q3,two single-threaded executors (mode node main thread + state-input thread) + exception propagation via shutdown
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,370,FULL,Q6;Q10;Q11,"Dykstra 4-ball projection math verified (velocity/viability ball centers & radii, envelope quadratic); first sample (previous==nullptr) unconstrained by accel/jerk; <=4096 iterations/tick"
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/certified_command_handoff.hpp,45,FULL,Q5;Q12,transitionCertifiedCommand trivial 3-way; commandMayBeRetainedAcrossWaypointHandoff has no product caller
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/command_acceptance_gate.hpp,25,FULL,Q6,
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/command_admission_assessment.hpp,166,FULL,Q5;Q6,admission stage/disposition enums; session identity rules
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/navigation_input_validation.hpp,15,FULL,Q10,
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/planner_recovery.hpp,40,FULL,Q6;Q12,backupEndpointHoldIsAnchored unused in node
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/runtime_metrics_policy.hpp,17,FULL,Q12,
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/paired_node_lifetime.hpp,28,FULL,Q3;Q12,join-before-release lifetime barrier OK
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission.hpp,13,FULL,Q2,aliases navigation_mission types; only used by deprecated MissionController
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission_command_identity.hpp,76,SKIM,Q12,test-only helpers for deprecated MissionController flow
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission_controller.hpp,130,SKIM,Q1;Q12,"DEPRECATED: compiled into _contract lib, linked only by test_mission; not linked into the node; tools/check_mission_authority_cut.py forbids it in adapter product sources"
+R5,src/px4/px4_navigation_external_mode/src/mission_controller.cpp,752,SKIM,Q1;Q12,"DEPRECATED, no product path (confirmed via CMake link graph and git grep)"
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_input_trace.hpp,76,SKIM,Q11,POD trace record with fixed char arrays (SPSC-safe copy)
+R5,src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/reject_provenance.hpp,88,SKIM,Q10,age via raw int subtraction *1e-6 ms; diagnostic only
+R5,src/px4/px4_navigation_external_mode/CMakeLists.txt,102,FULL,Q1;Q2,_contract (MissionController) installed+exported but unused by node; node links _adapter
+R5,src/px4/px4_navigation_external_mode/package.xml,29,SKIM,Q2,
+R5,src/px4/px4_navigation_external_mode/test/test_local_frame_alignment.cpp,24,SKIM,Q10,translation-only; no heading-offset test
+R5,src/px4/px4_navigation_external_mode/test/test_mission.cpp,1616,SKIM,Q12,45 tests of deprecated MissionController
+R5,src/px4/px4_navigation_external_mode/test/test_navigation_command.cpp,440,SKIM,Q6,
+R5,src/px4/px4_navigation_external_mode/test/test_navigation_mode_progression.cpp,228,SKIM,Q5;Q6,6 admission/identity tests; no updateSetpoint/alignment/PX4-reset test
+R5,src/px4/px4_navigation_external_mode/test/test_paired_node_lifetime.cpp,68,SKIM,Q3,
+R5,src/px4/px4_navigation_external_mode/test/test_px4_tracking_adapter.cpp,380,SKIM,Q10,
+R5,src/px4/px4_navigation_external_mode/test/test_tracking_envelope.cpp,174,SKIM,Q10,pins independent-axis box (line 102)
+R5,src/px4/px4_navigation_external_mode/test/test_velocity_only_continuity.cpp,270,SKIM,Q10,
+R5,src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,1309,FULL,Q1;Q3;Q5;Q6;Q7;Q8;Q9;Q10;Q12,single mutex; timeline_version_/lineage tokens; commit/stage/activate/recertify/publish linearization points; const methods mutate mutable state
+R5,src/execution/navigation_execution/include/navigation_execution/execution_lifecycle.hpp,67,FULL,Q5,5 orthogonal lifecycle facets; telemetry code mapping v1
+R5,src/execution/navigation_execution/include/navigation_execution/command_sampler.hpp,114,FULL,Q6;Q7,read-only snapshot sampling; STOPPED_HOLD endpoint after lease; evaluator exceptions swallowed to kEvaluatorFailure
+R5,src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp,69,FULL,Q10,PVAJ/yaw anchor tolerances; yaw residual wrapped
+R5,src/execution/navigation_execution/include/navigation_execution/execution_recovery_state.hpp,95,FULL,Q5;Q6,recovery FSM; StoppedRecovery ignores backup/emergency commits
+R5,src/execution/navigation_execution/include/navigation_execution/execution_state_gate.hpp,29,FULL,Q3;Q5,atomic latch + transition mutex
+R5,src/execution/navigation_execution/include/navigation_execution/execution_state_lease.hpp,17,FULL,Q7,
+R5,src/execution/navigation_execution/include/navigation_execution/execution_state_store.hpp,50,FULL,Q3;Q7;Q12,make_shared inside noexcept; epoch reset not monotonic
+R5,src/execution/navigation_execution/include/navigation_execution/timestamp_freshness.hpp,21,FULL,Q10,long double age; symmetric future bound
+R5,src/execution/navigation_execution/CMakeLists.txt,51,SKIM,Q2,
+R5,src/execution/navigation_execution/package.xml,16,SKIM,Q2,depends on navigation_world_model + navigation_planning
+R5,src/execution/navigation_execution/test/test_execution_authority.cpp,2409,SKIM,Q5;Q6,"75 tests; none for setAdmissionGoalEpoch-before-world, const-view mutation, or StoppedRecovery->backup commit"
+R5,src/execution/navigation_execution/test/test_timestamp_freshness.cpp,241,SKIM,Q10,
+R5,src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp,479,FULL,Q1;Q6;Q7;Q10;Q11;Q12,"contract header with substantial logic: valid(), role schedule, sampling, handoff certificate"
+R5,src/planning/navigation_planning/include/navigation_planning/candidate_admission.hpp,58,FULL,Q10,main reserve in double seconds (N3)
+R5,src/planning/navigation_planning/include/navigation_planning/execution_anchor.hpp,44,FULL,Q7,second copy of anchor type (N4)
+R5,src/planning/navigation_planning/include/navigation_planning/kinematic_state.hpp,47,FULL,Q7;Q10,scaled quaternion norm check OK
+R5,src/planning/navigation_planning/include/navigation_planning/planning_budget.hpp,28,FULL,Q9,two deadline representations
+R5,src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp,35,FULL,Q9,timing literals duplicated in adapter params (V6)
+R5,src/planning/navigation_planning/include/navigation_planning/route_boundary.hpp,79,FULL,Q10,unit tangent checks
+R5,src/planning/navigation_planning/include/navigation_planning/planning_limits.hpp,102,FULL,Q10,ULP-scaled limit comparison OK; physical defaults in header
+R5,src/planning/navigation_planning/include/navigation_planning/planning_request.hpp,239,FULL,Q7;Q9;Q12,valid() reads steady clock via budget.exhausted(); two stop tokens
+R5,src/planning/navigation_planning/include/navigation_planning/planning_outcome.hpp,177,SKIM,Q5;Q6,
+R5,src/planning/navigation_planning/include/navigation_planning/planning_status.hpp,38,SKIM,Q5,
+R5,src/planning/navigation_planning/include/navigation_planning/planner_status.hpp,19,SKIM,Q5,
+R5,src/planning/navigation_planning/include/navigation_planning/planner_diagnostics.hpp,319,SKIM,Q12,diagnostic enums/name tables only
+R5,src/planning/navigation_planning/CMakeLists.txt,52,SKIM,Q2,
+R5,src/planning/navigation_planning/package.xml,18,SKIM,Q2,contract package depends on navigation_world_model + navigation_mission
+R5,src/planning/navigation_planning/test/test_planning_contracts.cpp,618,SKIM,Q10,no role-schedule gap test
+R5,src/contracts/navigation_contracts/include/navigation_contracts/command_safety_contract.hpp,27,FULL,Q7;Q9,0.75 m anchor limit + 0.10 s phase window shared constants
+R5,src/contracts/navigation_contracts/include/navigation_contracts/execution_state_freshness.hpp,82,FULL,Q7;Q10,source future tolerated up to max age; receive future rejected
+R5,src/contracts/navigation_contracts/include/navigation_contracts/navigation_command_contract.hpp,223,FULL,Q5;Q6;Q7;Q10,header-with-logic: contract/temporal/identity predicates
+R5,src/contracts/navigation_contracts/include/navigation_contracts/odometry_validity.hpp,21,FULL,Q7,
+R5,src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp,162,FULL,Q6;Q9;Q10;Q12,ROS parameter loader in a contract header; zero coefficients => suppress tracking+health in any non-off mode
+R5,src/contracts/navigation_contracts/msg/NavigationCommand.msg,60,FULL,Q7;Q12,no frame/unit comments on PVA/yaw; STATUS_HANDOVER/EMPTY unused; mixed ns-uint64 vs Time
+R5,src/contracts/navigation_contracts/msg/NavigationModeStatus.msg,46,FULL,Q5;Q12,MISSION_HOLD and state BRAKING never produced by adapter
+R5,src/contracts/navigation_contracts/msg/EstimatorHealth.msg,25,FULL,Q7;Q12,contradictory comment on last_propagated_state_stamp
+R5,src/contracts/navigation_contracts/msg/PropagatedOdometry.msg,7,FULL,Q7,
+R5,src/contracts/navigation_contracts/msg/OdometryTransportTrace.msg,33,FULL,Q7,ROS vs steady fields explicitly suffixed
+R5,src/contracts/navigation_contracts/msg/NavigationCommandAdmission.msg,11,SKIM,Q7,
+R5,src/contracts/navigation_contracts/msg/NavigationCommandRejection.msg,33,SKIM,Q7,
+R5,src/contracts/navigation_contracts/msg/NavigationExecutionDiagnostics.msg,70,SKIM,Q7,uint64 ns vs int64 elsewhere
+R5,src/contracts/navigation_contracts/msg/NavigationGoal.msg,20,SKIM,Q7,
+R5,src/contracts/navigation_contracts/msg/NavigationMissionProgress.msg,19,SKIM,Q7,
+R5,src/contracts/navigation_contracts/msg/RegisteredScan.msg,43,SKIM,Q7,world generation may restart per epoch
+R5,src/contracts/navigation_contracts/msg/RouteSnapshot.msg,18,SKIM,Q7,
+R5,src/contracts/navigation_contracts/srv/SampleOdometryAtTime.srv,12,FULL,Q7,reset_generation and reset_event_generation duplicate
+R5,src/contracts/navigation_contracts/CMakeLists.txt,53,SKIM,Q2,rosidl + header-only contract headers
+R5,src/contracts/navigation_contracts/package.xml,20,SKIM,Q2,
+R5,src/contracts/navigation_contracts/test/test_tracking_experiment_policy.cpp,81,SKIM,Q6,6 tests; zero-coefficient implied suppression not asserted against yaml comment
+R5,src/contracts/navigation_contracts/test/test_typed_interfaces.cpp,425,SKIM,Q7,12 msg/contract tests
+R5,src/contracts/navigation_mission/CMakeLists.txt,45,SKIM,Q2,depends on navigation_world_model (V2)
+R5,src/contracts/navigation_mission/package.xml,14,SKIM,Q2,
+R5,src/contracts/navigation_mission/include/navigation_mission/mission.hpp,85,FULL,Q7;Q10,ENU waypoints; acceptance defaults 0.5 m / 0.15 m/s (A6)
+R5,src/contracts/navigation_mission/include/navigation_mission/route_progress.hpp,158,FULL,Q7;Q10,coincident STOP helpers
+R5,src/contracts/navigation_mission/src/mission.cpp,173,SKIM,Q6,"strict YAML loader, unknown keys rejected"
+R5,src/contracts/navigation_mission/src/route_progress.cpp,534,SKIM,Q10;Q11,read ctor/project/update/segmentForArc/pointAtArc/crossing (203-515); projection math correct; O(n segments) x2 per update (n<=4096); non-adjacent branch jump allowed when current leg is > lateral+0.5 m away (progress may leap)
+R5,src/contracts/navigation_mission/test/test_mission_contract.cpp,413,SKIM,Q10,19 tests
+R6,src/mapping/navigation_mapping/include/navigation_mapping/mapping_actor.hpp,96,FULL,Q1;Q2;Q4;Q7;Q12,
+R6,src/mapping/navigation_mapping/include/navigation_mapping/mapping_diagnostics.hpp,3,FULL,Q1,forwarding header only
+R6,src/mapping/navigation_mapping/include/navigation_mapping/mapping_observation.hpp,39,FULL,Q4;Q7;Q9,
+R6,src/mapping/navigation_mapping/include/navigation_mapping/mapping_types.hpp,176,FULL,Q5;Q7;Q12,
+R6,src/mapping/navigation_mapping/src/mapping_actor.cpp,619,FULL,Q1;Q3;Q4;Q5;Q6;Q7;Q8;Q9;Q10;Q11;Q12,"R6-04,R6-05"
+R6,src/mapping/navigation_mapping/src/mapping_world_model_adapter.hpp,260,FULL,Q1;Q7;Q9;Q12,"R6-06, test-only adapter"
+R6,src/mapping/navigation_mapping/include/navigation_mapping/mapping_worker.hpp,296,FULL,Q3;Q5;Q6;Q8;Q12,
+R6,src/mapping/rog_map_vendor/CMakeLists.txt,112,FULL,Q1;Q12,ORIGIN_AT_CORNER fixed
+R6,src/mapping/rog_map_vendor/package.xml,27,FULL,Q9,license BSD vs LGPL headers
+R6,src/mapping/rog_map_vendor/include/rog_map/prob_map.h,296,FULL,Q5;Q7;Q12,
+R6,src/mapping/rog_map_vendor/src/rog_map/prob_map.cpp,1119,FULL,Q4;Q6;Q8;Q9;Q10;Q11;Q12,R6-01..03; ~459 lines diff vs upstream
+R6,src/mapping/rog_map_vendor/src/rog_map/sliding_map.cpp,371,FULL,Q10;Q12,index wrap verified
+R6,src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp,620,FULL,Q7;Q9;Q10;Q12,
+R6,src/mapping/rog_map_vendor/src/rog_map/rog_map.cpp,730,FULL,Q4;Q6;Q8;Q9;Q10;Q11;Q12,project-owned exports; R6-09..12
+R6,src/mapping/rog_map_vendor/include/rog_map/rog_map.h,144,FULL,Q1;Q7;Q12,
+R6,src/mapping/rog_map_vendor/include/rog_map/planning_grid_export.hpp,68,FULL,Q4;Q7,project-owned
+R6,src/mapping/rog_map_vendor/include/rog_map/inf_map.h,113,FULL,Q7;Q12,
+R6,src/mapping/rog_map_vendor/src/rog_map/inf_map.cpp,488,FULL,Q6;Q8;Q9;Q10;Q11;Q12,"R6-07,R6-08"
+R6,src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp,141,FULL,Q10,lineBoxIntersectPoint verified for origin-inside-box
+R6,src/mapping/rog_map_vendor/include/rog_map/rog_map_core/raycaster.h,97,FULL,Q10,
+R6,src/mapping/rog_map_vendor/src/rog_map_core/raycaster.cpp,287,FULL,Q6;Q10;Q12,DDA terminates (finished-axis guard); endpoint voxel excluded from miss
+R6,src/mapping/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h,140,FULL,Q10;Q12,"upstream, 2-line diff"
+R6,src/mapping/rog_map_vendor/src/rog_map/counter_map.cpp,164,FULL,Q10;Q12,upstream
+R6,src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h,148,FULL,Q10,upstream + slide counter
+R6,src/mapping/navigation_mapping/include/navigation_mapping/mapping_world_snapshot.hpp,1086,FULL,Q1;Q4;Q6;Q7;Q8;Q9;Q10;Q11;Q12,R6-11; patch chain; change-history certificate
+R6,src/mapping/navigation_world_model/include/navigation_world_model/world_model_view.hpp,565,FULL,Q1;Q2;Q5;Q7;Q9;Q10;Q12,R6-10 consumer; CurrentBodySupport OBB math checked
+R6,src/mapping/navigation_world_model/include/navigation_world_model/continuous_clearance.hpp,99,FULL,Q7;Q10;Q11,"R6-13,R6-14"
+R6,src/mapping/navigation_world_model/include/navigation_world_model/goal_contract.hpp,31,FULL,Q7;Q9,three tolerances share one value by design
+R6,src/mapping/navigation_world_model/include/navigation_world_model/world_commit_authorizer.hpp,62,FULL,Q3;Q5;Q7,
+R6,src/mapping/navigation_mapping/include/navigation_mapping/world_snapshot_store.hpp,180,FULL,Q3;Q5;Q8;Q9;Q12,finalize under gate is light (runtime keeps validation outside)
+R6,src/mapping/navigation_mapping/include/navigation_mapping/observation_accounting.hpp,202,FULL,Q3;Q5;Q12,R6-15
+R6,src/mapping/navigation_mapping/include/navigation_mapping/current_body_support.hpp,70,FULL,Q7;Q12,hard-coded X500 OBB + provenance strings
+R6,src/mapping/navigation_mapping/include/navigation_mapping/visibility_control.hpp,13,FULL,Q12,
+R6,src/mapping/navigation_mapping/CMakeLists.txt,93,FULL,Q1;Q12,tests read source-tree planner.yaml
+R6,src/mapping/navigation_mapping/package.xml,15,FULL,Q1,
+R6,src/mapping/navigation_world_model/CMakeLists.txt,24,FULL,Q1,header-only INTERFACE
+R6,src/mapping/navigation_world_model/package.xml,13,FULL,Q1,
+R6,src/mapping/rog_map_vendor/include/navigation_math/color_text.hpp,31,INTERFACE,Q1,upstream super_utils renamed
+R6,src/mapping/rog_map_vendor/include/navigation_math/eigen_alias.hpp,140,SKIM,Q1;Q12,upstream renamed; ROOT_DIR log macros (R6-12)
+R6,src/mapping/rog_map_vendor/include/navigation_math/fmt_eigen.hpp,105,INTERFACE,Q1,identical to upstream
+R6,src/mapping/rog_map_vendor/include/navigation_math/scope_timer.hpp,114,FULL,Q11,R6-21
+R6,src/mapping/rog_map_vendor/include/navigation_math/type_utils.hpp,89,SKIM,Q10;Q12,GridType ordinals (R6-11)
+R6,src/mapping/rog_map_vendor/include/navigation_math/yaml_loader.hpp,151,FULL,Q7;Q12,R6-20; project hardened type errors
+R6,src/mapping/rog_map_vendor/include/rog_map/free_cnt_map.h,111,INTERFACE,Q1,frontier disabled in product (default false)
+R6,src/mapping/rog_map_vendor/include/rog_map/esdf_map.h,105,INTERFACE,Q1,esdf disabled in product; identical to upstream
+R6,src/mapping/rog_map_vendor/src/rog_map/esdf_map.cpp,518,INTERFACE,Q1,esdf disabled; 2-line namespace diff vs upstream
+R6,src/mapping/rog_map_vendor/test/fixtures/rog_map_no_virtual_planes.yaml,49,SKIM,Q7,
+R6,src/mapping/rog_map_vendor/test/fixtures/rog_map_raycasting_boundary.yaml,49,SKIM,Q7,
+R6,src/mapping/rog_map_vendor/test/fixtures/rog_map_test.yaml,50,SKIM,Q7,virtual planes enabled (exercises R6-01 path)
+R6,src/mapping/rog_map_vendor/test/test_planning_grid_export.cpp,434,SKIM,Q6,16 tests; export/slide ordering; body-neighborhood asserts dead field
+R6,src/mapping/rog_map_vendor/test/test_raycaster_equivalence.cpp,122,SKIM,Q10,DDA bounded/no overshoot
+R6,src/mapping/rog_map_vendor/test/test_rog_map_fixture.hpp,28,SKIM,Q1,
+R6,src/mapping/rog_map_vendor/test/test_rog_map_lifecycle.cpp,50,SKIM,Q5,
+R6,src/mapping/rog_map_vendor/test/test_rog_map_smoke.cpp,183,SKIM,Q6,"no test for ceiling-clip length, slide seed value"
+R6,src/mapping/rog_map_vendor/test/test_yaml_loader.cpp,191,SKIM,Q12,required=true tested but Config never uses it
+R6,src/mapping/navigation_mapping/test/test_mapping_actor.cpp,562,SKIM,Q6,patch test uses sparse cloud (not 360 deg)
+R6,src/mapping/navigation_mapping/test/test_mapping_worker.cpp,492,SKIM,Q3;Q5,
+R6,src/mapping/navigation_mapping/test/test_mapping_world_model.cpp,800,SKIM,Q6;Q10,uses test-only MappingWorldModelView adapter
+R7,Makefile,108,FULL,Q1;Q3;Q9;Q12,Entry points build/test/dataset-check/sim-check/run(=external-mode-check)/run-gui/status/stop/clean; pins /usr/bin/python3 and strips VIRTUAL_ENV/PYTHONHOME; default MAP_SCENE=sanity_open resolves to unregistered profile open (R7-02)
+R7,.github/workflows/ci.yml,62,FULL,Q1;Q9;Q12,CI: static guards + validate ledger + tools/runtime/tests on Python 3.12 w/o ROS; omits tools/tests and 2 scope guards (R7-14)
+R7,AGENTS.md,29,FULL,Q1,Process contract only; no code
+R7,src/navigation_bringup/launch/avoidance_mission.launch.py,51,FULL,Q1;Q3;Q4,Includes navigation_runtime + px4_external_mode with shared config_file; mission_file only to runtime
+R7,src/navigation_bringup/launch/fast_lio.launch.py,78,FULL,Q1;Q3;Q4,fast_lio_node + optional px4_external_odometry_bridge from the SAME params file; RSP static frames include
+R7,src/navigation_bringup/launch/navigation_runtime.launch.py,33,FULL,Q3;Q9,"mission_file default """" overrides YAML value; runner always passes mission_file explicitly (runner.py:1966-1970)"
+R7,src/navigation_bringup/launch/px4_external_mode.launch.py,28,FULL,Q3,single node px4_navigation_external_mode_node
+R7,src/navigation_bringup/CMakeLists.txt,10,FULL,Q1,installs launch+rviz
+R7,src/navigation_bringup/package.xml,21,SKIM,Q1,manifest
+R7,src/uav_description/launch/publish_sensor_frames.launch.py,59,FULL,Q3;Q7,robot_state_publisher with xacro args; frames base_link->livox_frame->livox_imu_frame
+R7,config/runtime/common.yaml,35,FULL,Q7;Q9,judge/monitor stream rates + stale budgets + timeouts; stale budgets disagree with product consumers (R7-08)
+R7,config/runtime/sim.yaml,100,FULL,Q7;Q9,fast_lio + external odometry bridge + odometry bridge params for SITL
+R7,config/runtime/dataset.yaml,75,FULL,Q7;Q9,"fast_lio params for recorded replay (sensor_time, per_point)"
+R7,config/runtime/external_mode.yaml,22,FULL,Q7;Q9,"adapter params: trajectory_stale 0.10, state_stale 0.20, tracking_experiment duplicate of mapping.yaml"
+R7,config/runtime/external_mode_scenario.yaml,33,FULL,Q7;Q9,"scenario harness: timeouts, takeoff, pillar geometry duplicated from pillar.sdf"
+R7,config/runtime/map_profiles.yaml,311,FULL,Q7;Q9,profile/scene registry; scenes reference unregistered profiles open/speed; collision_truth lists differ for same world
+R7,config/runtime/mapping.yaml,23,FULL,Q7;Q9,navigation_runtime_node params; data_freshness_window_s 0.5
+R7,config/runtime/offboard.yaml,14,FULL,Q7,offboard sim-check NED segments
+R7,config/runtime/planning_stability_qualification.yaml,62,FULL,Q7,"release qualification plan; data only, no code reader checked here"
+R7,config/runtime/missions/corridor.yaml,33,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/external_mode_pillar.yaml,38,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/forest_clutter.yaml,9,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/long_cross_obstacles.yaml,30,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/long_featured.yaml,34,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/long_open.yaml,30,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/long_open_featured_core_60.yaml,20,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/long_open_featured_core_60_pv.yaml,20,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/long_open_featured_speed.yaml,22,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/long_open_slow.yaml,30,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/long_three_pillars.yaml,47,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/long_three_pillars_multiwaypoint.yaml,50,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/long_three_pillars_speed.yaml,22,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/navigation_generalization.yaml,25,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/no_path.yaml,29,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/occlusion.yaml,32,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/occlusion_degenerate.yaml,11,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/open.yaml,34,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/pillar.yaml,34,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/recorded_replay.yaml,17,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/single_pillar_speed.yaml,20,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/single_pillar_speed_pv.yaml,20,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/speed.yaml,30,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/t2_same_identity_renewal.yaml,24,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/tunnel_irregular.yaml,9,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,config/runtime/missions/tunnel_smooth.yaml,9,FULL,Q7;Q9,mission contract; parsed by navigation_mission/src/mission.cpp (control: null -> defaults 0.15/…); runner re-parses planning only (runner.py:1383-1408)
+R7,datasets/catalog/aist-mid360-drive.yaml,27,FULL,Q7,catalog entry; md5 checksum; no GT
+R7,datasets/schema.yaml,79,FULL,Q7,JSON schema for catalog
+R7,datasets/templates/local-mid360.yaml,32,FULL,Q7,template
+R7,tools/check_runtime_config_truth.py,33,FULL,Q1;Q12,"substring presence checks, whitespace-exact multiline; does not compare YAML duplicates"
+R7,tools/check_mission_authority_cut.py,79,FULL,Q1;Q12,regex/substring over 3 adapter files + CMake split; IndexError path uncaught but still non-zero
+R7,tools/check_execution_authority_cut.py,54,FULL,Q1;Q12,substring/regex presence checks
+R7,tools/check_exact_optimization_injection.py,36,FULL,Q1;Q12,substring + index ordering; YAML scan misses config/runtime (R7-11)
+R7,tools/check_desired_intent_cut.py,96,FULL,Q1;Q12,line regex over runtime/execution sources excluding test dirs
+R7,tools/check_failclosed_ownership_fencing.py,98,FULL,Q1;Q12,section() by find() markers; first-occurrence only
+R7,tools/check_navigation_command_contract.py,89,FULL,Q1;Q12,msg field allowlist parser ignores lines with !=2 tokens (R7-15)
+R7,tools/check_qualification_evidence_scope.py,68,FULL,Q1;Q12,git diff scope vs --base; not in CI
+R7,tools/check_software_qualification_scope.py,67,FULL,Q1;Q12,git diff scope; ALLOWED_PRODUCT empty; not in CI
+R7,tools/check_state_transport_trace_scope.py,38,FULL,Q1;Q12,"bare assert -> PASS under python -O (R7-10, reproduced)"
+R7,tools/check_world_evidence_non_authority.py,86,FULL,Q1;Q12,exact-whitespace substrings; NavigationCommand publisher ban bypassable (R7-12)
+R7,tools/runtime/runner.py,4623,FULL,Q1;Q3;Q4;Q5;Q6;Q7;Q9;Q10;Q12,"Read 1-2968 and 2968-3945 fully (orchestration, configs, alias maps, collision truth, speed contract, witnesses, lidar->imu inversion verified correct); status/stop/clean/argparse 3945-4623 skimmed"
+R7,tools/runtime/evaluation.py,3408,FULL,Q1;Q4;Q5;Q6;Q7;Q9;Q10;Q11;Q12,"Read 1-530, 998-1090, 1502-3408 fully (stats, bracketing/interpolation, frame witness transform verified, coverage, stop detector, accel derivation, ATE/RPE, C0_SW and C0_IFP verdicts); reduce_lifecycle 530-998 and reduce_world_transactions 1234-1500 skimmed (R-09 mega-function, raw ordinals R-05)"
+R7,tools/runtime/external_mode_scenario.py,3190,FULL,Q1;Q3;Q4;Q5;Q6;Q7;Q9;Q10;Q12,"Read 29-580, 1021-1475, 2092-2210, 2497-3190 (quaternion/slerp/heading/SDF distance math verified; tick state machine; finish verdict); 580-1020 diagnostics parsing, 1475-2090 command/mission callbacks, 2210-2497 goal publishing skimmed"
+R7,tools/runtime/report.py,3843,FULL,Q1;Q5;Q6;Q7;Q9;Q10;Q12,"Read 354-822 (acceptance, tracking-experiment cross-check), 1015-1100 (active window), 2315-2395 (GT residual frames), 3458-3843 (verdict state machine, report build) fully; other summaries (mapping, planning, residual matching 1680-2260) skimmed via grep"
+R7,tools/runtime/monitor.py,996,SKIM,Q3;Q7;Q9;Q10;Q11,Read StreamStats (96-330): wall-arrival stale/gap/rate math; subscriptions/config loading 600-640 and spin loop skimmed
+R7,tools/runtime/flight_review_report.py,3057,SKIM,Q1;Q5;Q9;Q10;Q12,Read spatial envelopes 225-320 and legacy gate/overall derivation 1060-1118; rendering/SVG/JS bulk skimmed
+R7,tools/runtime/html_report.py,1359,SKIM,Q1;Q9;Q10,"Read acceptance summary 78-160, obstacle parsing 225-262, NED->ENU 382-405, velocity tracking 1026-1070; rest skimmed"
+R7,src/uav_simulation/src/visibility_cloud.cpp,296,FULL,Q1;Q4;Q10;Q11;Q12,"Verified ray reconstruction (azimuth/elevation grid, range_max endpoint), stratified sampler quotas (cannot under-fill for allowed caps), bounds checks; no defect found beyond config duplication R7-42"
+R7,src/uav_simulation/include/uav_simulation/visibility_cloud.hpp,66,FULL,Q1;Q7,API contract
+R7,src/uav_simulation/src/gz_lidar_bridge.cpp,189,FULL,Q3;Q8;Q11;Q12,"gz transport thread -> latest-only inbox (depth 1, drop counter) -> worker thread convert+publish SensorDataQoS depth 1; good bounded design"
+R7,src/uav_simulation/src/visibility_bridge.cpp,176,SKIM,Q3;Q7,organized-cloud -> free-space endpoints; grid constants as parameters (defaults duplicate model.sdf)
+R7,src/uav_simulation/CMakeLists.txt,68,SKIM,Q1,build of bridges + gtest
+R7,src/uav_simulation/package.xml,38,SKIM,Q1,manifest
+R7,src/uav_simulation/bridge/px4_mid360_control_bridge.yaml,21,FULL,Q4;Q7,"/clock, IMU, GT odometry bridge; runner rewrites world clock topic"
+R7,src/uav_simulation/bridge/px4_mid360_lidar_bridge.yaml,16,SKIM,Q4,lidar bridge config (runner uses dedicated gz_lidar_bridge instead)
+R7,src/uav_simulation/test/test_visibility_cloud.cpp,209,SKIM,Q1,"9 gtests: explicit no-return, stratified determinism, caps, frame/grid rejection"
+R7,src/uav_simulation/test/test_px4_mid360_assets.py,191,SKIM,Q1,"asset literal contracts (model constants, mount, worlds); does not cross-check runner/visibility_bridge grid"
+R7,src/uav_description/CMakeLists.txt,18,SKIM,Q1,install
+R7,src/uav_description/package.xml,17,SKIM,Q1,manifest
+R7,src/uav_description/test/test_sensor_frames_contract.py,43,SKIM,Q1,xacro frame contract test
+R7,tools/data.py,304,FULL,Q7;Q9;Q12,"catalog validation (hand-coded, schema.yaml unused), prepared dataset context, bag topic counts; manifest config ignored by runner (R7-43)"
+R7,tools/runtime/process_group.py,328,FULL,Q3;Q11;Q12,"process-group ownership, start-ticks PID-reuse guard, SIGINT->TERM->KILL staged stop, monitor stopped first; atomic JSON; /proc scan cost (R7-45)"
+R7,tools/runtime/evidence_writer.py,355,SKIM,Q3;Q8;Q11,"bounded queue + writer thread, drop accounting, close ordering; sound"
+R7,tools/runtime/world_observation_gate.py,292,SKIM,Q3;Q4;Q7,"test-only RegisteredScan relay/dropper (rclpy, depth-10 reliable); adds a Python hop to the mapping input during fault runs"
+R7,tools/runtime/closed_loop_characterization.py,487,SKIM,Q7;Q10,quintic reference derivatives verified; ENU->NED swap correct; clamp jerk (R7-44)
+R7,tools/runtime/runtime_environment.py,153,SKIM,Q12,"canonical python by path only, no version pin (R7-29)"
+R7,tools/runtime/pre_main_gate.py,134,SKIM,Q1;Q9,duplicates CI guard list (R7-14)
+R7,tools/validate_runtime_safety_ledger.py,207,SKIM,Q1;Q12,"regex markdown ledger validator (table rows, SHA/size markers); regex-on-prose by design"
+R7,tools/runtime/offboard_scenario.py,327,SKIM,Q1;Q3,offboard sim-check NED segment follower; 50 ms timer
+R7,tools/runtime/send_goal.py,114,SKIM,Q1,goal publisher helper
+R7,tools/runtime/dataset_shadow_planning.py,352,SKIM,Q1;Q3,bounded synthetic goal for dataset replay; spin_once loops
+R7,tools/runtime/gazebo_native_observer.py,444,SKIM,Q3,gz stats/clock observer thread; diagnostic only
+R7,tools/runtime/planner_trace.py,1173,SKIM,Q4,planner diagnostics -> trace records; pattern scan only
+R7,tools/runtime/command_diagnostics.py,66,SKIM,Q4,joins execution diagnostics to commands
+R7,tools/runtime/evidence_contract.py,335,SKIM,Q7,qualification-missing evidence contract; pattern scan only
+R7,tools/runtime/state_transport_analysis.py,285,SKIM,Q10,percentile copy (R7-23)
+R7,tools/runtime/benchmark_evidence_writer.py,118,SKIM,Q10,percentile copy (R7-23)
+R7,tools/runtime/build.py,349,SKIM,Q1,colcon build/test/check wrapper; pattern scan only
+R7,tools/runtime/build_provenance.py,260,SKIM,Q1,manifest/source fingerprint; pattern scan only
+R7,README.md,172,SKIM,Q1,user docs; Makefile targets
+R7,tools/runtime/analyze_ablation.py,73,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/analyze_closed_loop_characterization.py,800,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/analyze_e5_temporal_alignment.py,455,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/analyze_e5_tracking_root_cause.py,1166,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/analyze_h10.py,315,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/analyze_p0_envelope_regression.py,318,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/analyze_runtime_evidence.py,555,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/analyze_temporal_layers.py,216,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/analyze_terminal_recovery.py,196,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/build_closed_loop_characterization_report.py,252,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/build_runtime_report.py,191,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/extract_e5_causal_trace.py,312,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/extract_e5_px4_layers.py,124,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/finalize_h10_final.py,380,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/finalize_h10_report.py,102,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/run_exact_optimization_failure.py,67,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/run_state_transport_cohort.py,84,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/runtime/planner_baseline.py,297,SKIM,Q10,"offline analysis/one-off evidence script: pattern scan only (percentile defs R7-23, angle/threading/except patterns); not on the verdict path"
+R7,tools/benchmarks/rog_map_ray_report.py,296,SKIPPED,,"budget; offline benchmark report, not on verdict path"
+R7,tools/runtime/tests/test_analyze_temporal_layers.py,72,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_branch_scope_guards.py,144,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_c0_sw_witness.py,508,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_command_diagnostics.py,62,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_e5_tracking_root_cause.py,287,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_evaluation.py,1273,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_evidence_contract.py,425,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_evidence_writer.py,173,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_html_report.py,950,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_lifecycle_direct_commit.py,88,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_planner_baseline.py,65,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_planner_trace.py,725,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_runtime_contract.py,5670,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_send_goal.py,86,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/runtime/tests/test_state_transport_analysis.py,103,SKIM,Q1,"executed from a copy (460 tests: 2 fail: html float-sum on py3.11 R7-29, installed planner.yaml R-04); test_evaluation velocity fixtures have no attitude -> body/world twist bug R7-25 uncovered"
+R7,tools/tests/test_build.py,22,SKIM,Q1,not run by CI (R7-14)
+R7,tools/tests/test_data.py,49,SKIM,Q1,not run by CI (R7-14)
+-,.clang-format,7,NOT_IN_SCOPE,,repo metadata
+-,.clang-tidy,13,NOT_IN_SCOPE,,repo metadata
+-,.gitignore,32,NOT_IN_SCOPE,,repo metadata
+KTS,.gitmodules,7,FULL,Q1,"px4_msgs, px4_ros2_interface_lib (release/1.17) external"
+-,LICENSE,21,NOT_IN_SCOPE,,non-code text
+-,THIRD_PARTY_NOTICES.md,28,NOT_IN_SCOPE,,non-code text
+-,docs/adr/ADR-001-ros-flu-internal-frames.md,6,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/adr/ADR-002-odom-as-lio-world.md,6,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/adr/ADR-003-ikfom-compatible-state.md,8,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/adr/ADR-004-integer-nanosecond-time.md,6,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/adr/ADR-005-sim-simultaneous-scan.md,6,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/adr/ADR-006-corrected-odometry-first.md,6,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/adr/ADR-007-fixed-extrinsic-by-default.md,7,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/adr/ADR-008-registration-map-is-not-world-model.md,6,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/adr/ADR-009-overlapping-lidar-scan-policy.md,92,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/adr/ADR-010-navigation-world-model.md,24,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/adr/ADR-011-world-snapshot-ownership.md,188,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/adr/ADR-012-product-owned-tree-and-naming.md,98,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/architecture/PATH_FOLLOWING_IMPLEMENTATION.md,33,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/architecture/continuous_waypoint_trajectory_plan.md,683,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/architecture/dual_planning_unknown_space.md,38,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/architecture/estimator_pipeline.md,19,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/architecture/estimator_state.md,40,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+KTS,docs/architecture/frame_conventions.md,138,FULL,Q9;Q10,"D-03, EKF2 params"
+KTS,docs/architecture/navigation_layers.md,83,FULL,Q1;Q2;Q9,D-02
+KTS,docs/architecture/parameter_contract.md,80,FULL,Q9,D-05
+-,docs/architecture/planner_receding_horizon_contract.md,72,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/architecture/px4_tracking_adapter_design_20260909.md,229,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/architecture/repository_layout.md,79,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/architecture/runtime_safety_decision_ledger.md,15,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+KTS,docs/architecture/timing_contract.md,62,FULL,Q1;Q9;Q10,D-01
+-,docs/architecture/world_snapshot_cow_design_note.md,37,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/benchmarks/external-mode-20260821T052240-baseline.md,40,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/repo-documentation-standardization-design-report.docx,10104,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/reports/architecture_simplification_plan_2026-09-05.md,120,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/reports/baseline_c86a3f61_architecture_issue_review_2026-09-05.md,342,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/reports/completed_terminal_handover_review_2026-09-05.md,107,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/reports/execution_architecture_5mps_diagnostic_2026-09-16.md,173,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/reports/execution_architecture_corrected_baseline_2026-09-16.md,150,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/reports/external_mode_sitl_isolation_2026-08-31.md,325,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/reports/feasible_checkpoint_5mps_diagnostic_2026-09-17.md,7889,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/reports/navigation_qualification_status_2026-09-07.md,434,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/reports/planner_5wp_nominal_replay_2026-09-16.md,180,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/reports/planner_5wp_terminal_state_probe_2026-09-16.md,233,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/reports/sensor_ray_contract_fix_2026-09-05.md,47,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/reports/super_architecture_comparison_2026-09-05.md,84,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/runtime_validation.md,404,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+KTS,docs/safety/archive/runtime_safety_legacy_full.md,22542,SKIM,Q9,grep-based dup check only
+-,docs/safety/mission_authority_cut.md,43,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/safety/runtime_config_truth_20260924.md,47,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+KTS,docs/safety/runtime_safety_current.md,500,SKIM,Q9,HG-001/HG-031 (ADR-017 N10)
+-,docs/safety/runtime_safety_index.md,809,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/validation/navigation_generalization_matrix.md,20,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/validation/navigation_reimplementation_review.md,244,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/validation/planning_stability_action_plan_20260909.md,96,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,docs/validation/refactor_error_history.md,213,NOT_IN_SCOPE,,history/report doc; indexed in KB-07 D-04
+-,src/contracts/navigation_contracts/README.md,19,NOT_IN_SCOPE,,non-code text
+-,src/contracts/navigation_mission/README.md,9,NOT_IN_SCOPE,,non-code text
+-,src/estimation/ikd_tree_vendor/PATCHES.md,42,NOT_IN_SCOPE,,non-code text
+-,src/estimation/ikd_tree_vendor/UPSTREAM.md,20,NOT_IN_SCOPE,,non-code text
+-,src/estimation/ikd_tree_vendor/vendor/ikd-Tree/LICENSE,339,NOT_IN_SCOPE,,non-code text
+-,src/estimation/ikd_tree_vendor/vendor/ikd-Tree/README.md,111,NOT_IN_SCOPE,,non-code text
+-,src/estimation/ikfom_vendor/LICENSES/README.md,6,NOT_IN_SCOPE,,non-code text
+-,src/estimation/ikfom_vendor/PATCHES.md,31,NOT_IN_SCOPE,,non-code text
+-,src/estimation/ikfom_vendor/UPSTREAM.md,37,NOT_IN_SCOPE,,non-code text
+-,src/estimation/ikfom_vendor/cmake/README.md,5,NOT_IN_SCOPE,,non-code text
+-,src/estimation/ikfom_vendor/vendor/IKFoM/LICENSE,339,NOT_IN_SCOPE,,non-code text
+-,src/estimation/ikfom_vendor/vendor/IKFoM/README.md,520,NOT_IN_SCOPE,,non-code text
+-,src/external/README.md,55,NOT_IN_SCOPE,,external submodule (upstream)
+-,src/external/px4_msgs,0,NOT_IN_SCOPE,,external submodule (upstream)
+-,src/external/px4_ros2_interface_lib,0,NOT_IN_SCOPE,,external submodule (upstream)
+-,src/mapping/rog_map_vendor/UPSTREAM.md,296,NOT_IN_SCOPE,,non-code text
+-,src/navigation_bringup/README.md,67,NOT_IN_SCOPE,,non-code text
+-,src/navigation_bringup/rviz/fast_lio.rviz,141,NOT_IN_SCOPE,,asset; xacro mount mirrored by runner
+-,src/planning/navigation_planning_backend/PLANNER_BACKEND_PORT_SHA256.json,55,NOT_IN_SCOPE,,asset; xacro mount mirrored by runner
+-,src/planning/navigation_planning_backend/UPSTREAM.md,30,NOT_IN_SCOPE,,non-code text
+-,src/uav_description/urdf/uav_sensor_frames.urdf.xacro,35,NOT_IN_SCOPE,,asset; xacro mount mirrored by runner
+-,src/uav_simulation/models/lidar_mid360/model.config,11,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/models/lidar_mid360/model.sdf,80,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/models/x500_mid360/model.config,8,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/models/x500_mid360/model.sdf,26,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/closed_loop_characterization.sdf,30,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/corridor.sdf,15,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/forest_clutter.sdf,13,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/long_cross_obstacles.sdf,28,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/long_featured.sdf,47,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/long_open.sdf,15,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/long_open_featured_speed.sdf,73,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/long_three_pillars.sdf,43,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/long_three_pillars_speed.sdf,57,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/navigation_generalization.sdf,40,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/no_path.sdf,17,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/occlusion.sdf,38,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/occlusion_degenerate.sdf,15,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/open.sdf,14,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/pillar.sdf,15,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/px4_lio_smoke.sdf,60,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/tunnel_irregular.sdf,12,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,src/uav_simulation/worlds/tunnel_smooth.sdf,12,NOT_IN_SCOPE,,world/model data for collision truth (R-03); geometry not audited
+-,tools/datasets/record_mid360_bag.sh,33,NOT_IN_SCOPE,,helper script
+-,tools/simulation/README.md,30,NOT_IN_SCOPE,,non-code text
+-,tools/simulation/px4_mid360_startup.sh,51,NOT_IN_SCOPE,,helper script
+KTS,tools/simulation/run_px4_mid360.sh,233,SKIM,Q1;Q3;Q9,PX4 SITL params: EKF2 GPS+MAG+EV yaw; no spawn pose => yaw 0 (context R5-17)
+-,tools/vendor_manifest.tsv,19,NOT_IN_SCOPE,,non-code text

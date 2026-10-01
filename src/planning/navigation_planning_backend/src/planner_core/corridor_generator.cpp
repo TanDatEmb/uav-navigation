@@ -1,0 +1,629 @@
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
+
+#include <planner_core/corridor_generator.h>
+
+#include <chrono>
+#include <navigation_math/scope_timer.hpp>
+
+using namespace navigation_math;
+
+namespace navigation_planning_backend {
+
+namespace {
+
+geometry_utils::Polytope acceptanceBallInnerCell(
+        const Vec3f& centre, const double radius_m) {
+    // An axis-aligned cube with half extent r/sqrt(3) is wholly contained in
+    // the 3-D acceptance ball. This gives MINCO a convex optimization cell
+    // without replacing the mission's spherical measured-state authority.
+    const double half_extent_m = radius_m / std::sqrt(3.0);
+    MatD4f planes(6, 4);
+    planes <<
+        1.0, 0.0, 0.0, -(centre.x() + half_extent_m),
+       -1.0, 0.0, 0.0,  (centre.x() - half_extent_m),
+        0.0, 1.0, 0.0, -(centre.y() + half_extent_m),
+        0.0,-1.0, 0.0,  (centre.y() - half_extent_m),
+        0.0, 0.0, 1.0, -(centre.z() + half_extent_m),
+        0.0, 0.0,-1.0,  (centre.z() - half_extent_m);
+    return geometry_utils::Polytope(std::move(planes));
+}
+
+}  // namespace
+
+    CorridorGenerator::CorridorGenerator(const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
+                                         navigation_world_model::WorldModelViewPtr map_ptr, const double bound_dis,
+                                         const double seed_line_max_dis, const double min_overlap_threshold,
+                                         const double robot_r, const int iris_iter_num,
+                                         const navigation_world_model::UnknownPolicy unknown_policy)
+            : planner_context_(planner_context), map_ptr_(std::move(map_ptr)) {
+        ciri_ = std::make_shared<CIRI>(planner_context_);
+        ciri_->setupParams(robot_r, iris_iter_num);
+        bound_dis_ = bound_dis;
+        seed_line_max_length_ = seed_line_max_dis;
+        min_overlap_threshold_ = min_overlap_threshold;
+        robot_r_ = robot_r;
+        iris_iter_num_ = iris_iter_num;
+        unknown_policy_ = unknown_policy;
+        refreshVerticalBounds();
+//        failed_traj_log.open(DEBUG_FILE_DIR("sfc.csv"), std::ios::out | std::ios::trunc);
+    }
+
+    void CorridorGenerator::refreshVerticalBounds() {
+        if (!map_ptr_) {
+            throw std::invalid_argument("CorridorGenerator requires a world-model view");
+        }
+        // These values are physical occupied-plane constraints only when the
+        // geometry flag is true.  Otherwise they are the current immutable
+        // snapshot's sliding-map availability bounds.  Refreshing them on
+        // every view change prevents a frozen absolute Z window after a slide.
+        const auto map_geometry = map_ptr_->geometry();
+        virtual_ceiling_height_ = map_geometry.effective_virtual_ceiling_m - robot_r_;
+        virtual_ground_height_ = map_geometry.effective_virtual_ground_m + robot_r_;
+    }
+
+
+    void CorridorGenerator::SetLineNeighborList(const vec_E<Vec3i> &_line_seed_neighbor_list) {
+        this->line_seed_neighbor_list = _line_seed_neighbor_list;
+    }
+
+    bool
+    CorridorGenerator::SearchPolytopeOnPath(const vec_Vec3f &path, PolytopeVec &sfcs,
+                                            Vec3f &shifted_start_pt,
+                                            bool cut_first_poly,
+                                            const AbsoluteDeadline* deadline,
+                                            const std::optional<RouteBoundaryGate>& route_boundary_gate) {
+        // https://whimsical.com/flow-3TASJFwe1dASYYY2xHEmze
+        // password: wtr
+        //	TimeConsuming t___("SearchPolytopeOnPath");
+        sfcs.clear();
+        latest_pc.clear();
+        solve_stage_.store(1);
+        solve_point_count_.store(0);
+        if (path.empty()) {
+            solve_stage_.store(0);
+            return false;
+        }
+
+        // A* allocation can leave sparse direct edges, especially the final
+        // edge into a waypoint. The normal corridor search deliberately
+        // rejects line seeds beyond its bounded length, so normalize every
+        // guide edge before constructing any CIRI seed. This keeps the
+        // bounded-seed contract independent of which edge contains a route
+        // boundary and avoids a late hard reject that strands the committed
+        // trajectory at the previous safe prefix.
+        vec_Vec3f corridor_path;
+        if (!geometry_utils::subdividePathByMaximumSegmentLength(
+                path, seed_line_max_length_, corridor_path)) {
+            planner_context_->warn(
+                " -- [planner] guide path contains invalid or unbounded segment");
+            solve_stage_.store(0);
+            return false;
+        }
+        std::optional<std::size_t> route_boundary_index;
+        if (route_boundary_gate.has_value()) {
+            if (!route_boundary_gate->point.allFinite() ||
+                !std::isfinite(route_boundary_gate->radius_m) ||
+                route_boundary_gate->radius_m <= 0.0) {
+                planner_context_->warn(
+                    " -- [planner] invalid route-boundary gate geometry");
+                solve_stage_.store(0);
+                return false;
+            }
+            double nearest_distance = std::numeric_limits<double>::infinity();
+            std::size_t nearest_index = 0U;
+            for (std::size_t index = 0; index < corridor_path.size(); ++index) {
+                const double distance =
+                    (corridor_path[index] - route_boundary_gate->point).norm();
+                if (distance < nearest_distance) {
+                    nearest_distance = distance;
+                    nearest_index = index;
+                }
+            }
+            const double matching_tolerance = std::max(
+                1.0e-4, std::min(0.25, route_boundary_gate->radius_m * 0.25));
+            if (!std::isfinite(nearest_distance) ||
+                nearest_distance > matching_tolerance ||
+                nearest_index == 0U || nearest_index + 1U >= corridor_path.size()) {
+                planner_context_->warn(
+                    " -- [planner] route-boundary gate is not an interior guide sample "
+                    "distance={} tolerance={} index={} path_size={}",
+                    nearest_distance, matching_tolerance, nearest_index,
+                    corridor_path.size());
+                solve_stage_.store(0);
+                return false;
+            }
+            route_boundary_index = nearest_index;
+        }
+
+        vector<Line> seed_lines;
+        std::size_t first_id, second_id;
+        Polytope overlap;
+        Vec3f interior_pt;
+        double interior_depth;
+        Polytope temp_poly, temp_poly_fix_p;
+        int max_loop = 1000;
+        int cnt_loop = 0;
+        first_id = 0U;
+
+        while (first_id < corridor_path.size() &&
+              map_ptr_->classify(corridor_path[first_id], navigation_world_model::GridLayer::kInflated) ==
+                  navigation_world_model::CellState::kOccupied) {
+            first_id++;
+        }
+
+        if (first_id >= corridor_path.size()) {
+            planner_context_->warn(" -- [planner] Corridor path is entirely inside inflated occupancy");
+            solve_stage_.store(0);
+            return false;
+        }
+        const auto first_state = map_ptr_->classify(
+            corridor_path[first_id], navigation_world_model::GridLayer::kInflated);
+        const bool first_point_body_supported =
+            first_id == 0U && current_body_support_ &&
+            current_body_support_->contains(
+                corridor_path[first_id].cast<double>(), map_ptr_->identity(),
+                current_body_support_->source_stamp_ns);
+        if (!navigation_world_model::isCellTraversable(first_state, unknown_policy_) &&
+            !first_point_body_supported) {
+            planner_context_->warn(
+                " -- [planner] Corridor path starts in a non-traversable cell");
+            solve_stage_.store(0);
+            return false;
+        }
+
+        // A measured body witness is an ordered geometric-prefix contract.
+        // Known-free evidence does not consume it; physical exit does.
+        bool body_prefix_active = first_point_body_supported;
+
+        if(first_id!=0){
+            shifted_start_pt = corridor_path[first_id];
+            double dis = (corridor_path[first_id] - corridor_path[0]).norm() * 1.2;
+            GenerateEmptyPolytope(corridor_path[0], dis, temp_poly);
+            sfcs.emplace_back(temp_poly);
+        }
+
+        while (cnt_loop++ < max_loop) {
+            if (deadline && deadline->steadyExpired()) {
+                solve_stage_.store(0);
+                return false;
+            }
+            solve_stage_.store(1);
+            second_id = first_id;
+            bool reached_route_boundary = false;
+            for (std::size_t j = first_id + 1; j < corridor_path.size(); ++j) {
+                if (route_boundary_index.has_value() &&
+                    j == *route_boundary_index) {
+                    // Stop the line corridor exactly at the mission boundary,
+                    // but do not make the final line seed exceed the bounded
+                    // CIRI length. If the boundary is still too far away,
+                    // commit the last bounded prefix and revisit the boundary
+                    // in the next outer iteration.
+                    const double boundary_seed_length =
+                        (corridor_path[j] - corridor_path[first_id]).norm();
+                    if (boundary_seed_length <= seed_line_max_length_ + 1.0e-6) {
+                        second_id = j;
+                        reached_route_boundary = true;
+                    } else {
+                        second_id = j - 1;
+                    }
+                    break;
+                }
+                bool reach_segment = false;
+                const double seed_length =
+                    (corridor_path[j] - corridor_path[first_id]).norm();
+                // Use one deterministic collision oracle throughout A*, main
+                // trajectory truncation and corridor generation.  The map's
+                // inflated layer includes the continuous vehicle radius plus
+                // a voxel-rasterization shell, so repeating every ray sample
+                // over the base-grid spherical neighbour list is redundant
+                // and can stall for seconds around an obstacle boundary.
+                const bool line_free = seed_length <= seed_line_max_length_ &&
+                    (body_prefix_active && current_body_support_
+                         ? map_ptr_->isSegmentTraversableWithCurrentBodySupport(
+                             corridor_path[first_id].cast<double>(),
+                             corridor_path[j].cast<double>(),
+                             navigation_world_model::GridLayer::kInflated,
+                             unknown_policy_, current_body_support_)
+                         : map_ptr_->isSegmentTraversable(
+                             corridor_path[first_id], corridor_path[j],
+                             navigation_world_model::GridLayer::kInflated,
+                             unknown_policy_));
+                if (!line_free) {
+                    reach_segment = true;
+                }
+                if (reach_segment) {
+                    second_id = j - 1;
+                    if (second_id > first_id + 1U) {
+                        --second_id;
+                    }
+                    break;
+                }
+                second_id = j;
+            }
+
+            if (second_id == first_id && second_id + 1U < corridor_path.size()) {
+                planner_context_->warn(
+                        " -- [planner] Frontend path contains a blocked adjacent edge at index {}",
+                        first_id);
+                solve_stage_.store(0);
+                return false;
+            }
+
+            seed_lines.emplace_back(corridor_path[first_id], corridor_path[second_id]);
+            if ((corridor_path[first_id] - corridor_path[second_id]).norm() >
+                seed_line_max_length_ * 1.5) {
+                fmt::print("first: {}\n second: {}\n seed line max: {}\n",
+                           corridor_path[first_id].transpose(),
+                           corridor_path[second_id].transpose(), seed_line_max_length_);
+                solve_stage_.store(0);
+                return false;
+            }
+            if (!GeneratePolytopeFromLine(seed_lines.back(), temp_poly, deadline)) {
+                cout << YELLOW << " -- [planner] GeneratePolytopeFromLine failed." << RESET << endl;
+                solve_stage_.store(0);
+                return false;
+            }
+
+// viz for debug
+//            planner_context_->vizCiriPolytope(temp_poly, "debug");
+//            usleep(10000);
+
+            if (!sfcs.empty()) {
+                solve_stage_.store(4);
+                overlap = sfcs.back().CrossWith(temp_poly);
+                interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
+                temp_poly.overlap_depth_with_last_one = interior_depth;
+                temp_poly.interior_pt_with_last_one = interior_pt;
+                if (interior_depth < min_overlap_threshold_) {
+                    if (!GeneratePolytopeFromPoint(
+                            corridor_path[first_id], temp_poly_fix_p, deadline)) {
+                        cout << YELLOW << " -- [planner] GeneratePolytopeFromPoint failed." << RESET << endl;
+                        solve_stage_.store(0);
+                        return false;
+                    }
+                    overlap = sfcs.back().CrossWith(temp_poly_fix_p);
+                    interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
+                    if (interior_depth <= 0.01) {
+                        planner_context_->warn(
+                                " -- [planner] Cannot find continuous corridor on path, overlap only {}, force return.",
+                                interior_depth);
+// viz for debug
+//                        planner_context_->vizCiriPointCloud(latest_pc);
+//                        usleep(100000);
+//                        exit(-1);
+                        solve_stage_.store(0);
+                        return false;
+                    }
+                    temp_poly_fix_p.overlap_depth_with_last_one = interior_depth;
+                    temp_poly_fix_p.interior_pt_with_last_one = interior_pt;
+                    sfcs.push_back(temp_poly_fix_p);
+                    overlap = sfcs.back().CrossWith(temp_poly);
+                    interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
+                    if (interior_depth <= 0.01) {
+                        planner_context_->warn(
+                                " -- [planner] Cannot find continuous corridor on path, overlap only {}, force return.",
+                                interior_depth);
+                        // viz for debug
+//                        planner_context_->vizCiriPointCloud(latest_pc);
+//                        usleep(100000);
+//                        exit(-1);
+                        solve_stage_.store(0);
+                        return false;
+                    }
+                } else {
+                    if (sfcs.size() >= 2U && !sfcs.back().IsRouteBoundaryGate()) {
+                        const std::size_t temp_id = sfcs.size() - 2U;
+                        overlap = sfcs[temp_id].CrossWith(temp_poly);
+                        interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
+                        if (interior_depth > sfcs[temp_id + 1].overlap_depth_with_last_one * 0.25) {
+                            temp_poly.overlap_depth_with_last_one = interior_depth;
+                            temp_poly.interior_pt_with_last_one = interior_pt;
+                            sfcs.pop_back();
+                        }
+                    }
+                }
+            }
+
+            sfcs.push_back(temp_poly);
+            if (body_prefix_active && current_body_support_ &&
+                second_id < corridor_path.size()) {
+                const auto endpoint = corridor_path[second_id].cast<double>();
+                body_prefix_active = current_body_support_->containsSegment(
+                    corridor_path[first_id].cast<double>(), endpoint,
+                    map_ptr_->identity(), current_body_support_->source_stamp_ns);
+            }
+            if (reached_route_boundary) {
+                Polytope boundary_poly;
+                if (!GeneratePolytopeFromPoint(
+                        corridor_path[second_id], boundary_poly, deadline)) {
+                    planner_context_->warn(
+                        " -- [planner] failed to construct route-boundary point corridor");
+                    solve_stage_.store(0);
+                    return false;
+                }
+                // Make the route-boundary cell itself a hard convex subset of
+                // the mission acceptance ball. Every certified polynomial
+                // piece assigned to this cell therefore enters the measured
+                // acceptance region; optimization does not depend on a soft
+                // spherical penalty or an exact-centre junction.
+                const auto boundary_seed_line = boundary_poly.seed_line;
+                const double boundary_seed_radius = boundary_poly.robot_r;
+                boundary_poly = boundary_poly.CrossWith(
+                    acceptanceBallInnerCell(
+                        route_boundary_gate->point,
+                        route_boundary_gate->radius_m));
+                // Polytope intersection intentionally returns geometry only.
+                // Restore the collision-checked seed provenance required by
+                // the downstream per-segment vertical envelope.
+                boundary_poly.SetSeedLine(
+                    boundary_seed_line, boundary_seed_radius);
+                if (!boundary_poly.PointIsInside(corridor_path[second_id], 1.0e-6)) {
+                    planner_context_->warn(
+                        " -- [planner] route-boundary corridor excludes its waypoint");
+                    solve_stage_.store(0);
+                    return false;
+                }
+                const Polytope overlap = sfcs.back().CrossWith(boundary_poly);
+                Vec3f boundary_interior;
+                const double incoming_overlap =
+                    geometry_utils::findInteriorDist(
+                        overlap.GetPlanes(), boundary_interior);
+                if (!std::isfinite(incoming_overlap) || incoming_overlap <= 0.01) {
+                    planner_context_->warn(
+                        " -- [planner] route-boundary corridor has insufficient "
+                        "incoming overlap depth={}", incoming_overlap);
+                    solve_stage_.store(0);
+                    return false;
+                }
+                boundary_poly.overlap_depth_with_last_one = incoming_overlap;
+                boundary_poly.interior_pt_with_last_one = boundary_interior;
+                boundary_poly.SetRouteBoundaryContract(
+                    corridor_path[second_id], route_boundary_gate->radius_m);
+                sfcs.push_back(boundary_poly);
+                planner_context_->info(
+                    " -- [planner] inserted route-boundary junction index={} radius={} "
+                    "overlap_depth={}",
+                    second_id, route_boundary_gate->radius_m,
+                    incoming_overlap);
+            }
+            if (second_id == corridor_path.size() - 1U) {
+                break;
+            }
+            first_id = second_id;
+        }
+        // Delete last polytope if the second last one contains the last point
+
+
+        if (cnt_loop >= max_loop) {
+            cout << YELLOW << " -- [planner] Reach max iteration, failed." << RESET << endl;
+            solve_stage_.store(0);
+            return false;
+        }
+
+        if (sfcs.empty()) {
+            solve_stage_.store(0);
+            return false;
+        }
+
+        solve_stage_.store(0);
+        return true;
+    }
+
+
+    void CorridorGenerator::getSeedBBox(const Vec3f &p1, const Vec3f &p2, Vec3f &box_min, Vec3f &box_max) {
+        box_min = p1.cwiseMin(p2);
+        box_max = p1.cwiseMax(p2);
+        box_min -= Vec3f(bound_dis_, bound_dis_, bound_dis_);
+        box_max += Vec3f(bound_dis_, bound_dis_, bound_dis_);
+    }
+
+    bool CorridorGenerator::GeneratePolytopeFromPoint(const Vec3f &pt, Polytope &polytope,
+                                                      const AbsoluteDeadline* deadline) {
+        if (deadline && deadline->steadyExpired()) return false;
+        Eigen::Vector3d box_max, box_min;
+        vec_E<Vec3f> pc;
+        getSeedBBox(pt, pt, box_min, box_max);
+        const auto bounded_box = map_ptr_->clampToLocalBounds({box_min, box_max});
+        box_min = bounded_box.minimum;
+        box_max = bounded_box.maximum;
+        box_min.z() = std::max(box_min.z(), virtual_ground_height_);
+        box_max.z() = std::min(box_max.z(), virtual_ceiling_height_);
+        solve_stage_.store(5);
+        pc = map_ptr_->observedOccupiedPoints({box_min, box_max});
+        solve_point_count_.store(pc.size());
+        // Virtual floor and ceiling are deterministic planes, not sampled
+        // obstacles. Account for the vehicle radius directly in the boundary
+        // half-spaces and keep them out of CIRI's quadratic point loop.
+        MatD4f planes;
+        Eigen::Vector3d a = pt, b = pt;
+        Eigen::Matrix<double, 6, 4> bd = Eigen::Matrix<double, 6, 4>::Zero();
+        bd(0, 0) = 1.0;
+        bd(1, 0) = -1.0;
+        bd(2, 1) = 1.0;
+        bd(3, 1) = -1.0;
+        bd(4, 2) = 1.0;
+        bd(5, 2) = -1.0;
+        bd(0, 3) = -box_max.x();
+        bd(1, 3) = box_min.x();
+        bd(2, 3) = -box_max.y();
+        bd(3, 3) = box_min.y();
+        bd(4, 3) = -box_max.z();
+        bd(5, 3) = box_min.z();
+        // 将vector放到Eigen里，准备开始分解
+        if (pc.empty()) {
+            // 障碍物点云为空，直接返回一个方块
+            // Ax + By + Cz + D = 0
+            planes.resize(6, 4);
+            planes.row(0) << 1, 0, 0, -box_max.x();
+            planes.row(1) << 0, 1, 0, -box_max.y();
+            planes.row(2) << 0, 0, 1, -box_max.z();
+            planes.row(3) << -1, 0, 0, box_min.x();
+            planes.row(4) << 0, -1, 0, box_min.y();
+            planes.row(5) << 0, 0, -1, box_min.z();
+            polytope.SetPlanes(planes);
+            polytope.SetSeedLine(Line{pt, pt});
+            return true;
+        }
+        appendDiagnosticPoints(pc);
+        Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>> pp(pc[0].data(), 3, pc.size());
+        navigation_math::TimeConsuming tc("emvp", false);
+        const auto ciri_start = std::chrono::steady_clock::now();
+        solve_stage_.store(6);
+        RET_CODE success = ciri_->convexDecomposition(bd, pp, a, b, deadline);
+        const double ciri_wall_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - ciri_start).count();
+        if (ciri_wall_ms > 100.0) {
+            planner_context_->warn(" -- [CIRI] point seed solve slow points={} wall_ms={} result={}",
+                           pc.size(), ciri_wall_ms, static_cast<int>(success));
+        }
+        double dt = tc.stop();
+        if (success == SUCCESS) {
+            ciri_cnt++;
+            ciri_t += dt;
+            ciri_->getPolytope(polytope);
+            polytope.SetSeedLine(Line{pt, pt});
+            return true;
+        } else {
+            cout << YELLOW << " -- [planner] CSpaceFiri failed." << RESET << endl;
+            cout << YELLOW << "\t box_min =" << box_min.transpose() << endl;
+            cout << YELLOW << "\t box_max = " << box_max.transpose() << endl;
+            cout << YELLOW << "\t seed pt = " << pt.transpose() << endl;
+            polytope.Reset();
+            return false;
+        }
+
+    }
+
+    bool CorridorGenerator::GenerateEmptyPolytope(const navigation_math::Vec3f &pt,
+                                                  const double & dis,
+                                                  Polytope & polytope){
+        Eigen::Vector3d box_max, box_min;
+        box_min = pt;
+        box_max = pt;
+        box_min -= Vec3f(dis, dis, dis);
+        box_max += Vec3f(dis, dis, dis);
+        MatD4f planes;
+        Eigen::Matrix<double, 6, 4> bd = Eigen::Matrix<double, 6, 4>::Zero();
+        bd(0, 0) = 1.0;
+        bd(1, 0) = -1.0;
+        bd(2, 1) = 1.0;
+        bd(3, 1) = -1.0;
+        bd(4, 2) = 1.0;
+        bd(5, 2) = -1.0;
+        bd(0, 3) = -box_max.x();
+        bd(1, 3) = box_min.x();
+        bd(2, 3) = -box_max.y();
+        bd(3, 3) = box_min.y();
+        bd(4, 3) = -box_max.z();
+        bd(5, 3) = box_min.z();
+        // 障碍物点云为空，直接返回一个方块
+        // Ax + By + Cz + D = 0
+        planes.resize(6, 4);
+        planes.row(0) << 1, 0, 0, -box_max.x();
+        planes.row(1) << 0, 1, 0, -box_max.y();
+        planes.row(2) << 0, 0, 1, -box_max.z();
+        planes.row(3) << -1, 0, 0, box_min.x();
+        planes.row(4) << 0, -1, 0, box_min.y();
+        planes.row(5) << 0, 0, -1, box_min.z();
+        polytope.SetPlanes(planes);
+        polytope.SetSeedLine(Line{pt, pt});
+        return true;
+    }
+
+    bool CorridorGenerator::GeneratePolytopeFromLine(Line &line, Polytope &polytope,
+                                                     const AbsoluteDeadline* deadline) {
+        if (deadline && deadline->steadyExpired()) return false;
+        Eigen::Vector3d box_max, box_min;
+        vec_E<Vec3f> pc, pts{line.first, line.second};
+        getSeedBBox(line.first, line.second, box_min, box_max);
+        const auto bounded_box = map_ptr_->clampToLocalBounds({box_min, box_max});
+        box_min = bounded_box.minimum;
+        box_max = bounded_box.maximum;
+        box_min.z() = std::max(box_min.z(), virtual_ground_height_);
+        box_max.z() = std::min(box_max.z(), virtual_ceiling_height_);
+        solve_stage_.store(2);
+        pc = map_ptr_->observedOccupiedPoints({box_min, box_max});
+        solve_point_count_.store(pc.size());
+        MatD4f planes;
+        Eigen::Vector3d a = line.first, b = line.second;
+        Eigen::Matrix<double, 6, 4> bd = Eigen::Matrix<double, 6, 4>::Zero();
+        bd(0, 0) = 1.0;
+        bd(1, 0) = -1.0;
+        bd(2, 1) = 1.0;
+        bd(3, 1) = -1.0;
+        bd(4, 2) = 1.0;
+        bd(5, 2) = -1.0;
+        bd(0, 3) = -box_max.x();
+        bd(1, 3) = box_min.x();
+        bd(2, 3) = -box_max.y();
+        bd(3, 3) = box_min.y();
+        bd(4, 3) = -box_max.z();
+        bd(5, 3) = box_min.z();
+        // 将vector放到Eigen里，准备开始分解
+        if (pc.empty()) {
+            // 障碍物点云为空，直接返回一个方块
+            // Ax + By + Cz + D = 0g
+            planes.resize(6, 4);
+            planes.row(0) << 1, 0, 0, -box_max.x();
+            planes.row(1) << 0, 1, 0, -box_max.y();
+            planes.row(2) << 0, 0, 1, -box_max.z();
+            planes.row(3) << -1, 0, 0, box_min.x();
+            planes.row(4) << 0, -1, 0, box_min.y();
+            planes.row(5) << 0, 0, -1, box_min.z();
+            polytope.SetPlanes(planes);
+            polytope.SetSeedLine(line);
+            return true;
+        }
+        // save to latest pc
+        appendDiagnosticPoints(pc);
+        Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>> pp(pc[0].data(), 3, pc.size());
+        navigation_math::TimeConsuming tc("emvp", false);
+        const auto ciri_start = std::chrono::steady_clock::now();
+        solve_stage_.store(3);
+        RET_CODE success = ciri_->convexDecomposition(bd, pp, a, b, deadline);
+        const double ciri_wall_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - ciri_start).count();
+        if (ciri_wall_ms > 100.0) {
+            planner_context_->warn(" -- [CIRI] line seed solve slow points={} wall_ms={} result={}",
+                           pc.size(), ciri_wall_ms, static_cast<int>(success));
+        }
+        double dt = tc.stop();
+        if (success == SUCCESS) {
+            ciri_cnt++;
+            ciri_t += dt;
+            ciri_->getPolytope(polytope);
+            polytope.SetSeedLine(line);
+            return true;
+        } else {
+            planner_context_->warn(
+                " -- [CIRI] line-seed decomposition rejected result={} points={} "
+                "seed_length={} deadline_expired={}",
+                RET_CODE_STR[success], pc.size(), (line.second - line.first).norm(),
+                deadline != nullptr && deadline->steadyExpired());
+            polytope.Reset();
+            cout << YELLOW << "\t box_min = " << box_min.transpose() << RESET << endl;
+            cout << YELLOW << "\t box_max =" << box_max.transpose() << RESET << endl;
+            cout << YELLOW << "\t seed line =" << line.first.transpose() << " --> " << line.second.transpose()
+                 << RESET << endl;
+
+//            failed_traj_log << 889900 << endl;
+//            failed_traj_log << bd << endl;
+//            failed_traj_log << 0 << endl;
+//            failed_traj_log << pp << endl;
+//            failed_traj_log << 0 << endl;
+//            failed_traj_log << a.transpose() << endl;
+//            failed_traj_log << 0 << endl;
+//            failed_traj_log << b.transpose() << endl;
+//            failed_traj_log << 0 << endl;
+//            failed_traj_log << robot_r_ << endl;
+//            failed_traj_log << 0 << endl;
+//            failed_traj_log << iris_iter_num_ << endl;
+            return false;
+        }
+
+    }
+}

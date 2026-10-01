@@ -1,0 +1,1884 @@
+# Parameter ICD.  `default` and `read_at` are source anchors; values under
+# values_in_yaml are static config values only.  Runner-generated overlays are
+# listed separately and are not silently treated as repository YAML.
+
+- node: fast_lio_node
+  param: frames.odom
+  type: string
+  default: {value: lio_odom, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:151}
+  validation: {rule: non-empty and frame identity checks, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: lio_odom, config/runtime/dataset.yaml: lio_odom}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:134]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: frames.base
+  type: string
+  default: {value: base_link, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:152}
+  validation: {rule: non-empty, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: base_link, config/runtime/dataset.yaml: base_link}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:134]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: frames.imu
+  type: string
+  default: {value: livox_imu_frame, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:153}
+  validation: {rule: non-empty, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: livox_imu_frame, config/runtime/dataset.yaml: livox_imu_frame}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:134]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: frames.lidar
+  type: string
+  default: {value: livox_frame, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:154}
+  validation: {rule: non-empty, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: livox_frame, config/runtime/dataset.yaml: livox_frame}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:134]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.lidar_topic
+  type: string
+  default: {value: /lidar/points, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:155}
+  validation: {rule: non-empty, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: /lidar/points, config/runtime/dataset.yaml: /lidar/points}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:206]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.imu_topic
+  type: string
+  default: {value: /lidar/imu, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:156}
+  validation: {rule: non-empty, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: /lidar/imu, config/runtime/dataset.yaml: /lidar/imu}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:192]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.visibility_points_topic
+  type: string
+  default: {value: "", at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:157-158}
+  validation: {rule: optional; if non-empty creates subscription, at: src/estimation/fast_lio_ros/src/fast_lio_node.cpp:212-218}
+  values_in_yaml: {config/runtime/sim.yaml: /lidar/free_space_endpoints}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:212]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.lidar_frame
+  type: string
+  default: {value: frames.lidar, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:159-160}
+  validation: {rule: non-empty, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: livox_frame, config/runtime/dataset.yaml: livox_frame}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:206]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.imu_frame
+  type: string
+  default: {value: frames.imu, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:161-162}
+  validation: {rule: non-empty, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: livox_imu_frame, config/runtime/dataset.yaml: livox_imu_frame}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:192]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.lidar_message_type
+  type: string
+  default: {value: pointcloud2, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:163}
+  validation: {rule: pointcloud2 or livox_custom, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: pointcloud2, config/runtime/dataset.yaml: pointcloud2}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:197-206]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.qos_reliability
+  type: string
+  default: {value: best_effort, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:294}
+  validation: {rule: best_effort or reliable, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: best_effort, config/runtime/dataset.yaml: reliable}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:189-207]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.point_time.field
+  type: string
+  default: {value: time, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:166}
+  validation: {rule: encoding/field contract, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: NOT_SET, config/runtime/dataset.yaml: timestamp}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:166]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.point_time.encoding
+  type: string
+  default: {value: uint32_relative_nanoseconds, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:167-168}
+  validation: {rule: supported point-time encoding, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: NOT_SET, config/runtime/dataset.yaml: float64_absolute_nanoseconds}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:167]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.point_time.scan_reference
+  type: string
+  default: {value: header_stamp, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:170}
+  validation: {rule: supported scan reference, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: NOT_SET, config/runtime/dataset.yaml: minimum_point_time}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:170]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.point_time.maximum_scan_duration_s
+  type: double
+  default: {value: 0.2, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:171-172}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: NOT_SET (default), config/runtime/dataset.yaml: 0.2}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:284-290]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.point_time.maximum_header_offset_s
+  type: double
+  default: {value: 0.2, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:173-174}
+  validation: {rule: finite and >=0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: NOT_SET (default), config/runtime/dataset.yaml: 0.2}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:284-290]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.point_time.maximum_boundary_overlap_s
+  type: double
+  default: {value: 0.0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:175-176}
+  validation: {rule: finite and >=0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: NOT_SET (default), config/runtime/dataset.yaml: 0.001}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:284-290]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: input.point_time.minimum_points_after_overlap_trim
+  type: int64
+  default: {value: 1, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:177-178}
+  validation: {rule: ">=1", at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: NOT_SET (default), config/runtime/dataset.yaml: 1000}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:284-290]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: timing.clock_domain
+  type: string
+  default: {value: ros_time, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:180}
+  validation: {rule: clock domain contract, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: simulation_time, config/runtime/dataset.yaml: sensor_time}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:238]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initial_prior.source
+  type: string
+  default: {value: zero, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:182}
+  validation: {rule: zero/fixed/topic, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: zero, config/runtime/dataset.yaml: zero}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:220]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initial_prior.context
+  type: string
+  default: {value: ground_startup, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:183-184}
+  validation: {rule: supported prior context, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: ground_startup, config/runtime/dataset.yaml: ground_startup}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:220-251]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initial_prior.source_frame
+  type: string
+  default: {value: frames.odom, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:185-186}
+  validation: {rule: non-empty and frame identity checks, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: lio_odom, config/runtime/dataset.yaml: lio_odom}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:220-251]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initial_prior.source_frame_transform
+  type: string
+  default: {value: same_frame, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:187-188}
+  validation: {rule: supported transform mode, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: same_frame, config/runtime/dataset.yaml: same_frame}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:220-251]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initial_prior.components.position
+  type: bool
+  default: {value: true, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:189-190}
+  validation: {rule: boolean, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: true, config/runtime/dataset.yaml: true}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:220-251]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initial_prior.components.velocity
+  type: bool
+  default: {value: true, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:191-192}
+  validation: {rule: boolean, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: true, config/runtime/dataset.yaml: true}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:220-251]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initial_prior.components.attitude
+  type: string
+  default: {value: yaw_only, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:193-194}
+  validation: {rule: supported attitude component, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: yaw_only, config/runtime/dataset.yaml: yaw_only}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:220-251]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initial_prior.topic
+  type: string
+  default: {value: /initial_state_prior, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:195-196}
+  validation: {rule: non-empty when source=topic, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:222]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initial_prior.topic_wait_timeout_s
+  type: double
+  default: {value: 2.0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:197-198}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:246]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initial_prior.maximum_topic_prior_age_s
+  type: double
+  default: {value: 0.5, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:199-200}
+  validation: {rule: finite and >=0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:222]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initial_prior.ground_fallback
+  type: string
+  default: {value: zero, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:201-202}
+  validation: {rule: supported fallback, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:220-251]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initial_prior.maximum_full_attitude_tilt_disagreement_rad
+  type: double
+  default: {value: 0.17453292519943295, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:203-205}
+  validation: {rule: finite and >=0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:220-251]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: timing.lidar_mode
+  type: string
+  default: {value: simultaneous_scan, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:164}
+  validation: {rule: simultaneous_scan or per_point, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: simultaneous_scan, config/runtime/dataset.yaml: per_point}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:238-290]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: timing.livox_timestamp_policy
+  type: string
+  default: {value: require_header_match, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:222-223}
+  validation: {rule: supported timestamp policy, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: require_header_match, config/runtime/dataset.yaml: timebase_authoritative}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:238-290]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: timing.max_imu_gap_s
+  type: double
+  default: {value: 0.02, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:224-225}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 0.02, config/runtime/dataset.yaml: 0.02}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:224]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: tracking.maximum_recoverable_imu_gap_s
+  type: double
+  default: {value: 0.05, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:227-228}
+  validation: {rule: finite and >= max_imu_gap, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 0.05, config/runtime/dataset.yaml: 0.05}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:227]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: lifecycle.maximum_initial_map_registration_failures
+  type: int64
+  default: {value: 10, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:229-231}
+  validation: {rule: ">=0", at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 10, config/runtime/dataset.yaml: 10}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:229]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: lifecycle.lost_after_registration_failures
+  type: int64
+  default: {value: 5, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:232-234}
+  validation: {rule: ">=0", at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 5, config/runtime/dataset.yaml: 5}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:232]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: lifecycle.degraded_after_lidar_gap_s
+  type: double
+  default: {value: 0.2, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:235-236}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 0.2, config/runtime/dataset.yaml: 0.2}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:235]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: lifecycle.lost_after_lidar_gap_s
+  type: double
+  default: {value: 1.0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:237-238}
+  validation: {rule: finite and > degraded threshold, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 1.0, config/runtime/dataset.yaml: 1.0}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:237]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: tracking.recovery_confirmation_updates
+  type: int64
+  default: {value: 3, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:239-241}
+  validation: {rule: ">=1", at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 3, config/runtime/dataset.yaml: 3}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:239]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: tracking.discontinuity_covariance_inflation
+  type: double
+  default: {value: 10.0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:242-244}
+  validation: {rule: finite and >=1, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 10.0, config/runtime/dataset.yaml: 10.0}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:242]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: timing.reject_timestamp_regression
+  type: bool
+  default: {value: true, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:245-246}
+  validation: {rule: boolean, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: true, config/runtime/dataset.yaml: true}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:245]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: extrinsic.translation_imu_lidar
+  type: "double[3]"
+  default: {value: [0.0, 0.0, 0.0], at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:247-248}
+  validation: {rule: array size 3, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:251-253}
+  values_in_yaml: {config/runtime/sim.yaml: [-0.011, -0.02329, 0.04412], config/runtime/dataset.yaml: [-0.019391, -0.000278, 0.080926]}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:134]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: extrinsic.rotation_imu_lidar_xyzw
+  type: "double[4]"
+  default: {value: [0.0, 0.0, 0.0, 1.0], at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:249-250}
+  validation: {rule: array size 4, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:251-253}
+  values_in_yaml: {config/runtime/sim.yaml: [0.0, 0.0, 0.0, 1.0], config/runtime/dataset.yaml: [0.0, 0.0, 0.0, 1.0]}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:134]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initialization.minimum_imu_samples
+  type: int64
+  default: {value: 200, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:257}
+  validation: {rule: ">=1", at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 200, config/runtime/dataset.yaml: 200}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:257]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: initialization.require_stationary
+  type: bool
+  default: {value: true, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:258}
+  validation: {rule: boolean, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: true, config/runtime/dataset.yaml: false}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:258]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: preprocessing.minimum_range_m
+  type: double
+  default: {value: 0.1, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:259}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 0.5, config/runtime/dataset.yaml: 0.5}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:259]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: preprocessing.maximum_range_m
+  type: double
+  default: {value: 40.0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:260}
+  validation: {rule: finite and > minimum range, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 40.0, config/runtime/dataset.yaml: 40.0}
+  set_by_runner: [tools/runtime/runner.py:1285]
+  read_at: [src/estimation/fast_lio_ros/src/fast_lio_node.cpp:182]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: preprocessing.scan_voxel_size_m
+  type: double
+  default: {value: 0.2, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:262}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 0.2, config/runtime/dataset.yaml: 0.9}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:262]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: mapping.registration_map.voxel_size_m
+  type: double
+  default: {value: 0.2, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:264}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 0.3, config/runtime/dataset.yaml: 0.3}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:264]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: mapping.local_map.half_extent_m
+  type: "double[]"
+  default: {value: [50.0, 50.0, 25.0], at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:265-266}
+  validation: {rule: exactly 3 positive finite values, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: [30.0, 30.0, 15.0], config/runtime/dataset.yaml: [50.0, 50.0, 25.0]}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:265]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: mapping.local_map.crop_trigger_distance_m
+  type: double
+  default: {value: 5.0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:272-273}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 5.0, config/runtime/dataset.yaml: 5.0}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:272]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: mapping.local_map.absolute_map_point_guard
+  type: int64
+  default: {value: 250000, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:274-275}
+  validation: {rule: ">=1", at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 250000, config/runtime/dataset.yaml: 250000}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:274]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: registration.maximum_iterations
+  type: int64
+  default: {value: 4, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:276-277}
+  validation: {rule: ">=1", at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 4, config/runtime/dataset.yaml: 4}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:276]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: registration.minimum_translation_observability_ratio
+  type: double
+  default: {value: 0.01, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:278-279}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 0.01, config/runtime/dataset.yaml: 0.01}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:278]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: registration.correspondence_parallel_threads
+  type: int64
+  default: {value: 3, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:280-282}
+  validation: {rule: ">=1", at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 3, config/runtime/dataset.yaml: 3}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:280]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: output.publish_registered_points
+  type: bool
+  default: {value: false, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:284}
+  validation: {rule: boolean, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: true, config/runtime/dataset.yaml: true}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:116]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: runtime.imu_queue_capacity
+  type: int64
+  default: {value: 4096, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:286}
+  validation: {rule: ">=1", at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 4096, config/runtime/dataset.yaml: 4096}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:286]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: runtime.lidar_queue_capacity
+  type: int64
+  default: {value: 8, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:288}
+  validation: {rule: ">=1", at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 16, config/runtime/dataset.yaml: 16}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:288]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: runtime.maximum_processing_lag_s
+  type: double
+  default: {value: 0.2, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:289-290}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 0.2, config/runtime/dataset.yaml: 0.2}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:289]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: runtime.overload_policy
+  type: string
+  default: {value: fail, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:292}
+  validation: {rule: fail-only supported baseline, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: fail, config/runtime/dataset.yaml: fail}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:292]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: propagated_odometry.publish_rate_hz
+  type: double
+  default: {value: 50.0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:296}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 50.0, config/runtime/dataset.yaml: 50.0}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:18]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: propagated_odometry.imu_ingress_capacity
+  type: int64
+  default: {value: 4096, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:297-298}
+  validation: {rule: ">=1", at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 4096, config/runtime/dataset.yaml: 4096}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:297]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: propagated_odometry.imu_history_duration_s
+  type: double
+  default: {value: 1.0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:299-301}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 1.0, config/runtime/dataset.yaml: 1.0}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:299]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: propagated_odometry.maximum_correction_age_s
+  type: double
+  default: {value: 0.5, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:302-304}
+  validation: {rule: finite and >0, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:310-317}
+  values_in_yaml: {config/runtime/sim.yaml: 0.5, config/runtime/dataset.yaml: 0.5}
+  set_by_runner: NOT_SET
+  read_at: [src/estimation/fast_lio_ros/src/parameter_loader.cpp:302]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: fast_lio_node
+  param: diagnostics.state_transport_trace_enabled
+  type: bool
+  default: {value: false, at: src/estimation/fast_lio_ros/src/parameter_loader.cpp:308}
+  validation: {rule: true requires use_sim_time, at: src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:24-30}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:1286-1288 when --state-transport-trace]
+  read_at: [src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp:24-30]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+
+- node: navigation_runtime_node
+  param: navigation_runtime.registered_scan_topic
+  type: string
+  default: {value: /lio/mapping_observation, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:671-672}
+  validation: {rule: non-empty, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:847-850}
+  values_in_yaml: {config/runtime/mapping.yaml: /lio/mapping_observation}
+  set_by_runner: [tools/runtime/runner.py:2011 when world observation fault]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1726]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.propagated_odometry_topic
+  type: string
+  default: {value: /lio/odometry_propagated, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:673-674}
+  validation: {rule: non-empty, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:847-850}
+  values_in_yaml: {config/runtime/mapping.yaml: /lio/odometry_propagated}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1734]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.retained_decision_diagnostics_enabled
+  type: bool
+  default: {value: true, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:675-676}
+  validation: {rule: boolean, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:675-676}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:7554]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.goal_topic
+  type: string
+  default: {value: /navigation/goal, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:677}
+  validation: {rule: non-empty, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:847-850}
+  values_in_yaml: {config/runtime/mapping.yaml: /navigation/goal}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1739]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.status_topic
+  type: string
+  default: {value: /navigation/mode_status, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:678-679}
+  validation: {rule: non-empty, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:847-850}
+  values_in_yaml: {config/runtime/mapping.yaml: /navigation/mode_status}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1743]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.command_topic
+  type: string
+  default: {value: /navigation/navigation_command, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:680-681}
+  validation: {rule: non-empty, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:847-850}
+  values_in_yaml: {config/runtime/mapping.yaml: /navigation/navigation_command}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:1747]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.planning_frame
+  type: string
+  default: {value: lio_odom, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:682}
+  validation: {rule: non-empty, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:847-850}
+  values_in_yaml: {config/runtime/mapping.yaml: lio_odom}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:850]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.body_frame_id
+  type: string
+  default: {value: base_link, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:683}
+  validation: {rule: non-empty, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:850}
+  values_in_yaml: {config/runtime/mapping.yaml: base_link}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:850]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.deployment_profile
+  type: string
+  default: {value: sitl, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:684-685}
+  validation: {rule: sitl only; hardware rejected, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:802-809}
+  values_in_yaml: {config/runtime/mapping.yaml: sitl}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:802-809]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.data_freshness_window_s
+  type: double
+  default: {value: 0.5, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:717-718}
+  validation: {rule: finite and >0, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:717-720}
+  values_in_yaml: {config/runtime/mapping.yaml: 0.5}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:4091]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.planner_watchdog_timeout_s
+  type: double
+  default: {value: 1.0, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:719-720}
+  validation: {rule: finite and >0, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:717-720}
+  values_in_yaml: {config/runtime/mapping.yaml: 1.0}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:717-720]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.config_path
+  type: string
+  default: {value: "", at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:791}
+  validation: {rule: non-empty after package-share fallback and file exists, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:794-800}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:1956-1960, tools/runtime/runner.py:2028-2034]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:791-800]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.mission_file
+  type: string
+  default: {value: "", at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:792-793}
+  validation: {rule: optional; when non-empty mission file must load, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:855-874}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2028-2034]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:792-874]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+
+- node: px4_navigation_external_mode_node
+  param: navigation.navigation_command_topic
+  type: string
+  default: {value: /navigation/navigation_command, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:175-176}
+  validation: {rule: non-empty, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:270-274}
+  values_in_yaml: {config/runtime/external_mode.yaml: /navigation/navigation_command}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:272]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: navigation.state_topic
+  type: string
+  default: {value: /lio/odometry_propagated, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:177-178}
+  validation: {rule: non-empty, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:270-274}
+  values_in_yaml: {config/runtime/external_mode.yaml: /lio/odometry_propagated}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:331]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: navigation.status_topic
+  type: string
+  default: {value: /navigation/mode_status, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:278-279}
+  validation: {rule: non-empty, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:280-281}
+  values_in_yaml: {config/runtime/external_mode.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:278-284]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: navigation.planning_frame
+  type: string
+  default: {value: lio_odom, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:179-180}
+  validation: {rule: must equal lio_odom, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:255-258}
+  values_in_yaml: {config/runtime/external_mode.yaml: lio_odom}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1793]
+  pinned: true
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: navigation.body_frame
+  type: string
+  default: {value: base_link, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:181-182}
+  validation: {rule: must equal base_link, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:255-258}
+  values_in_yaml: {config/runtime/external_mode.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1793]
+  pinned: true
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: navigation.trajectory_stale_after_s
+  type: double
+  default: {value: 0.10, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:183-184}
+  validation: {rule: literal 0.10, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:255-258}
+  values_in_yaml: {config/runtime/external_mode.yaml: 0.1}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:183]
+  pinned: true
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: navigation.state_stale_after_s
+  type: double
+  default: {value: 0.20, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:185-186}
+  validation: {rule: literal 0.20, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:255-258}
+  values_in_yaml: {config/runtime/external_mode.yaml: 0.2}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:185]
+  pinned: true
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: navigation.trajectory_wait_timeout_s
+  type: double
+  default: {value: 5.0, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:187-188}
+  validation: {rule: literal 5.0, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:255-258}
+  values_in_yaml: {config/runtime/external_mode.yaml: 5.0}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:187]
+  pinned: true
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: navigation.planner_recovery_wait_timeout_s
+  type: double
+  default: {value: 5.0, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:189-190}
+  validation: {rule: literal 5.0, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:255-258}
+  values_in_yaml: {config/runtime/external_mode.yaml: 5.0}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:189]
+  pinned: true
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: diagnostics.state_transport_trace_enabled
+  type: bool
+  default: {value: false, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:192-193}
+  validation: {rule: true requires use_sim_time, at: src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:196-200}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:1286-1288 and launch override]
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:192-200]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+
+- node: px4_external_odometry_bridge_node
+  param: external_odometry.maximum_age_s
+  type: double
+  default: {value: 0.5, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:48-49}
+  validation: {rule: finite and >0, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:64-78}
+  values_in_yaml: {config/runtime/sim.yaml: 0.5}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:77]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_external_odometry_bridge_node
+  param: external_odometry.diagnostics_maximum_age_s
+  type: double
+  default: {value: 2.0, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:50-51}
+  validation: {rule: finite and >0, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:64-78}
+  values_in_yaml: {config/runtime/sim.yaml: 2.0}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:78]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_external_odometry_bridge_node
+  param: external_odometry.position_jump_m
+  type: double
+  default: {value: 0.75, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:52-53}
+  validation: {rule: finite and >0, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:64-78}
+  values_in_yaml: {config/runtime/sim.yaml: 0.75}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:91]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_external_odometry_bridge_node
+  param: external_odometry.orientation_jump_rad
+  type: double
+  default: {value: 0.35, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:54-55}
+  validation: {rule: finite and >0, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:64-78}
+  values_in_yaml: {config/runtime/sim.yaml: 0.35}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:91]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_external_odometry_bridge_node
+  param: external_odometry.maximum_expected_speed_mps
+  type: double
+  default: {value: 10.0, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:56-57}
+  validation: {rule: finite and >0, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:64-78}
+  values_in_yaml: {config/runtime/sim.yaml: 10.0}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:91]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_external_odometry_bridge_node
+  param: external_odometry.maximum_expected_angular_rate_rad_s
+  type: double
+  default: {value: 6.0, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:58-59}
+  validation: {rule: finite and >0, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:64-78}
+  values_in_yaml: {config/runtime/sim.yaml: 6.0}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:91]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_external_odometry_bridge_node
+  param: external_odometry.minimum_continuity_dt_s
+  type: double
+  default: {value: 0.0001, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:60-61}
+  validation: {rule: finite and >0, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:64-78}
+  values_in_yaml: {config/runtime/sim.yaml: 0.0001}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:91]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_external_odometry_bridge_node
+  param: external_odometry.maximum_continuity_dt_s
+  type: double
+  default: {value: 0.5, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:62-63}
+  validation: {rule: finite and > minimum, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:64-78}
+  values_in_yaml: {config/runtime/sim.yaml: 0.5}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:91]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_external_odometry_bridge_node
+  param: timing.clock_domain
+  type: string
+  default: {value: ros_time, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:79-80}
+  validation: {rule: must match use_sim_time, at: src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:81-86}
+  values_in_yaml: {config/runtime/sim.yaml: simulation_time}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:81-86]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+
+- node: px4_odometry_bridge_node
+  param: reset.maximum_metadata_age_s
+  type: double
+  default: {value: 0.1, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:63-64}
+  validation: {rule: finite and >0, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:73-80}
+  values_in_yaml: {config/runtime/sim.yaml: 0.1}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:63]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_odometry_bridge_node
+  param: reset.maximum_event_association_gap_s
+  type: double
+  default: {value: 0.005, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:65-66}
+  validation: {rule: finite and >0, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:73-80}
+  values_in_yaml: {config/runtime/sim.yaml: 0.005}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:65]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_odometry_bridge_node
+  param: reset.stable_samples_after_reset
+  type: int64
+  default: {value: 3, at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:67-68}
+  validation: {rule: ">=1", at: src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:73-80}
+  values_in_yaml: {config/runtime/sim.yaml: 3}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:84]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+
+# SITL fault-injection gate parameters. The runner supplies all six values
+# explicitly when the fault profile is enabled.
+- node: world_observation_gate
+  param: input_topic
+  type: string
+  default: {value: /lio/mapping_observation, at: tools/runtime/world_observation_gate.py:33}
+  validation: {rule: used as RegisteredScan input topic, at: tools/runtime/world_observation_gate.py:43-45}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3720]
+  read_at: [tools/runtime/world_observation_gate.py:43-45]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: world_observation_gate
+  param: output_topic
+  type: string
+  default: {value: /test/world_gate/mapping_observation, at: tools/runtime/world_observation_gate.py:34}
+  validation: {rule: used as RegisteredScan relay output topic, at: tools/runtime/world_observation_gate.py:41-42}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3721]
+  read_at: [tools/runtime/world_observation_gate.py:41-42]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: world_observation_gate
+  param: command_topic
+  type: string
+  default: {value: /navigation/navigation_command, at: tools/runtime/world_observation_gate.py:35}
+  validation: {rule: used as NavigationCommand input topic, at: tools/runtime/world_observation_gate.py:46-47}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3722]
+  read_at: [tools/runtime/world_observation_gate.py:46-47]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: world_observation_gate
+  param: ready_commands_before_fault
+  type: int
+  default: {value: 100, at: tools/runtime/world_observation_gate.py:36}
+  validation: {rule: ">=0", at: tools/runtime/world_observation_gate.py:131-132}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3723]
+  read_at: [tools/runtime/world_observation_gate.py:85-92,131-132]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: world_observation_gate
+  param: delay_after_trigger_ns
+  type: int
+  default: {value: 1000000000, at: tools/runtime/world_observation_gate.py:37}
+  validation: {rule: non-negative duration, at: tools/runtime/world_observation_gate.py:133-135}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3724]
+  read_at: [tools/runtime/world_observation_gate.py:85-92,133-135]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: world_observation_gate
+  param: drop_duration_ns
+  type: int
+  default: {value: 550000000, at: tools/runtime/world_observation_gate.py:38}
+  validation: {rule: non-negative duration, at: tools/runtime/world_observation_gate.py:85-92,137}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3725]
+  read_at: [tools/runtime/world_observation_gate.py:85-92,137]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+
+# The observer uses required CLI arguments instead of ROS parameters.
+- node: external_mode_scenario
+  param: cli.output
+  type: path
+  default: {value: REQUIRED, at: tools/runtime/external_mode_scenario.py:3183-3185}
+  validation: {rule: required path, at: tools/runtime/external_mode_scenario.py:3183-3186}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3788-3796]
+  read_at: [tools/runtime/external_mode_scenario.py:3183-3186]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: external_mode_scenario
+  param: cli.config
+  type: path
+  default: {value: REQUIRED, at: tools/runtime/external_mode_scenario.py:3184-3185}
+  validation: {rule: required path, at: tools/runtime/external_mode_scenario.py:3184-3186}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3788-3796]
+  read_at: [tools/runtime/external_mode_scenario.py:3184-3186]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+
+# Tracking experiment policy is declared by the shared helper for both product
+# nodes. Values not present in YAML remain the helper defaults shown here.
+- node: navigation_runtime_node
+  param: tracking_experiment.mode
+  type: string
+  default: {value: off, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:61-62}
+  validation: {rule: off/adaptive/relaxed/velocity-only and simulated when enabled, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:89-100}
+  values_in_yaml: {config/runtime/mapping.yaml: off}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.tracking_gate_relaxed
+  type: bool
+  default: {value: false, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:63-64}
+  validation: {rule: relaxed requires enabled experiment, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: false}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.base_m
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:65}
+  validation: {rule: policy valid() and non-negative coefficients, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: 0.0}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.lateral_alpha_s
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:66-67}
+  validation: {rule: policy valid() and non-negative coefficients, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: 0.0}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.longitudinal_beta_s
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:68-69}
+  validation: {rule: policy valid() and non-negative coefficients, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: 0.0}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.velocity_only_enabled
+  type: bool
+  default: {value: false, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:70-71}
+  validation: {rule: must match mode=velocity-only, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.velocity_only_gain_s_inv
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:72-73}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.velocity_only_cap_mps
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:74-75}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.velocity_only_max_acceleration_mps2
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:76-77}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.velocity_only_max_jerk_mps3
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:78-79}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.velocity_only_max_timing_bound_s
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:80-81}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.velocity_only_max_reference_age_s
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:82-83}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.velocity_only_output_transport_bound_s
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:84-85}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: tracking_experiment.velocity_only_px4_consume_bound_s
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:86-87}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/mapping.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:686-708]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+
+# The same shared policy is declared by the PX4 mode node.
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.mode
+  type: string
+  default: {value: off, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:61-62}
+  validation: {rule: off/adaptive/relaxed/velocity-only and simulated when enabled, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:89-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: off}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.tracking_gate_relaxed
+  type: bool
+  default: {value: false, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:63-64}
+  validation: {rule: relaxed requires enabled experiment, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: false}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.base_m
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:65}
+  validation: {rule: policy valid() and non-negative coefficients, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: 0.0}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.lateral_alpha_s
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:66-67}
+  validation: {rule: policy valid() and non-negative coefficients, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: 0.0}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.longitudinal_beta_s
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:68-69}
+  validation: {rule: policy valid() and non-negative coefficients, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: 0.0}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.velocity_only_enabled
+  type: bool
+  default: {value: false, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:70-71}
+  validation: {rule: must match mode=velocity-only, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.velocity_only_gain_s_inv
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:72-73}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.velocity_only_cap_mps
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:74-75}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.velocity_only_max_acceleration_mps2
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:76-77}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.velocity_only_max_jerk_mps3
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:78-79}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.velocity_only_max_timing_bound_s
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:80-81}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.velocity_only_max_reference_age_s
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:82-83}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.velocity_only_output_transport_bound_s
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:84-85}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: px4_navigation_external_mode_node
+  param: tracking_experiment.velocity_only_px4_consume_bound_s
+  type: double
+  default: {value: 0.0, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:86-87}
+  validation: {rule: policy valid() and mode consistency, at: src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:97-100}
+  values_in_yaml: {config/runtime/external_mode.yaml: NOT_SET (default)}
+  set_by_runner: NOT_SET
+  read_at: [src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:191-223]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+
+# Twelve navigation_runtime.inject_* declarations.  They are SITL/test hooks,
+# not product behavior; all are rejected or constrained by the constructor.
+- node: navigation_runtime_node
+  param: navigation_runtime.inject_failed_replan_cycle_id
+  type: int64
+  default: {value: 0, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:721-724}
+  validation: {rule: "<=0 normalized to zero; positive when enabled", at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:721-724}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2035-2038]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:721-724]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.inject_failed_replan_once
+  type: bool
+  default: {value: false, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:725}
+  validation: {rule: boolean, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:747-772}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2043]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:725]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.inject_failed_replan_when_safe
+  type: bool
+  default: {value: false, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:727}
+  validation: {rule: boolean and SITL-only combination, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:747-772}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2044]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:727]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.inject_failed_replan_after_handoff
+  type: bool
+  default: {value: false, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:729}
+  validation: {rule: boolean and SITL-only combination, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:747-772}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2045-2047]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:729]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.inject_failed_replan_repeated
+  type: bool
+  default: {value: false, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:731}
+  validation: {rule: boolean and SITL-only combination, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:747-772}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2071]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:731]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.inject_failed_plan_from_rest_repeated
+  type: bool
+  default: {value: false, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:733}
+  validation: {rule: boolean and SITL-only combination, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:747-772}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2072-2074]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:733]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.inject_exact_optimization_failed_once
+  type: bool
+  default: {value: false, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:735}
+  validation: {rule: positive distinct request-pair required, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:747-772}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2048-2054]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:735]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.inject_exact_optimization_predecessor_request
+  type: int64
+  default: {value: 0, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:737}
+  validation: {rule: positive and distinct from successor when injection enabled, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:748-753}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2055-2056]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:737]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.inject_exact_optimization_successor_request
+  type: int64
+  default: {value: 0, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:739}
+  validation: {rule: positive and distinct from predecessor when injection enabled, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:748-753}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2057-2058]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:739]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.inject_exact_optimization_alternate_predecessor_request
+  type: int64
+  default: {value: 0, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:741-743}
+  validation: {rule: optional; if set alternate pair must be positive/distinct, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2059-2066}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2059-2066]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:741-746]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.inject_exact_optimization_alternate_successor_request
+  type: int64
+  default: {value: 0, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:744-746}
+  validation: {rule: optional; predecessor required if set, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2059-2070}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2066-2070]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:744-746]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+- node: navigation_runtime_node
+  param: navigation_runtime.inject_failed_same_identity_renewal_ordinal
+  type: int64
+  default: {value: 0, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:774-775}
+  validation: {rule: non-negative; positive ordinal when enabled, at: src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:774-781}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:2075-2081]
+  read_at: [src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:774-781]
+  pinned: false
+  fault_injection: true
+  yaml_only_orphan: false
+
+- node: gz_lidar_bridge
+  param: input_topic
+  type: string
+  default: {value: /sim/mid360/scan/points, at: src/uav_simulation/src/gz_lidar_bridge.cpp:46}
+  validation: {rule: non-empty, at: src/uav_simulation/src/gz_lidar_bridge.cpp:48-50}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3688]
+  read_at: [src/uav_simulation/src/gz_lidar_bridge.cpp:79]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: gz_lidar_bridge
+  param: ros_topic
+  type: string
+  default: {value: /lidar/points, at: src/uav_simulation/src/gz_lidar_bridge.cpp:47}
+  validation: {rule: non-empty, at: src/uav_simulation/src/gz_lidar_bridge.cpp:48-50}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3689]
+  read_at: [src/uav_simulation/src/gz_lidar_bridge.cpp:52]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: gz_visibility_bridge
+  param: input_topic
+  type: string
+  default: {value: /lidar/points, at: src/uav_simulation/src/visibility_bridge.cpp:21}
+  validation: {rule: non-empty, at: src/uav_simulation/src/visibility_bridge.cpp:35-39}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3695]
+  read_at: [src/uav_simulation/src/visibility_bridge.cpp:43]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: gz_visibility_bridge
+  param: ros_topic
+  type: string
+  default: {value: /lidar/free_space_endpoints, at: src/uav_simulation/src/visibility_bridge.cpp:22}
+  validation: {rule: non-empty, at: src/uav_simulation/src/visibility_bridge.cpp:35-39}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3696]
+  read_at: [src/uav_simulation/src/visibility_bridge.cpp:41]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: gz_visibility_bridge
+  param: expected_frame
+  type: string
+  default: {value: livox_frame, at: src/uav_simulation/src/visibility_bridge.cpp:23}
+  validation: {rule: non-empty, at: src/uav_simulation/src/visibility_bridge.cpp:35-39}
+  values_in_yaml: {}
+  set_by_runner: [tools/runtime/runner.py:3697]
+  read_at: [src/uav_simulation/src/visibility_bridge.cpp:205]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: gz_visibility_bridge
+  param: maximum_endpoints
+  type: int
+  default: {value: 4096, at: src/uav_simulation/src/visibility_bridge.cpp:24}
+  validation: {rule: ">0 and <=262144", at: src/uav_simulation/src/visibility_bridge.cpp:33-39}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/uav_simulation/src/visibility_bridge.cpp:34]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: gz_visibility_bridge
+  param: horizontal_count
+  type: int
+  default: {value: 720, at: src/uav_simulation/src/visibility_bridge.cpp:26}
+  validation: {rule: ">0 and <=262144", at: src/uav_simulation/src/visibility_bridge.cpp:35-38}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/uav_simulation/src/visibility_bridge.cpp:35]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: gz_visibility_bridge
+  param: vertical_count
+  type: int
+  default: {value: 28, at: src/uav_simulation/src/visibility_bridge.cpp:27}
+  validation: {rule: ">0 and <=262144", at: src/uav_simulation/src/visibility_bridge.cpp:36-38}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/uav_simulation/src/visibility_bridge.cpp:36]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: gz_visibility_bridge
+  param: horizontal_angle_min_rad
+  type: double
+  default: {value: -3.141592653589793, at: src/uav_simulation/src/visibility_bridge.cpp:28}
+  validation: {rule: no standalone range check; consumed as visibility geometry, at: src/uav_simulation/src/visibility_bridge.cpp:25-32}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/uav_simulation/src/visibility_cloud.cpp:168]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: gz_visibility_bridge
+  param: horizontal_angle_max_rad
+  type: double
+  default: {value: 3.141592653589793, at: src/uav_simulation/src/visibility_bridge.cpp:29}
+  validation: {rule: no standalone range check; consumed as visibility geometry, at: src/uav_simulation/src/visibility_cloud.cpp:168}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/uav_simulation/src/visibility_cloud.cpp:168]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: gz_visibility_bridge
+  param: vertical_angle_min_rad
+  type: double
+  default: {value: -0.122173047639603, at: src/uav_simulation/src/visibility_bridge.cpp:30}
+  validation: {rule: no standalone range check; consumed as visibility geometry, at: src/uav_simulation/src/visibility_cloud.cpp:169}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/uav_simulation/src/visibility_cloud.cpp:169]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: gz_visibility_bridge
+  param: vertical_angle_max_rad
+  type: double
+  default: {value: 0.907571211037051, at: src/uav_simulation/src/visibility_bridge.cpp:31}
+  validation: {rule: no standalone range check; consumed as visibility geometry, at: src/uav_simulation/src/visibility_cloud.cpp:169}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/uav_simulation/src/visibility_cloud.cpp:169]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+- node: gz_visibility_bridge
+  param: range_max_m
+  type: double
+  default: {value: 40.0, at: src/uav_simulation/src/visibility_bridge.cpp:32}
+  validation: {rule: no standalone range check; consumed as visibility geometry, at: src/uav_simulation/src/visibility_cloud.cpp:170}
+  values_in_yaml: {}
+  set_by_runner: NOT_SET
+  read_at: [src/uav_simulation/src/visibility_cloud.cpp:170]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: false
+
+# YAML keys intentionally consumed by runner/simulation but not declared by a
+# product ROS node. They are explicit orphans, not inferred ROS parameters.
+- node: simulation
+  param: world
+  type: string
+  default: {value: NOT_APPLICABLE, at: config/runtime/sim.yaml:99}
+  validation: {rule: runner/PX4 world selection, at: tools/runtime/runner.py:3649-3652}
+  values_in_yaml: {config/runtime/sim.yaml: px4_lio_smoke}
+  set_by_runner: [tools/runtime/runner.py:3635]
+  read_at: [tools/runtime/runner.py:3649]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: true
+- node: simulation
+  param: model
+  type: string
+  default: {value: NOT_APPLICABLE, at: config/runtime/sim.yaml:100}
+  validation: {rule: runner/PX4 model selection, at: tools/runtime/runner.py:3627-3637}
+  values_in_yaml: {config/runtime/sim.yaml: x500_mid360}
+  set_by_runner: [tools/runtime/runner.py:3636]
+  read_at: [tools/runtime/runner.py:3635]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: true
+- node: external_mode_scenario
+  param: scenario.*
+  type: YAML config block
+  default: {value: NOT_APPLICABLE, at: config/runtime/external_mode_scenario.yaml:1-33}
+  validation: {rule: scenario schema/CLI consumer, at: tools/runtime/external_mode_scenario.py:2280-2498}
+  values_in_yaml: {config/runtime/external_mode_scenario.yaml: scenario leaf keys}
+  set_by_runner: [tools/runtime/runner.py:3788-3796]
+  read_at: [tools/runtime/external_mode_scenario.py:348-365,2280-2498]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: true
+- node: offboard_scenario
+  param: scenario.*
+  type: YAML config block
+  default: {value: NOT_APPLICABLE, at: config/runtime/offboard.yaml:1-4}
+  validation: {rule: scenario schema/CLI consumer, at: tools/runtime/offboard_scenario.py:20-69}
+  values_in_yaml: {config/runtime/offboard.yaml: scenario leaf keys}
+  set_by_runner: [tools/runtime/runner.py:3788-3796]
+  read_at: [tools/runtime/offboard_scenario.py:20-69]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: true
+- node: runtime_runner
+  param: runtime.*
+  type: YAML config block
+  default: {value: NOT_APPLICABLE, at: config/runtime/common.yaml:1-38}
+  validation: {rule: Python runner/monitor schema, at: tools/runtime/runner.py:180-260}
+  values_in_yaml: {config/runtime/common.yaml: runtime leaf keys}
+  set_by_runner: NOT_SET
+  read_at: [tools/runtime/runner.py:180-260, tools/runtime/monitor.py:543-560]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: true
+- node: runtime_runner
+  param: profiles.*
+  type: YAML config block
+  default: {value: NOT_APPLICABLE, at: config/runtime/map_profiles.yaml:5-999}
+  validation: {rule: profile loader schema, at: tools/runtime/runner.py:1696-1752}
+  values_in_yaml: {config/runtime/map_profiles.yaml: profiles leaf keys}
+  set_by_runner: NOT_SET
+  read_at: [tools/runtime/runner.py:1696-1752]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: true
+- node: qualification_tooling
+  param: qualification.*
+  type: YAML config block
+  default: {value: NOT_APPLICABLE, at: config/runtime/planning_stability_qualification.yaml:1-39}
+  validation: {rule: documented qualification matrix, at: README.md:99}
+  values_in_yaml: {config/runtime/planning_stability_qualification.yaml: qualification leaf keys}
+  set_by_runner: NOT_SET
+  read_at: [README.md:99, docs/runtime_validation.md:357]
+  pinned: false
+  fault_injection: false
+  yaml_only_orphan: true

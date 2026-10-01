@@ -1,0 +1,560 @@
+#include "planner_core/corridor_bezier_seed.hpp"
+#include "planner_core/deterministic_nominal_seed.hpp"
+
+#include <gtest/gtest.h>
+#include <vector>
+
+namespace {
+
+navigation_math::PolyhedronH box(
+    const Eigen::Vector3d& minimum, const Eigen::Vector3d& maximum) {
+  navigation_math::PolyhedronH planes(6, 4);
+  planes <<
+      1.0, 0.0, 0.0, -maximum.x(),
+     -1.0, 0.0, 0.0,  minimum.x(),
+      0.0, 1.0, 0.0, -maximum.y(),
+      0.0,-1.0, 0.0,  minimum.y(),
+      0.0, 0.0, 1.0, -maximum.z(),
+      0.0, 0.0,-1.0,  minimum.z();
+  return planes;
+}
+
+navigation_math::StatePVAJ state(
+    const Eigen::Vector3d& position,
+    const Eigen::Vector3d& velocity = Eigen::Vector3d::Zero(),
+    const Eigen::Vector3d& acceleration = Eigen::Vector3d::Zero(),
+    const Eigen::Vector3d& jerk = Eigen::Vector3d::Zero()) {
+  navigation_math::StatePVAJ output = navigation_math::StatePVAJ::Zero();
+  output.col(0) = position;
+  output.col(1) = velocity;
+  output.col(2) = acceleration;
+  output.col(3) = jerk;
+  return output;
+}
+
+navigation_math::StatePVAJ analyticQuadratic(const double time) {
+  return state({time + 0.5 * time * time, 0.0, 3.0},
+               {1.0 + time, 0.0, 0.0}, {1.0, 0.0, 0.0});
+}
+
+}  // namespace
+
+TEST(CorridorBezierSeed, BuildsStraightC3BaselineInsideOverlappingCorridors) {
+  navigation_math::PolyhedraH corridors{
+      box({-1.0, -2.0, 0.0}, {11.0, 2.0, 6.0}),
+      box({9.0, -2.0, 0.0}, {21.0, 2.0, 6.0})};
+  navigation_math::Mat3Df junctions(3, 1);
+  junctions.col(0) = Eigen::Vector3d{10.0, 0.0, 3.0};
+  navigation_math::VecDf durations(2);
+  durations << 4.0, 4.0;
+  navigation_math::VecDi mapping(2);
+  mapping << 0, 1;
+  const auto result =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          state({0.0, 0.0, 3.0}, {2.0, 0.0, 0.0}),
+          state({20.0, 0.0, 3.0}), junctions, durations, corridors, mapping,
+          3.0, 1.0e-8);
+  ASSERT_TRUE(result.valid);
+  ASSERT_EQ(result.trajectory.getPieceNum(), 2);
+  EXPECT_NEAR((result.trajectory.getPos(0.0) -
+               Eigen::Vector3d{0.0, 0.0, 3.0}).norm(), 0.0, 1.0e-9);
+  EXPECT_NEAR((result.trajectory.getVel(0.0) -
+               Eigen::Vector3d{2.0, 0.0, 0.0}).norm(), 0.0, 1.0e-9);
+  EXPECT_NEAR((result.trajectory[0].getPos(4.0) -
+               result.trajectory[1].getPos(0.0)).norm(), 0.0, 1.0e-8);
+  EXPECT_NEAR((result.trajectory[0].getVel(4.0) -
+               result.trajectory[1].getVel(0.0)).norm(), 0.0, 1.0e-8);
+  EXPECT_NEAR((result.trajectory[0].getAcc(4.0) -
+               result.trajectory[1].getAcc(0.0)).norm(), 0.0, 1.0e-8);
+  EXPECT_NEAR((result.trajectory[0].getJer(4.0) -
+               result.trajectory[1].getJer(0.0)).norm(), 0.0, 1.0e-8);
+
+  traj_opt::Config config(PLANNER_CORRIDOR_BEZIER_CONFIG_PATH, "exp_traj");
+  std::vector<unsigned char> route_gates(corridors.size(), 0U);
+  std::vector<navigation_math::Vec3f> route_points(
+      corridors.size(), navigation_math::Vec3f::Zero());
+  std::vector<double> route_radii(corridors.size(), 0.0);
+  const auto certificate =
+      navigation_planning_backend::certifyDeterministicNominalSeed(
+          result.trajectory, corridors, mapping, route_gates, route_points,
+          route_radii,
+          state({0.0, 0.0, 3.0}, {2.0, 0.0, 0.0}),
+          state({20.0, 0.0, 3.0}), config);
+  EXPECT_TRUE(certificate.valid)
+      << "failure stage=" << static_cast<int>(certificate.failure_stage)
+      << " velocity=" << certificate.maximum_velocity_mps
+      << " acceleration=" << certificate.maximum_acceleration_mps2
+      << " jerk=" << certificate.maximum_jerk_mps3;
+}
+
+TEST(CorridorBezierSeed, MatchesStraightJunctionVelocityToPieceTiming) {
+  navigation_math::PolyhedraH corridors{
+      box({-0.1, -1.0, 2.0}, {1.1, 1.0, 4.0}),
+      box({0.9, -1.0, 2.0}, {3.1, 1.0, 4.0})};
+  navigation_math::Mat3Df junctions(3, 1);
+  junctions.col(0) = Eigen::Vector3d{1.0, 0.0, 3.0};
+  navigation_math::VecDf durations(2);
+  durations << 0.2, 0.4;
+  navigation_math::VecDi mapping(2);
+  mapping << 0, 1;
+
+  const auto result =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          state({0.0, 0.0, 3.0}, {5.0, 0.0, 0.0}),
+          state({3.0, 0.0, 3.0}, {5.0, 0.0, 0.0}), junctions, durations,
+          corridors, mapping, 8.0, 1.0e-8);
+
+  ASSERT_TRUE(result.valid);
+  EXPECT_NEAR(result.minimum_internal_derivative_scale, 1.0, 1.0e-12);
+  EXPECT_NEAR(result.trajectory[0].getVel(0.2).x(), 5.0, 1.0e-9);
+  EXPECT_NEAR(result.trajectory.getMaxVelRate(), 5.0, 1.0e-7);
+  EXPECT_NEAR(result.trajectory.getMaxAccRate(), 0.0, 1.0e-6);
+  EXPECT_NEAR(result.trajectory.getMaxJerRate(), 0.0, 1.0e-5);
+}
+
+TEST(CorridorBezierSeed, ShortOffsetPiecePreservesPvajWithinEvaluationRoundoff) {
+  const auto initial = state(
+      {50.0, -4.7, 2.92}, {1.0, -0.2, 0.05},
+      {0.4, -0.1, 0.02}, {0.2, 0.05, -0.01});
+  const auto terminal = state(
+      {50.18, -4.72, 2.93}, {0.8, -0.1, 0.02},
+      {-0.3, 0.08, -0.01}, {-0.1, -0.03, 0.01});
+  navigation_math::PolyhedraH corridors{
+      box({45.0, -10.0, 0.0}, {55.0, 2.0, 6.0})};
+  navigation_math::Mat3Df junctions(3, 0);
+  navigation_math::VecDf durations(1);
+  durations << 0.18;
+  navigation_math::VecDi mapping(1);
+  mapping << 0;
+
+  const auto result =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          initial, terminal, junctions, durations, corridors, mapping,
+          5.0, 1.0e-8);
+  ASSERT_TRUE(result.valid);
+  ASSERT_EQ(result.trajectory.getPieceNum(), 1);
+  const auto& piece = result.trajectory[0];
+  const auto controls =
+      navigation_planning_backend::corridor_bezier_detail::controlPoints(
+          initial, terminal, 0.18);
+  for (int sample = 0; sample <= 10; ++sample) {
+    const double u = static_cast<double>(sample) / 10.0;
+    auto de_casteljau = controls;
+    for (int level = 1;
+         level <= navigation_planning_backend::corridor_bezier_detail::kDegree;
+         ++level) {
+      for (int index = 0;
+           index <= navigation_planning_backend::corridor_bezier_detail::kDegree - level;
+           ++index) {
+        de_casteljau[static_cast<std::size_t>(index)] =
+            (1.0 - u) * de_casteljau[static_cast<std::size_t>(index)] +
+            u * de_casteljau[static_cast<std::size_t>(index + 1)];
+      }
+    }
+    EXPECT_NEAR((piece.getPos(0.18 * u) - de_casteljau[0]).norm(),
+                0.0, 1.0e-9);
+  }
+  const navigation_math::StatePVAJ initial_residual =
+      (navigation_planning_backend::pieceState(piece, 0.0) - initial)
+          .cwiseAbs()
+          .eval();
+  const navigation_math::StatePVAJ terminal_residual =
+      (navigation_planning_backend::pieceState(piece, 0.18) - terminal)
+          .cwiseAbs()
+          .eval();
+  EXPECT_TRUE((initial_residual.array() <=
+               navigation_planning_backend::pieceStateRoundoffBound(
+                   piece, 0.0).array()).all());
+  EXPECT_TRUE((terminal_residual.array() <=
+               navigation_planning_backend::pieceStateRoundoffBound(
+                   piece, 0.18).array()).all());
+}
+
+TEST(CorridorBezierSeed, ReducesJunctionVelocityToContainACorner) {
+  navigation_math::PolyhedraH corridors{
+      box({-1.0, -0.1, 2.0}, {10.5, 2.0, 4.0}),
+      box({8.0, -0.1, 2.0}, {11.0, 11.0, 4.0})};
+  navigation_math::Mat3Df junctions(3, 1);
+  junctions.col(0) = Eigen::Vector3d{9.0, 0.0, 3.0};
+  navigation_math::VecDf durations(2);
+  durations << 3.0, 3.0;
+  navigation_math::VecDi mapping(2);
+  mapping << 0, 1;
+  const auto result =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          state({0.0, 0.0, 3.0}), state({9.0, 10.0, 3.0}),
+          junctions, durations, corridors, mapping, 8.0, 1.0e-8);
+  ASSERT_TRUE(result.valid);
+  EXPECT_LT(result.minimum_internal_derivative_scale, 1.0);
+  for (int piece = 0; piece < result.trajectory.getPieceNum(); ++piece) {
+    for (int sample = 0; sample <= 100; ++sample) {
+      const double time = durations(piece) * sample / 100.0;
+      EXPECT_TRUE(navigation_planning_backend::corridor_bezier_detail::pointInside(
+          corridors[static_cast<std::size_t>(piece)],
+          result.trajectory[piece].getPos(time), 1.0e-7));
+    }
+  }
+}
+
+TEST(CorridorBezierSeed, ReproducesConstantAccelerationAcrossJunction) {
+  navigation_math::PolyhedraH corridors{
+      box({-1.0, -1.0, 2.0}, {2.0, 1.0, 4.0}),
+      box({0.0, -1.0, 2.0}, {5.0, 1.0, 4.0})};
+  navigation_math::Mat3Df junctions(3, 1);
+  junctions.col(0) = Eigen::Vector3d{1.0, 0.0, 3.0};
+  navigation_math::VecDf durations(2);
+  durations << 1.0, 1.0;
+  navigation_math::VecDi mapping(2);
+  mapping << 0, 1;
+  const auto result =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          state({0.0, 0.0, 3.0}, {0.0, 0.0, 0.0}, {2.0, 0.0, 0.0}),
+          state({4.0, 0.0, 3.0}, {4.0, 0.0, 0.0}, {2.0, 0.0, 0.0}),
+          junctions, durations, corridors, mapping, 5.0, 1.0e-8);
+  ASSERT_TRUE(result.valid);
+  EXPECT_NEAR(result.minimum_internal_derivative_scale, 1.0, 1.0e-12);
+  EXPECT_NEAR(result.trajectory[0].getVel(1.0).x(), 2.0, 1.0e-8);
+  EXPECT_NEAR(result.trajectory.getMaxVelRate(), 4.0, 1.0e-7);
+  EXPECT_NEAR(result.trajectory.getMaxAccRate(), 2.0, 1.0e-7);
+  EXPECT_NEAR(result.trajectory.getMaxJerRate(), 0.0, 1.0e-6);
+}
+
+TEST(CorridorBezierSeed, ReproducesQuadraticAcrossUnequalDurationsWithoutRetiming) {
+  // Independent oracle: x(t)=t+t^2/2, V=1+t, A=1, J=0. Reverse the
+  // nonuniform schedule and include multiple junctions, not just equal T.
+  const std::vector<std::vector<double>> schedules{
+      {0.0584, 1.409653}, {1.409653, 0.0584},
+      {0.0584, 1.409653, 0.213}, {0.213, 1.409653, 0.0584}};
+  traj_opt::Config config(PLANNER_CORRIDOR_BEZIER_CONFIG_PATH, "exp_traj");
+  config.max_vel = 5.0;
+  config.max_acc = 5.0;
+  config.max_jerk = 8.0;
+  for (const auto& schedule : schedules) {
+    SCOPED_TRACE(::testing::PrintToString(schedule));
+    const int count = static_cast<int>(schedule.size());
+    navigation_math::VecDf durations(count);
+    navigation_math::VecDi mapping(count);
+    navigation_math::Mat3Df junctions(3, count - 1);
+    navigation_math::PolyhedraH corridors;
+    double total = 0.0;
+    for (int piece = 0; piece < count; ++piece) {
+      durations(piece) = schedule[static_cast<std::size_t>(piece)];
+      mapping(piece) = piece;
+      corridors.push_back(box({-10.0, -10.0, 2.0}, {10.0, 10.0, 4.0}));
+      total += durations(piece);
+      if (piece + 1 < count) {
+        junctions.col(piece) = analyticQuadratic(total).col(0);
+      }
+    }
+    const auto head = analyticQuadratic(0.0);
+    const auto tail = analyticQuadratic(total);
+    const auto seed =
+        navigation_planning_backend::buildCorridorContainedBezierSeed(
+            head, tail, junctions, durations, corridors, mapping, 5.0, 1.0e-8);
+    ASSERT_TRUE(seed.valid);
+    ASSERT_EQ(seed.trajectory.getPieceNum(), count);
+    EXPECT_DOUBLE_EQ(seed.minimum_internal_derivative_scale, 1.0);
+    double origin = 0.0;
+    for (int piece = 0; piece < count; ++piece) {
+      EXPECT_DOUBLE_EQ(seed.trajectory[piece].getDuration(), durations(piece));
+      for (const double fraction : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+        const double local = fraction * durations(piece);
+        const auto expected = analyticQuadratic(origin + local);
+        EXPECT_NEAR((seed.trajectory[piece].getPos(local) - expected.col(0)).norm(),
+                    0.0, 1.0e-8);
+        EXPECT_NEAR((seed.trajectory[piece].getVel(local) - expected.col(1)).norm(),
+                    0.0, 1.0e-7);
+        EXPECT_NEAR((seed.trajectory[piece].getAcc(local) - expected.col(2)).norm(),
+                    0.0, 1.0e-6);
+        EXPECT_NEAR(seed.trajectory[piece].getJer(local).norm(), 0.0, 1.0e-5);
+      }
+      origin += durations(piece);
+    }
+    // Shape samples are regression checks. Continuous NOMINAL certification
+    // below still does not establish world/BACKUP/admission authority.
+    const std::vector<unsigned char> route_gates(corridors.size(), 0U);
+    const std::vector<navigation_math::Vec3f> route_points(
+        corridors.size(), navigation_math::Vec3f::Zero());
+    const std::vector<double> route_radii(corridors.size(), 0.0);
+    const auto certificate =
+        navigation_planning_backend::certifyDeterministicNominalSeed(
+            seed.trajectory, corridors, mapping, route_gates, route_points,
+            route_radii, head, tail, config);
+    EXPECT_TRUE(certificate.valid)
+        << "failure stage=" << static_cast<int>(certificate.failure_stage);
+  }
+}
+
+TEST(CorridorBezierSeed, UnequalDurationsStillCapOnlyInternalVelocity) {
+  const auto head = analyticQuadratic(0.0);
+  const auto tail = analyticQuadratic(1.468053);
+  navigation_math::PolyhedraH corridors{
+      box({-10.0, -10.0, 2.0}, {10.0, 10.0, 4.0})};
+  navigation_math::Mat3Df junctions(3, 1);
+  junctions.col(0) = analyticQuadratic(0.0584).col(0);
+  navigation_math::VecDf durations(2);
+  durations << 0.0584, 1.409653;
+  navigation_math::VecDi mapping(2);
+  mapping << 0, 0;
+  const auto seed =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          head, tail, junctions, durations, corridors, mapping, 0.5, 1.0e-8);
+  ASSERT_TRUE(seed.valid);
+  ASSERT_EQ(seed.trajectory.getPieceNum(), 2);
+  EXPECT_NEAR(seed.trajectory[1].getVel(0.0).norm(), 0.5, 1.0e-9);
+  for (int derivative = 0; derivative < 4; ++derivative) {
+    EXPECT_NEAR((navigation_planning_backend::pieceState(seed.trajectory[0], 0.0)
+                     .col(derivative) - head.col(derivative)).norm(),
+                0.0, 1.0e-5);
+    EXPECT_NEAR((navigation_planning_backend::pieceState(
+                     seed.trajectory[1], durations(1)).col(derivative) -
+                 tail.col(derivative)).norm(), 0.0, 1.0e-5);
+  }
+}
+
+TEST(CorridorBezierSeed, UnequalDurationsStillDampDerivativesToContainCorner) {
+  navigation_math::PolyhedraH corridors{
+      box({-1.0, -0.1, 2.0}, {10.5, 2.0, 4.0}),
+      box({8.0, -0.1, 2.0}, {11.0, 11.0, 4.0})};
+  navigation_math::Mat3Df junctions(3, 1);
+  junctions.col(0) = Eigen::Vector3d{9.0, 0.0, 3.0};
+  navigation_math::VecDf durations(2);
+  durations << 3.0, 2.0;
+  navigation_math::VecDi mapping(2);
+  mapping << 0, 1;
+  const auto seed =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          state({0.0, 0.0, 3.0}), state({9.0, 10.0, 3.0}),
+          junctions, durations, corridors, mapping, 8.0, 1.0e-8);
+  ASSERT_TRUE(seed.valid);
+  ASSERT_EQ(seed.trajectory.getPieceNum(), 2);
+  EXPECT_LT(seed.minimum_internal_derivative_scale, 1.0);
+  for (int piece = 0; piece < 2; ++piece) {
+    EXPECT_DOUBLE_EQ(seed.trajectory[piece].getDuration(), durations(piece));
+    const auto controls =
+        navigation_planning_backend::corridor_bezier_detail::controlPoints(
+            navigation_planning_backend::pieceState(seed.trajectory[piece], 0.0),
+            navigation_planning_backend::pieceState(
+                seed.trajectory[piece], durations(piece)), durations(piece));
+    for (const auto& point : controls) {
+      EXPECT_TRUE(navigation_planning_backend::corridor_bezier_detail::pointInside(
+          corridors[static_cast<std::size_t>(piece)], point, 1.0e-7));
+    }
+  }
+}
+
+TEST(CorridorBezierSeed, BoundedDurationRetryCanRecoverDynamicCertificate) {
+  navigation_math::PolyhedraH corridors{
+      box({-1.0, -2.0, 2.0}, {11.0, 2.0, 4.0})};
+  navigation_math::Mat3Df junctions(3, 0);
+  navigation_math::VecDf durations(1);
+  durations << 1.0;
+  navigation_math::VecDi mapping(1);
+  mapping << 0;
+  const auto initial =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          state({0.0, 0.0, 3.0}), state({4.0, 0.0, 3.0}), junctions,
+          durations, corridors, mapping, 5.0, 1.0e-8);
+  ASSERT_TRUE(initial.valid);
+
+  traj_opt::Config config(PLANNER_CORRIDOR_BEZIER_CONFIG_PATH, "exp_traj");
+  config.max_vel = 5.0;
+  config.max_acc = 2.0;
+  config.max_jerk = 4.0;
+  std::vector<unsigned char> route_gates(corridors.size(), 0U);
+  std::vector<navigation_math::Vec3f> route_points(
+      corridors.size(), navigation_math::Vec3f::Zero());
+  std::vector<double> route_radii(corridors.size(), 0.0);
+  const auto initial_certificate =
+      navigation_planning_backend::certifyDeterministicNominalSeed(
+          initial.trajectory, corridors, mapping, route_gates, route_points,
+          route_radii, state({0.0, 0.0, 3.0}), state({4.0, 0.0, 3.0}),
+          config);
+  ASSERT_FALSE(initial_certificate.valid);
+  ASSERT_EQ(initial_certificate.failure_stage,
+            navigation_planning_backend::
+                DeterministicNominalSeedFailureStage::kDynamics);
+
+  const auto scales = navigation_planning_backend::
+      boundedDynamicDurationRetryScales(initial_certificate, config);
+  ASSERT_FALSE(scales.empty());
+  const auto piece_scales = navigation_planning_backend::
+      boundedPieceDurationRetryScales(initial.trajectory, config);
+  ASSERT_EQ(piece_scales.size(), 1);
+  EXPECT_GT(piece_scales(0), 1.0);
+  EXPECT_LE(piece_scales(0), 4.0);
+  bool recovered = false;
+  navigation_planning_backend::DeterministicNominalSeedCertificate
+      last_certificate = initial_certificate;
+  for (const double scale : scales) {
+    const auto retry =
+        navigation_planning_backend::buildCorridorContainedBezierSeed(
+            state({0.0, 0.0, 3.0}), state({4.0, 0.0, 3.0}), junctions,
+            durations * scale, corridors, mapping, 5.0, 1.0e-8);
+    if (!retry.valid) continue;
+    const auto certificate =
+        navigation_planning_backend::certifyDeterministicNominalSeed(
+            retry.trajectory, corridors, mapping, route_gates, route_points,
+            route_radii, state({0.0, 0.0, 3.0}),
+            state({4.0, 0.0, 3.0}), config);
+    last_certificate = certificate;
+    recovered = recovered || certificate.valid;
+  }
+  EXPECT_TRUE(recovered)
+      << "last_stage=" << static_cast<int>(last_certificate.failure_stage)
+      << " vel=" << last_certificate.maximum_velocity_mps
+      << " acc=" << last_certificate.maximum_acceleration_mps2
+      << " jerk=" << last_certificate.maximum_jerk_mps3
+      << " corridor=" << last_certificate.maximum_corridor_violation_m;
+}
+
+TEST(CorridorBezierSeed, PieceDurationRetryDoesNotSlowCertifiedStraightPiece) {
+  Eigen::MatrixXd straight_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  straight_coefficients.row(0) << 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0;
+  Eigen::MatrixXd braking_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  braking_coefficients.row(0) <<
+      0.0, 0.0, 0.0, 50.0, -20.0, 0.0, 0.8, 1.0;
+  geometry_utils::Trajectory trajectory;
+  trajectory.emplace_back(1.0, straight_coefficients);
+  trajectory.emplace_back(0.2, braking_coefficients);
+
+  traj_opt::Config config(PLANNER_CORRIDOR_BEZIER_CONFIG_PATH, "exp_traj");
+  config.max_vel = 1.0;
+  config.max_acc = 2.0;
+  config.max_jerk = 4.0;
+  const auto scales = navigation_planning_backend::
+      boundedPieceDurationRetryScales(trajectory, config);
+
+  ASSERT_EQ(scales.size(), 2);
+  EXPECT_DOUBLE_EQ(scales(0), 1.0);
+  EXPECT_GT(scales(1), 1.0);
+  EXPECT_LE(scales(1), 4.0);
+}
+
+TEST(CorridorBezierSeed, RejectsImmutableBoundaryDerivativeOutsideCorridor) {
+  navigation_math::PolyhedraH corridors{
+      box({0.0, -1.0, 2.0}, {10.0, 1.0, 4.0})};
+  navigation_math::Mat3Df junctions(3, 0);
+  navigation_math::VecDf durations(1);
+  durations << 2.0;
+  navigation_math::VecDi mapping(1);
+  mapping << 0;
+  const auto result =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          state({0.0, 0.0, 3.0}, {-2.0, 0.0, 0.0}),
+          state({8.0, 0.0, 3.0}), junctions, durations, corridors, mapping,
+          3.0, 1.0e-8);
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(result.failure_stage,
+            navigation_planning_backend::CorridorBezierSeedFailureStage::
+                kBoundaryControl);
+  EXPECT_EQ(result.failing_piece_index, 0);
+  EXPECT_EQ(result.failing_control_index, 3);
+  EXPECT_EQ(result.failing_plane_index, 1);
+  EXPECT_GT(result.maximum_plane_violation_m, 0.0);
+}
+
+TEST(CorridorBezierSeed, DurationCompatibilityTracksExactEndpointPvajControls) {
+  const auto corridor = box({-10.0, -10.0, -10.0}, {2.0, 10.0, 10.0});
+  const auto start = state({0.0, 0.0, 0.0}, {5.0, 0.0, 0.0});
+  const auto end = state({1.0, 0.0, 0.0});
+  const auto intervals =
+      navigation_planning_backend::corridor_bezier_detail::
+          durationCompatibilityIntervals(start, end, corridor, 1.0e-10);
+  ASSERT_FALSE(intervals.empty());
+  const auto contains = [&intervals](const double duration_s) {
+    return std::any_of(intervals.begin(), intervals.end(),
+                       [duration_s](const auto& interval) {
+                         return duration_s >= interval.lower_s &&
+                                duration_s <= interval.upper_s;
+                       });
+  };
+  EXPECT_TRUE(contains(0.5));
+  EXPECT_FALSE(contains(1.0));
+
+  navigation_math::Mat3Df junctions(3, 0);
+  navigation_math::VecDf duration(1);
+  duration << 1.0;
+  navigation_math::VecDi mapping(1);
+  mapping << 0;
+  const auto rejected =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          start, end, junctions, duration,
+          navigation_math::PolyhedraH{corridor}, mapping, 8.0, 1.0e-10);
+  EXPECT_FALSE(rejected.valid);
+  EXPECT_EQ(rejected.failure_stage,
+            navigation_planning_backend::CorridorBezierSeedFailureStage::
+                kBoundaryControl);
+  EXPECT_EQ(rejected.failing_control_index, 3);
+}
+
+TEST(CorridorBezierSeed, DurationCompatibilityRejectsEmptyEndpointDomain) {
+  const auto corridor = box({-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0});
+  const auto intervals =
+      navigation_planning_backend::corridor_bezier_detail::
+          durationCompatibilityIntervals(
+              state({2.0, 0.0, 0.0}), state({2.0, 0.0, 0.0}), corridor,
+              1.0e-10);
+  EXPECT_TRUE(intervals.empty());
+}
+
+TEST(CorridorBezierSeed,
+     InternalDerivativeDampingSweepRemainsDiagnosticAndRejected) {
+  navigation_math::PolyhedraH corridors{
+      box({-2.0, -2.0, 2.0}, {4.0, 4.0, 4.0})};
+  navigation_math::Mat3Df junctions(3, 2);
+  junctions.col(0) = Eigen::Vector3d{1.0, 0.0, 3.0};
+  junctions.col(1) = Eigen::Vector3d{1.0, 1.0, 3.0};
+  navigation_math::VecDf durations(3);
+  durations << 0.8, 0.8, 0.8;
+  navigation_math::VecDi mapping(3);
+  mapping << 0, 0, 0;
+  const auto head = state({0.0, 0.0, 3.0}, {2.0, 0.0, 0.0});
+  const auto tail = state({2.0, 1.0, 3.0}, {2.0, 0.0, 0.0});
+
+  const auto nominal =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          head, tail, junctions, durations, corridors, mapping, 3.0, 1.0e-8);
+  ASSERT_TRUE(nominal.valid);
+
+  traj_opt::Config config(PLANNER_CORRIDOR_BEZIER_CONFIG_PATH, "exp_traj");
+  config.max_vel = 3.0;
+  config.max_acc = 2.0;
+  config.max_jerk = 4.0;
+  const std::vector<unsigned char> route_gates{0U};
+  const std::vector<navigation_math::Vec3f> route_points{
+      navigation_math::Vec3f::Zero()};
+  const std::vector<double> route_radii{0.0};
+  const auto nominal_certificate =
+      navigation_planning_backend::certifyDeterministicNominalSeed(
+          nominal.trajectory, corridors, mapping, route_gates, route_points,
+          route_radii, head, tail, config);
+  ASSERT_FALSE(nominal_certificate.valid);
+  ASSERT_EQ(nominal_certificate.failure_stage,
+            navigation_planning_backend::DeterministicNominalSeedFailureStage::kDynamics);
+
+  int rejected_count = 0;
+  for (const double derivative_scale : {0.0, 0.125, 0.25, 0.5, 0.75, 1.0}) {
+    const auto candidate =
+        navigation_planning_backend::buildCorridorContainedBezierSeed(
+            head, tail, junctions, durations, corridors, mapping, 3.0, 1.0e-8,
+            derivative_scale);
+    ASSERT_TRUE(candidate.valid);
+    const auto certificate =
+        navigation_planning_backend::certifyDeterministicNominalSeed(
+            candidate.trajectory, corridors, mapping, route_gates, route_points,
+            route_radii, head, tail, config);
+    EXPECT_FALSE(certificate.valid);
+    EXPECT_EQ(certificate.failure_stage,
+              navigation_planning_backend::DeterministicNominalSeedFailureStage::kDynamics);
+    EXPECT_TRUE(certificate.maximum_acceleration_mps2 > config.max_acc ||
+                certificate.maximum_jerk_mps3 > config.max_jerk);
+    ++rejected_count;
+    std::cerr << "diagnostic_scale=" << derivative_scale << " valid=" << certificate.valid
+              << " stage=" << static_cast<int>(certificate.failure_stage)
+              << " v/a/j=" << certificate.maximum_velocity_mps << "/"
+              << certificate.maximum_acceleration_mps2 << "/"
+              << certificate.maximum_jerk_mps3 << "\n";
+  }
+  EXPECT_EQ(rejected_count, 6);
+}

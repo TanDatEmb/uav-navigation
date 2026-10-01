@@ -1,0 +1,49 @@
+guard_id,check,input,limit_value,limit_defined_at (file:line),pinned_literal (bool),failure_effect
+AD_G001,mode_active,mode_active_,true,navigation_mode_node.cpp:2063-2077,false,retain safety hold/no moving setpoint
+AD_G002,terminal_ownership,"failure_reported_ | completion receipt | handover_requested_",terminal flags,navigation_mode_node.cpp:2252-2292,false,publish stationary safety hold and return
+AD_G003,armed_airborne_gate,"isArmed() and odometry z",z > 0.5 m,navigation_mode_node.cpp:2293-2301,true,publish stationary velocity hold
+AD_G004,odometry_source_freshness,"last propagated source stamp and now",age <= state_stale_after_s_ = 0.20 s,navigation_mode_node.cpp:2303-2323,false,fail navigation and handover PX4 Hold
+AD_G005,odometry_receive_freshness,"last odometry receive steady stamp and now",age <= state_stale_after_s_ = 0.20 s,navigation_mode_node.cpp:2303-2323,false,fail navigation and handover PX4 Hold
+AD_G006,typed_health_seen,typed_health_seen_,true after acquisition wait,navigation_mode_node.cpp:2324-2351,false,stationary hold while waiting then fail after timeout
+AD_G007,typed_health_epoch,"health localization epoch vs odometry epoch",equal and nonzero,navigation_mode_node.cpp:2324-2405,false,fail navigation
+AD_G008,typed_health_source_freshness,"health source stamp and now",age <= state_stale_after_s_ = 0.20 s,navigation_mode_node.cpp:2335-2360,false,fail navigation
+AD_G009,typed_health_receive_freshness,"health receive stamp and now",age <= state_stale_after_s_ = 0.20 s,navigation_mode_node.cpp:2335-2360,false,fail navigation
+AD_G010,health_wait_cap,diagnostic health acquisition elapsed,min(0.5 s; trajectory_wait_timeout_s_),navigation_mode_node.cpp:2346-2348,true,hold until cap then fail
+AD_G011,typed_health_status,health flags,healthy and valid,navigation_mode_node.cpp:2353-2405,false,fail navigation except explicit diagnostic SITL bypass
+AD_G012,command_receive_lease,last_command_receive_ns_ and now,age <= stale_after_s_ = 0.10 s,navigation_mode_node.cpp:2422-2431,false,stationary safety hold
+AD_G013,command_header_stamp,command header stamp,stamp > 0 and stamp <= now,navigation_mode_node.cpp:2432-2440,false,safety stop
+AD_G014,command_header_age,command header stamp and now,age <= stale_after_s_ = 0.10 s,navigation_mode_node.cpp:2432-2440,false,safety stop
+AD_G015,command_valid_until,command valid_until and now,commandValidAt(now),navigation_mode_node.cpp:2442-2445,false,safety stop outside recovery
+AD_G016,completion_endpoint_anchor,measured endpoint and command endpoint,distance <= kCommandAnchorErrorLimitM = 0.75 m,command_safety_contract.hpp:10,false,reject terminal command or safety stop
+AD_G017,main_tracking_phase_window,tracking phase speed and anchor,speed * 0.10 s plus anchor limit,command_safety_contract.hpp:16,false,reject/safety stop
+AD_G018,terminal_rejected,status,status != STATUS_REJECTED,navigation_mode_node.cpp:2462-2465,false,safety stop
+AD_G019,terminal_completed_velocity_only,status and mode,velocity-only completed path,navigation_mode_node.cpp:2467-2474,false,request native PX4 Hold
+AD_G020,terminal_recovery_identity,"mission, waypoint, request, bundle, activation",same command identity,navigation_mode_node.cpp:2477-2507,false,do not extend moving trajectory
+AD_G021,velocity_only_role,command role,MAIN/BACKUP or certified emergency tuple,navigation_mode_node.cpp:1702-1713,false,hold and return
+AD_G022,velocity_only_status,command status,STATUS_READY,navigation_mode_node.cpp:1714-1716,false,hold and return
+AD_G023,velocity_only_timestamps,"source stamp, reference stamp, lease, now",all > 0 and not future,navigation_mode_node.cpp:1719-1731,false,hold and return
+AD_G024,velocity_only_quaternion,odometry quaternion,norm finite and valid,navigation_mode_node.cpp:1734-1744,false,hold and return
+AD_G025,px4_sample_time,PX4 local-position source time,<= now,navigation_mode_node.cpp:1755-1771,false,hold and return
+AD_G026,px4_reset_counters,"xy reset and z reset",unchanged from reference,navigation_mode_node.cpp:1755-1771,false,hold and return
+AD_G027,adapter_mode,tracking adapter mode,mode enabled and supported,px4_tracking_adapter.hpp:357-364,false,adapter rejects with no setpoint
+AD_G028,adapter_reference,"frame, identity, finite PVAJ",expected frame and valid identity,px4_tracking_adapter.hpp:365-376,false,adapter rejects with no setpoint
+AD_G029,adapter_lio_state,"finite P/V/quaternion and validity flags",valid + epoch/sequence/timestamps,px4_tracking_adapter.hpp:377-387,false,adapter rejects with no setpoint
+AD_G030,adapter_px4_state,"finite PX4 position/velocity/heading",valid heading and timestamp,px4_tracking_adapter.hpp:389-407,false,adapter rejects with no setpoint
+AD_G031,adapter_timing,"snapshot tuple, age and conservative bound",valid tuple and bounded age,px4_tracking_adapter.hpp:412-431,false,adapter rejects with no setpoint
+AD_G032,adapter_reset_expectations,"LIO/PX4 reset counters",policy match,px4_tracking_adapter.hpp:432-439,false,adapter rejects with no setpoint
+AD_G033,adapter_sample_order,sample timestamp vs reference timestamp,sample <= reference/lease timestamp,px4_tracking_adapter.hpp:441-444,false,adapter rejects with no setpoint
+AD_G034,adapter_output_transform,adapter output transform,finite output,px4_tracking_adapter.hpp:446-505,false,adapter rejects with no setpoint
+AD_G035,velocity_max,desired velocity norm,max velocity policy,velocity_only_continuity.hpp:137-140,false,continuity reject and Hold
+AD_G036,velocity_previous_identity,previous continuity owner,valid same/allowed identity,velocity_only_continuity.hpp:142-153,false,continuity reject and Hold
+AD_G037,velocity_previous_limits,"previous stamp, V/A/J limits",previous state finite and configured,velocity_only_continuity.hpp:154-161,false,continuity reject and Hold
+AD_G038,velocity_dt,now - previous stamp,0 < dt <= 1.0 s,velocity_only_continuity.hpp:162-171,true,continuity reject and Hold
+AD_G039,velocity_projection,V/A/J and viability constraints,all residuals <= tolerance,velocity_only_continuity.hpp:192-367,false,continuity reject and Hold
+AD_G040,velocity_projection_tolerance,numerical residual,1e-10,velocity_only_continuity.hpp:241,true,continuity reject and Hold
+AD_G041,velocity_float_output,"velocity and yaw",finite and abs <= float max,navigation_mode_node.cpp:1897-1909,false,request velocity-only Hold
+AD_G042,legacy_pva_transform,"position, velocity, acceleration ENU/NED",finite and transform succeeds,navigation_mode_node.cpp:2526-2533,false,safety stop
+AD_G043,legacy_pva_float_output,"P/V/A/yaw/yaw-rate",finite and abs <= float max,navigation_mode_node.cpp:2526-2557,false,safety stop
+AD_G044,no_command_acquisition,airborne start and command receipt,elapsed <= trajectory_wait_timeout_s_ = 5.0 s,navigation_mode_node.cpp:2559-2582,false,stationary hold then safety stop
+AD_G045,frame_alignment_speed,LIO/PX4 speed while aligning,<= 0.15 m/s,navigation_mode_node.cpp:1524-1530,true,alignment remains unavailable
+AD_G046,frame_alignment_translation,LIO-to-PX4 translation norm,<= 2.0 m,navigation_mode_node.cpp:1531-1535,true,alignment remains unavailable
+AD_G047,frame_alignment_lease,last PX4 local position receive,age <= state_stale_after_s_ = 0.20 s,navigation_mode_node.cpp:2118-2123,false,position hold transform unavailable
+AD_G048,time_unit_conversion,ROS ns to seconds,1e9 ns/s,navigation_mode_node.cpp:2569,true,invalid acquisition timing calculation fails closed

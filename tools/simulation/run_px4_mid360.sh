@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+# Start Gazebo with the project-owned x500_mid360 model, then attach standard
+# PX4 x500 SITL (autostart 4001) to the existing Gazebo entity.
+# No PX4 source patch, custom airframe, or copy into the PX4 submodule is needed.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WS_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+detect_px4_dir() {
+  if [[ -n "${PX4_DIR:-}" ]]; then printf '%s\n' "${PX4_DIR}"
+  elif [[ -d "${HOME}/Dev/Autopilot" ]]; then printf '%s\n' "${HOME}/Dev/Autopilot"
+  else printf '%s\n' "${HOME}/Autopilot"; fi
+}
+
+sanitize_path_for_gzsim() {
+  local old_path="${PATH:-}"
+  local cleaned=""
+  local part
+  IFS=':' read -r -a _parts <<< "${old_path}"
+  for part in "${_parts[@]}"; do
+    [[ -z "${part}" ]] && continue
+    [[ "${part}" == "/opt/ros/jazzy/opt/gz_tools_vendor/bin" ]] && continue
+    if [[ -z "${cleaned}" ]]; then
+      cleaned="${part}"
+    else
+      cleaned="${cleaned}:${part}"
+    fi
+  done
+  export PATH="${cleaned}"
+}
+
+detect_gz_command() {
+  local candidate
+  if [[ -n "${GZ_COMMAND:-}" ]]; then
+    candidate="${GZ_COMMAND}"
+    if command -v "${candidate}" >/dev/null 2>&1 && env -u GZ_CONFIG_PATH "${candidate}" sim --versions >/dev/null 2>&1; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  fi
+  # ROS may prepend a non-simulator `gz` wrapper; scan every visible binary.
+  while IFS= read -r candidate; do
+    [[ -z "${candidate}" ]] && continue
+    if env -u GZ_CONFIG_PATH "${candidate}" sim --versions >/dev/null 2>&1; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done < <(type -aP gz 2>/dev/null)
+
+  # Fallback for shells where `type -aP` is unavailable.
+  if command -v gz >/dev/null 2>&1 && env -u GZ_CONFIG_PATH gz sim --versions >/dev/null 2>&1; then
+    printf '%s\n' "gz"
+    return 0
+  fi
+  return 1
+}
+
+gz_run() {
+  env -u GZ_CONFIG_PATH "${GZ_COMMAND}" "$@"
+}
+
+PX4_DIR="$(detect_px4_dir)"
+GZ_COMMAND="$(detect_gz_command || true)"
+PX4_BUILD="${PX4_DIR}/build/px4_sitl_default"
+PX4_BIN="${PX4_BUILD}/bin/px4"
+PX4_ROOTFS="${PX4_BUILD}/rootfs"
+PX4_GZ_ENV="${PX4_ROOTFS}/gz_env.sh"
+UAV_MODELS="${WS_DIR}/src/uav_simulation/models"
+UAV_WORLDS="${WS_DIR}/src/uav_simulation/worlds"
+WORLD_NAME="${PX4_GZ_WORLD:-px4_lio_smoke}"
+WORLD_FILE="${UAV_WORLDS}/${WORLD_NAME}.sdf"
+MODEL_NAME="${PX4_GZ_MODEL_NAME:-x500_mid360}"
+
+for required in "${PX4_BIN}" "${PX4_ROOTFS}" "${PX4_GZ_ENV}" \
+  "${UAV_MODELS}/x500_mid360/model.sdf" "${UAV_MODELS}/lidar_mid360/model.sdf" \
+  "${WORLD_FILE}"; do
+  if [[ ! -e "${required}" ]]; then
+    echo "ERROR: required path is missing: ${required}" >&2
+    [[ "${required}" == "${PX4_BIN}" ]] && echo "Build: cd ${PX4_DIR} && make px4_sitl_default" >&2
+    exit 1
+  fi
+done
+if [[ -z "${GZ_COMMAND}" ]]; then
+  echo "ERROR: Gazebo Simulator is unavailable. Install Gazebo Harmonic so 'gz sim' works, or set GZ_COMMAND to a simulator-capable binary." >&2
+  echo "Hint: the currently visible 'gz' only provides topic/service/log/param/msg tools, not 'sim'." >&2
+  exit 1
+fi
+echo "Gazebo command : ${GZ_COMMAND}"
+
+# PX4's generated environment supplies its Gazebo plugins/server config and its
+# upstream x500 resources. Initialise variables first because this script uses
+# `set -u` while PX4's generated environment appends to them.
+export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH:-}"
+export GZ_SIM_SYSTEM_PLUGIN_PATH="${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
+export GZ_SIM_SERVER_CONFIG_PATH="${GZ_SIM_SERVER_CONFIG_PATH:-}"
+# shellcheck disable=SC1090
+source "${PX4_GZ_ENV}"
+EXTRA_MODELS="${PX4_GZ_EXTRA_RESOURCE_PATH:-}"
+if [[ -n "${EXTRA_MODELS}" ]]; then
+  export GZ_SIM_RESOURCE_PATH="${EXTRA_MODELS}:${UAV_MODELS}:${UAV_WORLDS}:${GZ_SIM_RESOURCE_PATH:-}"
+else
+  export GZ_SIM_RESOURCE_PATH="${UAV_MODELS}:${UAV_WORLDS}:${GZ_SIM_RESOURCE_PATH:-}"
+fi
+export GZ_IP="${GZ_IP:-127.0.0.1}"
+# ROS setup may point GZ_CONFIG_PATH to tools-only vendor entries.
+# Clear it so Gazebo Sim and PX4's gzsim rcS checks use the real simulator libs.
+unset GZ_CONFIG_PATH
+sanitize_path_for_gzsim
+
+GZ_LOG_DIR="${SESSION_DIR:-${WS_DIR}/log/px4_mid360}/logs"
+mkdir -p "${GZ_LOG_DIR}"
+GZ_LOG="${GZ_LOG_DIR}/gazebo.log"
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  if [[ -n "${GZ_PID:-}" ]] && kill -0 "${GZ_PID}" 2>/dev/null; then
+    if kill -TERM "${GZ_PID}" 2>/dev/null; then
+      if wait "${GZ_PID}" 2>/dev/null; then :; fi
+    fi
+  fi
+  exit "${status}"
+}
+trap cleanup EXIT INT TERM
+
+if [[ "${GZ_GUI:-1}" == "0" ]]; then
+  gz_run sim -r -s "${WORLD_FILE}" >"${GZ_LOG}" 2>&1 &
+else
+  gz_run sim -r "${WORLD_FILE}" >"${GZ_LOG}" 2>&1 &
+fi
+GZ_PID=$!
+
+echo "Gazebo PID     : ${GZ_PID}"
+echo "Gazebo log     : ${GZ_LOG}"
+echo "World          : ${WORLD_NAME}"
+echo "Existing model : ${MODEL_NAME}"
+echo "PX4 autostart  : 4001 (standard x500)"
+
+for _ in $(seq 1 30); do
+  if gz_run topic -l 2>/dev/null | grep -qx "/world/${WORLD_NAME}/clock"; then break; fi
+  if ! kill -0 "${GZ_PID}" 2>/dev/null; then
+    echo "ERROR: Gazebo exited during startup. See ${GZ_LOG}" >&2; exit 1
+  fi
+  sleep 1
+done
+if ! gz_run topic -l 2>/dev/null | grep -qx "/world/${WORLD_NAME}/clock"; then
+  echo "ERROR: timed out waiting for Gazebo world ${WORLD_NAME}. See ${GZ_LOG}" >&2; exit 1
+fi
+
+export PX4_GZ_STANDALONE=1
+export PX4_SYS_AUTOSTART="${PX4_SYS_AUTOSTART:-4001}"
+export PX4_SIMULATOR=gz
+export PX4_GZ_WORLD="${WORLD_NAME}"
+export PX4_GZ_MODEL_NAME="${MODEL_NAME}"
+
+###############################################################################
+# PX4 Parameters
+###############################################################################
+
+# Simulation clock authority
+export PX4_PARAM_UXRCE_DDS_SYNCT=0
+
+# The headless acceptance profile disables manual control. The interactive
+# runner overrides this to MAVLink-only so QGC/joystick control remains usable.
+export PX4_PARAM_COM_RC_IN_MODE="${PX4_PARAM_COM_RC_IN_MODE:-4}"
+
+# Ground-truth model odometry must never compete with ROS LIO external vision.
+export PX4_PARAM_SIM_GZ_EN_ODOM=0
+
+# Use PX4's normal multisensor estimator contract by default and fuse
+# propagated LIO as external vision in addition to GNSS/barometer/range/
+# magnetometer aiding. The explicit GPS-off profile is a non-qualification A/B
+# experiment: GPS simulation remains available for telemetry, but EKF2 GNSS
+# aiding is disabled and EV is selected as the height reference. Other aiding
+# sources remain enabled by the profile's existing values.
+PX4_NAVIGATION_SITL_PROFILE="${PX4_NAVIGATION_SITL_PROFILE:-default}"
+case "${PX4_NAVIGATION_SITL_PROFILE}" in
+  default)
+    export PX4_PARAM_SIM_GZ_EN_GPS=1
+    export PX4_PARAM_EKF2_GPS_CTRL=7
+    export PX4_PARAM_EKF2_EV_CTRL="${PX4_PARAM_EKF2_EV_CTRL:-15}"
+    export PX4_PARAM_EKF2_HGT_REF=1
+    ;;
+  gps_off_ev_12mps)
+    export PX4_PARAM_SIM_GZ_EN_GPS=1
+    export PX4_PARAM_EKF2_GPS_CTRL=0
+    export PX4_PARAM_EKF2_EV_CTRL=15
+    export PX4_PARAM_EKF2_HGT_REF=3
+    echo "WARNING: gps_off_ev_12mps is diagnostic-only; qualification_eligible=false."
+    echo "WARNING: GPS sensor remains simulated, but EKF2 GNSS aiding is disabled."
+    echo "WARNING: PX4 Hold handover may be unavailable in this GPS-off EV A/B profile; Hold rejection is not a mission PASS."
+    ;;
+  *)
+    echo "ERROR: unsupported PX4_NAVIGATION_SITL_PROFILE=${PX4_NAVIGATION_SITL_PROFILE}" >&2
+    exit 2
+    ;;
+esac
+PX4_NAVIGATION_SITL_DYNAMICS_PROFILE="${PX4_NAVIGATION_SITL_DYNAMICS_PROFILE:-off}"
+case "${PX4_NAVIGATION_SITL_DYNAMICS_PROFILE}" in
+  off|baseline_5mps_a2_j4|nominal_5mps_a5_j8)
+    # Planner scalar V/A/J is materialized in the session-owned planner.yaml.
+    # Keep PX4's axis/tilt/thrust limits untouched; the startup script prints
+    # their effective values for post-run attribution.
+    ;;
+  *)
+    echo "ERROR: unsupported PX4_NAVIGATION_SITL_DYNAMICS_PROFILE=${PX4_NAVIGATION_SITL_DYNAMICS_PROFILE}" >&2
+    exit 2
+    ;;
+esac
+export PX4_PARAM_SIM_GZ_EN_BARO=1
+export PX4_PARAM_SIM_GPS_USED=10
+export PX4_PARAM_EKF2_BARO_CTRL=1
+export PX4_PARAM_EKF2_RNG_CTRL=1
+export PX4_PARAM_EKF2_MAG_TYPE=0
+
+
+if [[ -v PX4_SIM_MODEL ]]; then unset PX4_SIM_MODEL; fi
+if [[ -v PX4_GZ_MODEL ]]; then unset PX4_GZ_MODEL; fi
+
+echo
+echo "PX4 is attaching to the existing Gazebo model."
+echo "PX4 UXRCE_DDS_SYNCT: ${PX4_PARAM_UXRCE_DDS_SYNCT} (simulation clock authority)"
+echo "PX4 COM_RC_IN_MODE: ${PX4_PARAM_COM_RC_IN_MODE}"
+echo "PX4 estimator profile: ${PX4_NAVIGATION_SITL_PROFILE}; GPS_CTRL=${PX4_PARAM_EKF2_GPS_CTRL}; EV_CTRL=${PX4_PARAM_EKF2_EV_CTRL}; HGT_REF=${PX4_PARAM_EKF2_HGT_REF}"
+echo "PX4 planner dynamics experiment: ${PX4_NAVIGATION_SITL_DYNAMICS_PROFILE} (planner-owned V/A/J; PX4 axis limits unchanged)"
+echo "PX4 estimator: ROS LIO EV + configured baro/range/mag aiding (Gazebo truth odom disabled)"
+echo "Runtime stack is started by tools/runtime/runner.py."
+echo
+cd "${PX4_ROOTFS}"
+# A background/headless session must keep stdin open. With immediate EOF the
+# PX4 shell continuously redraws its prompt and can grow px4.log by GB/minute.
+tail -f /dev/null | "${PX4_BIN}" -s "${WS_DIR}/tools/simulation/px4_mid360_startup.sh"

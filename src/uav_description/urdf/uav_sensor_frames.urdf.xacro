@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="uav_sensor_frames">
+  <!--
+    Runtime launchers must supply both mount and LiDAR-to-IMU geometry. Required
+    sentinels prevent this xacro from becoming a second calibration source for
+    the base_link -> livox_frame -> livox_imu_frame tree.
+  -->
+  <!--
+    Xacro requires every arg declaration to carry a default. These sentinels
+    are deliberately invalid URDF values, so omitting the launch mount fails
+    URDF validation instead of silently creating a zero mount.
+  -->
+  <xacro:arg name="livox_mount_xyz" default="__required_livox_mount_xyz__"/>
+  <xacro:arg name="livox_mount_rpy" default="__required_livox_mount_rpy__"/>
+  <xacro:arg name="livox_lidar_to_imu_xyz" default="__required_livox_lidar_to_imu_xyz__"/>
+  <xacro:arg name="livox_lidar_to_imu_rpy" default="__required_livox_lidar_to_imu_rpy__"/>
+
+  <!-- base_link origin: UAV reference, intended near the centre of mass. -->
+  <link name="base_link"/>
+  <!-- Livox LiDAR sensing origin. Raw points reaching the estimator are FLU. -->
+  <link name="livox_frame"/>
+  <!-- Livox IMU sensing origin. Measurements reaching the estimator are FLU. -->
+  <link name="livox_imu_frame"/>
+
+  <joint name="base_link_to_livox_frame" type="fixed">
+    <parent link="base_link"/>
+    <child link="livox_frame"/>
+    <origin xyz="$(arg livox_mount_xyz)" rpy="$(arg livox_mount_rpy)"/>
+  </joint>
+  <joint name="livox_frame_to_livox_imu_frame" type="fixed">
+    <parent link="livox_frame"/>
+    <child link="livox_imu_frame"/>
+    <origin xyz="$(arg livox_lidar_to_imu_xyz)" rpy="$(arg livox_lidar_to_imu_rpy)"/>
+  </joint>
+</robot>

@@ -1,0 +1,47 @@
+mission:
+  version: 1
+  id: external_mode_long_three_pillars
+  frame: lio_odom
+  waypoints:
+    - id: takeoff_origin
+      position: [0.0, 0.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    # Deliberately longer than the current pose; the SITL profile exposes a
+    # 40 m mapping/planning window so this must not become a local waypoint.
+    - id: far_goal
+      position: [48.0, 0.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    # Short orthogonal legs expose heading/velocity splice continuity.
+    - id: north_turn
+      position: [48.0, 5.0, 3.0]
+      acceptance_radius_m: 0.8
+      behavior: pass_through
+    - id: west_turn
+      position: [41.0, 5.0, 3.0]
+      acceptance_radius_m: 0.8
+      behavior: pass_through
+    - id: mission_finish
+      position: [41.0, 0.0, 3.0]
+      acceptance_radius_m: 0.8
+      behavior: stop
+      hold_s: 0.4
+  planning:
+    # Use the available SITL control authority so the benchmark evaluates
+    # continuity at flight speed rather than at a deliberately slow crawl.
+    requested_cruise_speed_mps: 3.0
+    # Do not force a 2.4 m/s endpoint on every 3--5 m rolling horizon.  That
+    # endpoint condition makes the B-spline time scaler stretch the whole
+    # local trajectory, so PX4 receives a long low-speed prefix and the UAV
+    # crawls despite a 3 m/s configured limit.  Ramp the endpoint speed from
+    # the measured velocity instead; the next replans raise it continuously.
+    # Keep a non-zero hand-over speed, but reduce the endpoint impulse at an
+    # observed obstacle detour so the estimator/controller does not chase a
+    # sharp local tangent at the next waypoint.
+    unknown_policy: allow_unknown
+  control:
+    acceptance_speed_mps: 0.15
+    acceptance_confirmation_s: 0.5
+    # Switch a pass-through corner early enough for the next local trajectory
+    # to turn with the measured momentum instead of braking at the knot.

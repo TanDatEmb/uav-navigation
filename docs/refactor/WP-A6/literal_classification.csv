@@ -1,0 +1,1230 @@
+file,line,literal,context,decision
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,157,1.0e-9,return quaternion.coeffs().allFinite() && std::isfinite(scale) && scale > 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,175,1,field.count >= 1 && static_cast<std::uint64_t>(field.offset) + sizeof(float) <=,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,181,0,if (axis == 0) return point.x;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,182,1,if (axis == 1) return point.y;,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,201,0.0,if (std::isfinite(goal.acceptance_radius_m) && goal.acceptance_radius_m > 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,213,0U,if (count == 0U || count > navigation_mission::kMaximumMissionWaypoints ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,229,0,for (std::size_t index = 0; index < count; ++index) {,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,237,0.0,!std::isfinite(radius) || radius <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,256,1U,"active_pass_through, source.active_waypoint_index + 1U < count)) {",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,270,0,for (std::size_t index = 0; index < count; ++index) {,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,286,0U,(snapshot.segments.empty() && source.measured_segment_index != 0U) ||,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,293,1.0e-6,if (std::abs(source.measured_projection_arc_m) > 1.0e-6) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,303,-1.0e-6,if (!std::isfinite(fraction) || fraction < -1.0e-6 || fraction > 1.0 + 1.0e-6) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,303,1.0,if (!std::isfinite(fraction) || fraction < -1.0e-6 || fraction > 1.0 + 1.0e-6) {,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,303,1.0e-6,if (!std::isfinite(fraction) || fraction < -1.0e-6 || fraction > 1.0 + 1.0e-6) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,307,0.0,"std::clamp(fraction, 0.0, 1.0);",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,307,1.0,"std::clamp(fraction, 0.0, 1.0);",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,350,0.0,if (!std::isfinite(seconds) || seconds < 0.0) return std::nullopt;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,351,1.0e9L,const long double nanos = static_cast<long double>(seconds) * 1.0e9L;,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,352,0.0L,if (!std::isfinite(nanos) || nanos < 0.0L ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,458,1.0e-9,std::abs(goal.acceptance_radius_m - active.acceptance_radius_m) > 1.0e-9 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,517,0,if (static_cast<unsigned char>(character) < 0x20U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,520,4U,"output << ""\\u00"" << hex[value_byte >> 4U] << hex[value_byte & 0x0fU];",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,520,0,"output << ""\\u00"" << hex[value_byte >> 4U] << hex[value_byte & 0x0fU];",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,532,17,output << std::setprecision(17) << value;,EXCLUDED:diagnostic_format
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,551,0,for (std::size_t index = 0; index < points.size(); ++index) {,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,552,0U,"if (index != 0U) output << ',';",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,577,0U,const bool has_committed_bundle = snapshot.generation > 0U && !trajectory.empty();,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,582,0.0,trajectory.duration_s > 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,591,0,for (std::size_t index = 0; point_count && index < *point_count; ++index) {,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,593,1U,static_cast<double>(*point_count - 1U);,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,723,0,inject_failed_replan_cycle_id_ = inject_failed_replan_cycle_id > 0,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,724,0U,? static_cast<std::uint64_t>(inject_failed_replan_cycle_id) : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,749,0,exact_predecessor_request <= 0 || exact_successor_request <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,749,0,exact_predecessor_request <= 0 || exact_successor_request <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,751,0,((exact_alternate_predecessor_request == 0) !=,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,752,0,(exact_alternate_successor_request == 0)) ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,753,0,exact_alternate_predecessor_request < 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,754,0,exact_alternate_successor_request < 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,755,0,(exact_alternate_predecessor_request > 0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,768,0,if (exact_alternate_predecessor_request > 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,776,0,if (inject_failed_same_identity_renewal_ordinal < 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,816,0,std::chrono::duration_cast<std::chrono::microseconds>(*planning_period).count() <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,820,0.0,if (!std::isfinite(data_freshness_window_s_) || data_freshness_window_s_ <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,821,0.0,!std::isfinite(planner_watchdog_timeout_s_) || planner_watchdog_timeout_s_ <= 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,840,0,if (!data_freshness_window_ns || *data_freshness_window_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,841,0,!planner_watchdog_timeout_ns || *planner_watchdog_timeout_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,842,0,!command_stream_timeout_ns || *command_stream_timeout_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,875,0U,if (dynamics_hash_ == 0U) dynamics_hash_ = 1U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,875,1U,if (dynamics_hash_ == 0U) dynamics_hash_ = 1U;,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,883,1,mapping_configuration.raycasting_batch_update_size != 1) {,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1057,0U,terminal_generation != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1062,0,expected_bundle->declared_end_ns > 0,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1116,2,"pointFromMessage(plannerTarget(*expected_goal), 2)}).norm() <=",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1146,1,"static_cast<int>(terminal_state), terminal_endpoint.has_value() ? 1 : 0);",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1146,0,"static_cast<int>(terminal_state), terminal_endpoint.has_value() ? 1 : 0);",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1352,0U,? recertified_state.active->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1376,0U,? current_execution.active->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1482,0U,const bool invalid = pending.message->points.width == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1485,0U,pending.localization_epoch == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1486,0,pending.stamp_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1488,0,pending.message->header.stamp).value_or(0) !=,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1535,0,"item.value = std::to_string(std::max<std::int64_t>(0, value));",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1835,0U,"!hasFloatField(message, ""z"") || message.point_step == 0U ||",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1899,0U,if (localization_epoch == 0U) return;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1991,0,message->header.stamp).value_or(0);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1994,0U,free_space.width != 0U || free_space.height != 0U || !free_space.data.empty();,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,1994,0U,free_space.width != 0U || free_space.height != 0U || !free_space.data.empty();,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2014,0,message->visibility_stamp_skew_ns == 0,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2015,0U,: !has_free_space_payload && message->visibility_source_ray_count == 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2016,0U,message->visibility_no_return_count == 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2017,0U,message->visibility_selected_no_return_count == 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2018,0U,message->visibility_detected_no_return_count == 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2019,0U,message->visibility_sampling_cap == 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2023,0,message->visibility_stamp_skew_ns == 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2025,0U,message->localization_epoch == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2026,0U,message->scan_sequence == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2030,0,navigation_common::rosTimeToNanoseconds(message->points.header.stamp).value_or(0) !=,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2034,0,navigation_common::rosTimeToNanoseconds(free_space.header.stamp).value_or(0) !=,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2043,0,if (observation_stamp_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2077,0U,if (!message || message->localization_epoch == 0U) return;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2089,0U,if (!message || message->localization_epoch == 0U || message->sequence == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2089,0U,if (!message || message->localization_epoch == 0U || message->sequence == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2117,0,if (stamp_ns <= 0 || !propagatedOdometryFinite(odometry) ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2118,0,(previous_stamp_ns > 0 && stamp_ns <= previous_stamp_ns)) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2313,0U,"static_cast<unsigned long>(timeline.active ? timeline.active->bundle_generation : 0U),",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2317,1,"static_cast<unsigned>(episode.lifecycle.recovery), can_hot_retarget ? 1 : 0);",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2317,0,"static_cast<unsigned>(episode.lifecycle.recovery), can_hot_retarget ? 1 : 0);",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2343,1,"static_cast<unsigned long>(message->request_id), accepted_pending ? 1 : 0);",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2343,0,"static_cast<unsigned long>(message->request_id), accepted_pending ? 1 : 0);",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2472,0U,"static_cast<unsigned long>(timeline.active ? timeline.active->bundle_generation : 0U),",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2486,0U,message->activation_id > 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2494,0,message->header.stamp).value_or(0);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2498,0U,mode_mission_boundary_ ? mode_mission_boundary_->activation_id : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2499,0U,if ((message->activation_id > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2503,0,source_ns > 0 && source_ns < mode_mission_boundary_->source_stamp_ns)) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2507,0,message->activation_id > last_terminal_mode_activation_id_ && source_ns > 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2582,1U,desired_intent_.goal()->waypoint_index + 1U < desired_intent_.goal()->route.waypoint_positions.size() &&,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2583,1U,desired_intent_.goal()->waypoint_index + 1U < desired_intent_.goal()->route.waypoint_behaviors.size();,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2584,0,const bool command_lease_valid = current_bundle && now_ns > 0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2670,0U,? decision.accepted->waypoint_index : 0U;,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2717,0U,if (epoch == 0U) return;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2719,1U,"mission_progress_->resetIdentity(1U, epoch);",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2728,0U,mode_mission_boundary_->activation_id == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2732,200000,(now_ros_ns - mode_mission_boundary_->source_stamp_ns > 200'000'000 ||,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2733,200000,now_steady_ns - mode_mission_boundary_->receive_steady_ns > 200'000'000)) ||,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2780,16U,if (old_expiry >= now().nanoseconds() && issued_mission_commands_.size() < 16U) break;,INCLUDED:navigation_command_queue_capacity
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2799,0,message->header.stamp).value_or(0);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2805,0,if (admission_ns <= 0 || admission_ns > now_ns ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2898,0U,(predecessor.active ? predecessor.active->bundle_generation : 0U) &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2972,0,if (now_ns <= 0 || goal_epoch == 0U || localization_epoch == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2972,0U,if (now_ns <= 0 || goal_epoch == 0U || localization_epoch == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2972,0U,if (now_ns <= 0 || goal_epoch == 0U || localization_epoch == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,2973,0U,goal.request_id == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3010,0,if (maximum_age_ns <= 0 || now_ns > std::numeric_limits<std::int64_t>::max() - maximum_age_ns) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3069,0,if (activation_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3072,0,(activation_guard_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3094,0LL,"candidate_start_ns ? static_cast<long long>(*candidate_start_ns) : 0LL,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3186,1.0e-4,(boundary_sample->position_world - boundary.position_world).norm() <= 1.0e-4;,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3202,0.0,"endpoint ? endpoint->position_world.x() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3203,0.0,"endpoint ? endpoint->position_world.y() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3204,0.0,"endpoint ? endpoint->position_world.z() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3212,0.0,"boundary_sample ? boundary_sample->position_world.x() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3213,0.0,"boundary_sample ? boundary_sample->position_world.y() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3214,0.0,"boundary_sample ? boundary_sample->position_world.z() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3217,0.0,"constraint ? constraint->admissible_volume.minimum.x() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3218,0.0,"constraint ? constraint->admissible_volume.minimum.y() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3219,0.0,"constraint ? constraint->admissible_volume.minimum.z() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3220,0.0,"constraint ? constraint->admissible_volume.maximum.x() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3221,0.0,"constraint ? constraint->admissible_volume.maximum.y() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3222,0.0,constraint ? constraint->admissible_volume.maximum.z() : 0.0);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3226,1U,route_snapshot->active_waypoint_index + 1U <,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3245,1.0e-9,const double activation_wall_time_s = static_cast<double>(activation_ns) * 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3305,1,"measured_state && measured_state->state.finite() ? 1 : 0,",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3305,0,"measured_state && measured_state->state.finite() ? 1 : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3306,1,"static_cast<int>(state_freshness), candidate_ptr->valid() ? 1 : 0,",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3306,0,"static_cast<int>(state_freshness), candidate_ptr->valid() ? 1 : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3307,1,"candidate_sample ? 1 : 0, static_cast<long long>(now_ns),",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3307,0,"candidate_sample ? 1 : 0, static_cast<long long>(now_ns),",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3311,0.0,"measured_state ? measured_state->state.position_world.x() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3312,0.0,"measured_state ? measured_state->state.position_world.y() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3313,0.0,"measured_state ? measured_state->state.position_world.z() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3314,0.0,"candidate_sample ? candidate_sample->position_world.x() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3315,0.0,"candidate_sample ? candidate_sample->position_world.y() : 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3316,0.0,candidate_sample ? candidate_sample->position_world.z() : 0.0);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3343,0,const bool staged = stage_decision == 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3533,0U,snapshot.active ? snapshot.active->bundle_generation : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3535,0U,snapshot.active ? snapshot.active->goal_epoch : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3537,0U,snapshot.active ? snapshot.active->request_id : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3539,0U,snapshot.pending ? snapshot.pending->bundle_generation : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3541,0U,snapshot.pending ? snapshot.pending->goal_epoch : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3543,0U,snapshot.pending ? snapshot.pending->request_id : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3550,0,"std::max<std::int64_t>(0, ros_now.nanoseconds())));",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3552,0,"std::max<std::int64_t>(0, navigation_common::steadyClockNowNanoseconds())));",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3555,0U,before.pending ? before.pending->localization_epoch : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3561,0,"std::max(active_validation_path, 0)));",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3563,0,"std::max(pending_validation_path, 0)));",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3607,0U,if (!goal || !execution || !world || goal_epoch == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3608,0U,goal->route.route_revision == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3625,0U,command_goal_epoch != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3675,0U,key.committed_bundle_generation = bundle ? bundle->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3698,0U,? predecessor_bundle->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3728,0,if (last_planning_timer_expected_steady_ns_ == 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3851,1.0e9,const auto heading_lead_ns = static_cast<std::int64_t>(heading_lead_s * 1.0e9);,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3852,0,if (now_ns <= 0 || heading_lead_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3852,0,if (now_ns <= 0 || heading_lead_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3854,0,data_freshness_window_ns_ <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3861,1.0e-9,static_cast<double>(activation_ns) * 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3893,0,if (!planner_ || now_ns <= 0) return;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3962,0U,if (generation == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,3965,0U,return generation != 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4016,0,if (last_cycle_started_steady_ns_ > 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4019,0,"std::max<std::int64_t>(0, interval_us - planning_period_us_);",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4123,0,"item.value = std::to_string(std::max<std::int64_t>(0, value));",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4197,1U,propagated_state->state.acceleration_estimated ? 1U : 0U);,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4197,0U,propagated_state->state.acceleration_estimated ? 1U : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4199,1U,propagated_state->state.jerk_estimated ? 1U : 0U);,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4199,0U,propagated_state->state.jerk_estimated ? 1U : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4216,0U,? execution.active->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4499,0.15,measured_speed_mps > 0.15) {,INCLUDED:runtime_stopped_recovery_speed_gate_mps
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4617,0.15,(!std::isfinite(measured_speed_mps) || measured_speed_mps > 0.15)) {,INCLUDED:runtime_stopped_recovery_speed_gate_mps
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4647,0U,stopped_bundle ? stopped_bundle->bundle_generation : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4816,1U,static_cast<std::size_t>(goal->route.active_waypoint_index + 1U) <,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,4918,1U,goal->waypoint_index == completed_execution_goal->waypoint_index + 1U &&,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5210,1.0e-6,const double planning_interval_s = static_cast<double>(planning_period_us_) * 1.0e-6;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5343,0U,terminal_generation != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5412,0.0,? route_snapshot->measured_progress.progress_arc_m : 0.0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5416,0.0,!std::isfinite(segment.length_m) || segment.length_m <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5436,0.0,"const double route_remaining = std::max(0.0, target_arc - best_arc);",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5449,0.0,effective_cruise_speed_mps <= 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5477,0U,? request_timeline.active->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5585,0U,goal_epoch_at_cycle != 0U && goal_epoch_at_cycle == command_goal_epoch_at_cycle;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5627,0,if (activation_lead_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5821,0U,inject_failed_replan_cycle_id_ != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5837,0.0,retained_tracking_limit_m > 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5839,0.40,transition_anchor_error_m <= 0.40 * retained_tracking_limit_m &&,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5852,1.5,transition_bundle->backup_start_time_s - transition_elapsed_s >= 1.5 &&,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5853,0.0,std::isfinite(retained_tracking_limit_m) && retained_tracking_limit_m > 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,5855,0.40,transition_anchor_error_m <= 0.40 * retained_tracking_limit_m &&,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6071,1,execution_at_solve.active->valid() ? 1 : 0);,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6071,0,execution_at_solve.active->valid() ? 1 : 0);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6074,1,injection_now_ns <= execution_at_solve.active->valid_until_ns ? 1 : 0);,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6074,0,injection_now_ns <= execution_at_solve.active->valid_until_ns ? 1 : 0);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6166,0U,effective_scheduled_key.committed_bundle_generation != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6234,0,if (plan_from_rest_first_failure_steady_ns_ == 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6239,1.0e-9,static_cast<long double>(plan_from_rest_first_failure_steady_ns_)) * 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6272,0U,"add(""request_id"", goal ? goal->request_id : 0U);",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6499,0U,const bool has_committed_bundle = committed_generation > 0U && !committed.empty();,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6534,1.0e-3,const double planner_elapsed_ms = static_cast<double>(last_planner_us_) * 1.0e-3;,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6536,1000.0,planner_elapsed_ms > planner_diagnostics.solve_deadline_s * 1000.0;,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6676,17,"stream << std::setprecision(17) << '[' << value.x() << ',' << value.y()",EXCLUDED:diagnostic_format
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6751,1,"add_trace_value(key_prefix + ""_backup_available"", bundle->backup_available ? 1 : 0);",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6751,0,"add_trace_value(key_prefix + ""_backup_available"", bundle->backup_available ? 1 : 0);",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6772,1,active_bundle->route_boundary_constraint->valid() ? 1 : 0);,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6772,0,active_bundle->route_boundary_constraint->valid() ? 1 : 0);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6776,0.0,boundary_sample ? boundary_sample->velocity_world.norm() : 0.0);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,6779,0.0,"? std::max(0.0, active_bundle->duration_s -",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7102,0U,planning_outcome.candidate ? planning_outcome.candidate->bundle_generation : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7105,0,planning_outcome.candidate ? planning_outcome.candidate->activation_stamp_ns : 0);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7179,0,if (event_steady_ns <= 0) return;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7207,0,if (watchdog_event_steady_ns > 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7227,0,watchdog_event_steady_ns > 0,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7240,1U,for (std::size_t stage_index = 1U;,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7477,256U,if (end_to_end_samples_ms_.size() == 256U) end_to_end_samples_ms_.erase(end_to_end_samples_ms_.begin());,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7479,1,if (metrics_now - metrics_log_time_ >= std::chrono::seconds(1)) {,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7484,1U,"const auto index = std::min(sorted.size() - 1U,",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7496,0U,const bool committed_valid = committed_generation > 0U && !committed.empty();,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7510,0.0,": sample_position(std::clamp(backup_start_s, 0.0, committed_duration));",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7576,1.0e-6,const double planning_interval_s = static_cast<double>(planning_period_us_) * 1.0e-6;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7579,0U,observation.desired_request_id = goal ? goal->request_id : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7624,0U,causal_snapshot.execution_request_id = goal ? goal->request_id : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7632,0U,? retained_timeline.active->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7643,0U,? committed_bundle->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7648,0,observation.expected_end_ns = expected_bundle ? expected_bundle->declared_end_ns : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7649,0,observation.expected_valid_until_ns = expected_bundle ? expected_bundle->valid_until_ns : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7652,0,observation.declared_end_ns = committed_bundle ? committed_bundle->declared_end_ns : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7653,0,observation.valid_until_ns = committed_bundle ? committed_bundle->valid_until_ns : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7662,0U,"committed_bundle ? committed_bundle->localization_epoch : 0U,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7664,0U,"committed_bundle ? committed_bundle->goal_epoch : 0U,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7666,0U,"committed_bundle ? committed_bundle->request_id : 0U,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7668,0U,"retained_executing_goal ? retained_executing_goal->request_id : 0U,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7701,0.0,? committed_bundle->backup_start_time_s : 0.0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7710,0,const auto retained_elapsed_ns = committed && committed_bundle->declared_start_ns > 0,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7715,1.0e-9,? static_cast<double>(*retained_elapsed_ns) * 1.0e-9,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7718,0.0,? committed_bundle->duration_s : 0.0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7720,0.0,"std::clamp(elapsed_s, 0.0, std::max(0.0, total_duration_s));",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7720,0.0,"std::clamp(elapsed_s, 0.0, std::max(0.0, total_duration_s));",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7752,-1,? static_cast<int>(retained_state_freshness.reason) : -1;,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7766,0,if (!committed || stamp_ns <= 0) return false;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7810,0U,? committed_bundle->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7812,0U,? retained_execution_state->ingress_sequence : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7815,0,? retained_execution_state->state.source_stamp_ns : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7817,0,? retained_execution_state->state.receive_stamp_ns : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7821,0,? committed_bundle->declared_start_ns : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7849,-1,? static_cast<int>(committed_bundle->role) : -1;,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7905,0,"retained_execution_state ? retained_execution_state->state.source_stamp_ns : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7906,1000,"static_cast<std::int64_t>(planning_period_us_) * 1000,",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7907,1.0e-6,"static_cast<double>(planning_period_us_) * 1.0e-6,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7917,0,"retained_execution_state ? retained_execution_state->state.source_stamp_ns : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7928,0,"retained_execution_state ? retained_execution_state->state.source_stamp_ns : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,7985,1.0e-6,static_cast<double>(planning_period_us_) * 1.0e-6);,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8001,0.0,std::isfinite(elapsed_s) && elapsed_s >= 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8002,1.0e-9,std::isfinite(total_duration_s) && elapsed_s <= total_duration_s + 1.0e-9 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8019,0U,"retained_execution_state ? retained_execution_state->state.localization_epoch : 0U,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8020,0U,"committed_bundle ? committed_bundle->localization_epoch : 0U,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8022,0,"committed_bundle ? committed_bundle->valid_until_ns : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8023,1000,static_cast<std::int64_t>(planning_period_us_) * 1000);,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8211,0,"? prepared_final_execution_state->state.source_stamp_ns : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8212,1000,"static_cast<std::int64_t>(planning_period_us_) * 1000,",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8213,1.0e-6,"static_cast<double>(planning_period_us_) * 1.0e-6,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8222,0,"? prepared_final_execution_state->state.source_stamp_ns : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8238,0,"? prepared_final_execution_state->state.source_stamp_ns : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8264,0,? final_execution_state->state.source_stamp_ns : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8316,0,? final_execution_state->state.receive_stamp_ns : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8334,0U,"final_execution_state ? final_execution_state->state.localization_epoch : 0U,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8335,0U,"committed_bundle ? committed_bundle->localization_epoch : 0U,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8337,0,"committed_bundle ? committed_bundle->valid_until_ns : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8338,1000,static_cast<std::int64_t>(planning_period_us_) * 1000);,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8500,0U,? after_timeline.active->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8518,0U,"retained_desired_goal ? retained_desired_goal->waypoint_index : 0U,",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8519,0U,"static_cast<unsigned long>(retained_desired_goal ? retained_desired_goal->request_id : 0U),",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8524,1,"static_cast<unsigned>(observation.disposition), committed ? 1 : 0,",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8524,0,"static_cast<unsigned>(observation.disposition), committed ? 1 : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8533,0U,"static_cast<unsigned long>(committed_bundle ? committed_bundle->bundle_generation : 0U),",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8558,-1,"result ? static_cast<int>(*result) : -1, backup_available, elapsed_s, safety_transition_s,",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8748,0U,if (active_solve != 0U && solve_started_ns > 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8748,0,if (active_solve != 0U && solve_started_ns > 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8845,1e9,"static_cast<double>(solve_age_ns) / 1e9,",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8862,3,"Eigen::Matrix<double, 3, 4> pvaj = Eigen::Matrix<double, 3, 4>::Zero();",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8862,4,"Eigen::Matrix<double, 3, 4> pvaj = Eigen::Matrix<double, 3, 4>::Zero();",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8862,3,"Eigen::Matrix<double, 3, 4> pvaj = Eigen::Matrix<double, 3, 4>::Zero();",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8862,4,"Eigen::Matrix<double, 3, 4> pvaj = Eigen::Matrix<double, 3, 4>::Zero();",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8889,0,execution_receive_steady_ns = execution_state ? execution_state->state.receive_stamp_ns : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8890,0,const auto execution_source_ns = execution_state ? execution_state->state.source_stamp_ns : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8924,0U,? execution_at_command.active->goal_epoch : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8948,0,"current_execution_state ? current_execution_state->state.source_stamp_ns : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8950,0,"current_execution_state ? current_execution_state->state.receive_stamp_ns : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8982,0U,"? current_execution_state->ingress_sequence : 0U),",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,8984,0U,"? current_execution_state->ingress_sequence : 0U),",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9008,0U,if (planner_available && command_goal_epoch_at_command == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9028,0UL,"sample.bundle ? static_cast<unsigned long>(sample.bundle->bundle_generation) : 0UL,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9245,0U,"terminal_hold_committed ? sample.bundle->bundle_generation : 0U,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9339,0U,if (command_world_identity.generation == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9381,0U,? static_cast<std::uint64_t>(continuation_window->boundary_stamp_ns) : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9401,0.0,? sampled_bundle->backup_start_time_s : 0.0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9403,0.0,? sampled_bundle->backup_start_time_s - trajectory_time_s : 0.0;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9516,1,"static_cast<int>(sampled_role), safety_suffix_active ? 1 : 0,",EXCLUDED:index/size
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9516,0,"static_cast<int>(sampled_role), safety_suffix_active ? 1 : 0,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9631,0,(pvaj.col(0) - final_execution_state->state.position_world).norm();,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9663,0,"std::max<std::int64_t>(0, authorization_steady_ns));",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9752,0U,? current_state_lease->ingress_sequence : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9786,0U,"? final_execution_state->ingress_sequence : 0U),",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9827,0U,? current_bundle->goal_epoch : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9845,0U,"sampled_bundle ? sampled_bundle->bundle_generation : 0U,",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9876,0,"std::max<std::int64_t>(0, navigation_common::steadyClockNowNanoseconds()));",EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9892,0U,? sampled_bundle->producer_planning_cycle_id : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp,9894,0U,? static_cast<std::uint8_t>(sampled_bundle->source) : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,211,0.0,std::isfinite(maximum_anchor_error_m) && maximum_anchor_error_m > 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,258,0.0,!std::isfinite(maximum_anchor_error_m) || maximum_anchor_error_m <= 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,280,0.0,std::isfinite(maximum_anchor_error_m) && maximum_anchor_error_m > 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,298,0.0,std::isfinite(acceptance_tolerance_m) && acceptance_tolerance_m >= 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,349,0.0,if (!std::isfinite(speed_mps) || speed_mps <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,350,0.0,!std::isfinite(acceleration_mps2) || acceleration_mps2 <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,351,0.0,!std::isfinite(jerk_mps3) || jerk_mps3 <= 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,356,0.0,return std::isfinite(distance) && distance > 0.0,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,373,0.0,if (!std::isfinite(remaining_route_m) || remaining_route_m < 0.0) return true;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,399,0.0,command_elapsed_s < 0.0 || !std::isfinite(backup_start_s) ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,400,0.0,backup_start_s < 0.0 || !std::isfinite(solve_deadline_s) ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,401,0.0,solve_deadline_s <= 0.0 || !std::isfinite(replan_forward_s) ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,402,0.0,replan_forward_s <= 0.0 || !std::isfinite(scheduling_interval_s) ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,403,0.0,scheduling_interval_s <= 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,413,2.0L,2.0L * static_cast<long double>(replan_forward_s) +,EXCLUDED:index/size
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,421,0.0L,lead_time <= 0.0L) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,453,0.0,decision.remaining_main_horizon_s <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,455,0.0,decision.required_lead_time_s <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,456,0.0,!std::isfinite(scheduling_interval_s) || scheduling_interval_s <= 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,482,0,source_ns > 0 && source_ns < bundle.declared_start_ns &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,486,0.0,std::isfinite(command_anchor_limit_m) && tracking_limit_m > 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,558,0.0,!std::isfinite(correction_limit_m) || correction_limit_m < 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,576,0U,terminal_bundle_generation != 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,588,0U,identity_matches && bundle_generation != 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,629,0.0,std::isfinite(timeout_s) && timeout_s > 0.0 && elapsed_s >= timeout_s;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,648,0U,return suspended_generation != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,673,0U,return sampled_generation != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,751,0.0,elapsed_s >= 0.0 && total_duration_s > elapsed_s &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,752,0.0,maximum_anchor_error_m > 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,761,1.0e-9,return std::abs(safety_transition_s - elapsed_s) <= 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,791,0U,command_goal_epoch != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,805,0.0,planner_tracking_budget_m < 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,807,0.0,execution_anchor_limit_m < 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,832,0.0,command_error_at_state_source_m < 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,833,0.0,!std::isfinite(command_error_at_now_m) || command_error_at_now_m < 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,834,0.0,!std::isfinite(tracking_budget_m) || tracking_budget_m <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,835,0.0,!std::isfinite(absolute_anchor_cap_m) || absolute_anchor_cap_m <= 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,890,0,!measured_position.allFinite() || !measured_velocity.allFinite() || now_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,891,0,source_stamp_ns <= 0 || maximum_phase_lag_ns <= 0 || source_stamp_ns > now_ns ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,891,0,source_stamp_ns <= 0 || maximum_phase_lag_ns <= 0 || source_stamp_ns > now_ns ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,892,0.0,!std::isfinite(validation_interval_s) || validation_interval_s <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,893,0.0,!std::isfinite(tracking_position_budget_m) || tracking_position_budget_m <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,894,0.0,!std::isfinite(absolute_command_anchor_cap_m) || absolute_command_anchor_cap_m <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,908,1.0e-9L,static_cast<long double>(now_ns)) * 1.0e-9L;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,910,1.0e-12L,static_cast<long double>(validation_interval_s) > lease_remaining_s + 1.0e-12L) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,922,0,if (phase_lag_ns <= 0 || phase_lag_ns > maximum_phase_lag_ns ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,923,1.0e-9,command_at_source->trajectory_time_s > command_now->trajectory_time_s + 1.0e-9 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,928,1.0e-9,result.phase_lag_s = static_cast<double>(phase_lag_ns) * 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,942,1.0e-3,!std::isfinite(result.relative_velocity_mps) || result.source_speed_mps <= 1.0e-3 ||,EXCLUDED:index/size
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,943,1.0e-3,result.measured_speed_mps <= 1.0e-3 ||,EXCLUDED:index/size
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,947,0.0,command_at_source->velocity_world.dot(measured_velocity) < 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,969,0U,state_localization_epoch == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,970,0,state_localization_epoch != bundle_localization_epoch || now_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,971,0,valid_until_ns < now_ns || validation_interval_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,988,0.0,if (!std::isfinite(anchor_error_m) || anchor_error_m < 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,989,0.0,!std::isfinite(relative_speed_mps) || relative_speed_mps < 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp,990,0.0,!std::isfinite(validation_interval_s) || validation_interval_s <= 0.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,25,0.0,if (!std::isfinite(seconds) || seconds < 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,26,1e9,seconds > static_cast<double>(std::numeric_limits<std::int64_t>::max()) / 1e9) {,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/mission_progress.cpp,29,1e9,return static_cast<std::int64_t>(std::ceil(seconds * 1e9));,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/mission_progress.cpp,34,0,return position.allFinite() && velocity.allFinite() && source_stamp_ns > 0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,35,0U,sequence > 0U && localization_epoch > 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,35,0U,sequence > 0U && localization_epoch > 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,48,0U,if (route_revision == 0U || localization_epoch == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,48,0U,if (route_revision == 0U || localization_epoch == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,68,0U,if (identity_.localization_epoch == 0U || complete()) return {};,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,92,0U,continuation_->bundle_generation > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,93,0,continuation_->boundary_stamp_ns > 0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,103,0,if (!active_ || complete() || now_ns <= 0 || now_ns > witness.valid_until_ns ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,105,0U,witness.bundle_generation == 0U || witness.boundary_stamp_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,105,0,witness.bundle_generation == 0U || witness.boundary_stamp_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,176,0.0,tangent.allFinite() && tangent.norm() > 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,181,0U,if (gate_.request_id == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/runtime/navigation_runtime/src/mission_progress.cpp,195,1e9,gap_valid ? static_cast<double>(sample.source_stamp_ns - prior->source_stamp_ns) / 1e9,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/mission_progress.cpp,197,1e9,static_cast<double>(kMaximumCrossingSampleGapNs) / 1e9);,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/mission_progress.cpp,205,0U,const bool initial_inside = gate_.waypoint_index == 0U && gate_.request_id == 1U &&,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/mission_progress.cpp,205,1U,const bool initial_inside = gate_.waypoint_index == 0U && gate_.request_id == 1U &&,EXCLUDED:index/size
+src/runtime/navigation_runtime/src/mission_progress.cpp,255,1U,if (gate_.waypoint_index + 1U >= mission_.waypoints.size()) {,EXCLUDED:index/size
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,69,0U,return active ? active->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,72,0U,return active ? active->goal_epoch : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,75,0U,return active ? active->request_id : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,79,0U,? active->request_id : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,132,0,if (goal_epoch == 0) return false;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,155,0U,if (localization_epoch == 0U || goal_epoch == 0U) return false;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,155,0U,if (localization_epoch == 0U || goal_epoch == 0U) return false;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,334,0U,if (identity.localization_epoch == 0U || identity.generation == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,334,0U,if (identity.localization_epoch == 0U || identity.generation == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,335,0U,identity.revision == 0U || identity.observation_stamp_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,335,0,identity.revision == 0U || identity.observation_stamp_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,349,0,if (!endpoint_ns || *endpoint_ns <= 0) return {};,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,399,0U,return bundle_generation == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,473,0U,return active_.bundle ? active_.bundle->goal_epoch : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,488,0,if (request_stamp_ns <= 0 || activation_stamp_ns < request_stamp_ns) return std::nullopt;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,516,0,const auto end_ns = predecessor->declared_end_ns > 0,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,562,0U,"if (!goalMatchesCandidate(goal, candidate) || !candidate->valid() || expected.goal_epoch == 0U ||",EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,563,0U,expected.transaction_id == 0U) return StageDecision::kInvalidCandidate;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,572,0U,if (admission_goal_epoch_ == 0U) return StageDecision::kNoActiveGoal;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,603,0U,"if (!goalMatchesCandidate(goal, candidate) || !candidate->valid() || expected.goal_epoch == 0U ||",EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,604,0U,expected.transaction_id == 0U) return StageDecision::kInvalidCandidate;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,612,0U,if (admission_goal_epoch_ == 0U) return StageDecision::kNoActiveGoal;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,735,0,"if (!goalMatchesCandidate(goal, candidate) || !candidate->valid() || expected.goal_epoch == 0 ||",EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,736,0,expected.transaction_id == 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,740,0,if (admission_goal_epoch_ == 0) return CommitDecision::kNoActiveGoal;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,764,0U,? active_.bundle->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,793,0U,"if (!goalMatchesCandidate(goal, candidate) || !candidate->valid() || expected.goal_epoch == 0U ||",EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,794,0U,expected.transaction_id == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,798,0U,if (admission_goal_epoch_ == 0U) return CommitDecision::kNoActiveGoal;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,835,0U,? active_.bundle->bundle_generation : 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,858,0,"if (!goalMatchesCandidate(goal, candidate) || !candidate->valid() || expected.goal_epoch == 0 ||",EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,859,0,expected.transaction_id == 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,863,0,if (admission_goal_epoch_ == 0) return CommitDecision::kNoActiveGoal;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,897,0U,"*active_.bundle, previous ? previous->bundle_generation : 0U);",EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,944,0U,bundle.localization_epoch != 0U && bundle.goal_epoch != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,944,0U,bundle.localization_epoch != 0U && bundle.goal_epoch != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,945,0U,bundle.request_id != 0U && bundle.bundle_generation != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,945,0U,bundle.request_id != 0U && bundle.bundle_generation != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,994,0U,goal->request_id != 0U && goal->request_id == candidate->request_id;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,1159,0,if (!staged_.bundle || staged_.activation_ns <= 0 || now_ns < staged_.activation_ns) {,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,1218,0U,"*active_.bundle, previous ? previous->bundle_generation : 0U);",EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,1242,0,const auto end_ns = predecessor.declared_end_ns > 0,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,1259,0,if (elapsed_ns < 0) return false;,EXCLUDED:numeric_epsilon<=1e-6
+src/execution/navigation_execution/include/navigation_execution/execution_authority.hpp,1261,1.0e-9,static_cast<double>(elapsed_ns) * 1.0e-9);,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,64,0,if ((delta_ns > 0 && base_ns > std::numeric_limits<std::int64_t>::max() - delta_ns) ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,65,0,(delta_ns < 0 && base_ns < std::numeric_limits<std::int64_t>::min() - delta_ns)) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,250,0.0,!std::isfinite(stale_after_s_) || stale_after_s_ <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,251,0.0,!std::isfinite(state_stale_after_s_) || state_stale_after_s_ <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,252,0.0,!std::isfinite(trajectory_wait_timeout_s_) || trajectory_wait_timeout_s_ <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,254,0.0,planner_recovery_wait_timeout_s_ <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,255,0.10,std::abs(stale_after_s_ - 0.10) > 1.0e-9 ||,INCLUDED:trajectory_stale_after_s
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,255,1.0e-9,std::abs(stale_after_s_ - 0.10) > 1.0e-9 ||,INCLUDED:numerical_roundoff_epsilons
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,256,0.20,std::abs(state_stale_after_s_ - 0.20) > 1.0e-9 ||,INCLUDED:state_stale_after_s
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,256,1.0e-9,std::abs(state_stale_after_s_ - 0.20) > 1.0e-9 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,257,5.0,std::abs(trajectory_wait_timeout_s_ - 5.0) > 1.0e-9 ||,INCLUDED:trajectory_wait_timeout_s
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,257,1.0e-9,std::abs(trajectory_wait_timeout_s_ - 5.0) > 1.0e-9 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,258,5.0,std::abs(planner_recovery_wait_timeout_s_ - 5.0) > 1.0e-9 ||,INCLUDED:planner_recovery_wait_timeout_s
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,258,1.0e-9,std::abs(planner_recovery_wait_timeout_s_ - 5.0) > 1.0e-9 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,260,0,!state_stale_after_ns || !planner_recovery_wait_timeout_ns || *stale_after_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,261,0,*state_stale_after_ns <= 0 || *planner_recovery_wait_timeout_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,261,0,*state_stale_after_ns <= 0 || *planner_recovery_wait_timeout_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,385,0.5,odometry_->pose.pose.position.z > 0.5;,INCLUDED:adapter_airborne_height_gate_m
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,481,0,target[0] = source->x();,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,482,1,target[1] = source->y();,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,483,2,target[2] = source->z();,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,510,0,command->world_observation_stamp).value_or(0);,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,514,1U,"command->mission_id.size(), record.mission_id.size() - 1U);",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,576,9,"stream << std::setprecision(9) << '[' << value[0] << ',' << value[1] << ','",EXCLUDED:diagnostic_format
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,576,0,"stream << std::setprecision(9) << '[' << value[0] << ',' << value[1] << ','",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,576,1,"stream << std::setprecision(9) << '[' << value[0] << ',' << value[1] << ','",EXCLUDED:diagnostic_format
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,577,2,<< value[2] << ']';,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,589,0,"add_i64(""trace_timestamp_ns"", record.update_end_ros_ns > 0",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,597,0,record.update_start_steady_ns > 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,605,0U,const bool state_present = state.sequence > 0U && state.localization_epoch > 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,605,0U,const bool state_present = state.sequence > 0U && state.localization_epoch > 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,609,0,"if (state_present && value > 0) add_i64(key, value);",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,665,0,"add(""velocity_only_reason"", record.velocity_only_reason[0] == '\0'",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,726,36,"const std::array<double, 36>& covariance) {",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,729,0,for (std::size_t index = 0; index < covariance.size(); ++index) {,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,730,0U,"if (index != 0U) stream << ',';",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,745,1000,static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max() / 1000),EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,746,1000U,? static_cast<std::int64_t>(last_px4_local_position_timestamp_sample_us_ * 1000U),EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,750,0,const auto source_skew_ns = (lio_source_ns > 0 && px4_sample_ns > 0),EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,750,0,const auto source_skew_ns = (lio_source_ns > 0 && px4_sample_ns > 0),EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,752,0,const auto receive_skew_ns = (last_odometry_receive_ns_ > 0 && px4_receive_ns > 0),EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,752,0,const auto receive_skew_ns = (last_odometry_receive_ns_ > 0 && px4_receive_ns > 0),EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,788,0,last_health_source_stamp_ns_ > 0,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,791,0,last_health_correction_stamp_ns_ > 0,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,915,0,return stamp_ns <= 0 || now_ns < stamp_ns ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,916,1e9,static_cast<double>(now_ns - stamp_ns) / 1e9 > limit_s;,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,937,0.5,!isArmed() || !odometry_ || odometry_->pose.pose.position.z <= 0.5;,INCLUDED:adapter_airborne_height_gate_m
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,943,0,const double active_s = airborne_start_ns_ > 0 && now_ns >= airborne_start_ns_,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,944,1e9,? static_cast<double>(now_ns - airborne_start_ns_) / 1e9,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,973,0,"static_cast<std::uint64_t>(std::max<std::int64_t>(0, callback_steady_ns));",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1184,0U,"static_cast<unsigned long>(message ? message->localization_epoch : 0U),",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1185,0U,"static_cast<unsigned long>(message ? message->goal_epoch : 0U),",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1186,0U,"static_cast<unsigned long>(message ? message->request_id : 0U),",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1187,0U,"static_cast<unsigned long>(message ? message->bundle_generation : 0U),",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1188,0U,"static_cast<unsigned long>(message ? message->sample_id : 0U),",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1190,0,"message ? navigation_contracts::commandStampNanoseconds(message->header.stamp) : 0),",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1192,0,message ? navigation_contracts::commandStampNanoseconds(message->valid_until) : 0));,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1244,0,odometry_ ? navigation_common::rosTimeToNanoseconds(odometry_->header.stamp).value_or(0),EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1252,0U,navigation_command_ ? navigation_command_->sample_id : 0U);,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1381,0U,message->mission_id.empty() || message->route_revision == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1382,0U,message->request_id == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1389,0,navigation_common::rosTimeToNanoseconds(message->header.stamp).value_or(0);,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1441,0U,if (!message || message->localization_epoch == 0U || message->sequence == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1441,0U,if (!message || message->localization_epoch == 0U || message->sequence == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1454,0,odometry.child_frame_id != body_frame_ || odometry.header.stamp.sec < 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1477,0U,} else if (last_propagated_state_sequence_ > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1480,0,} else if (timing.source_stamp_ros_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1484,0,} else if (last_propagated_state_stamp_ns_ > 0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1491,0,if (last_odometry_receive_ns_ > 0 && receive_ns >= last_odometry_receive_ns_) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1518,0.5,!isArmed() || !odometry_ || odometry_->pose.pose.position.z <= 0.5 ||,INCLUDED:adapter_airborne_height_gate_m
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1526,0.15,"if (Eigen::Vector3d{velocity.x, velocity.y, velocity.z}.norm() > 0.15 ||",INCLUDED:adapter_stationary_velocity_gate_mps
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1527,0.15,px4_local_velocity_ned_->norm() > 0.15) {,INCLUDED:adapter_stationary_velocity_gate_mps
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1533,2.0,if (!translation || translation->norm() > 2.0) return;,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1547,0U,!std::isfinite(message->heading_var) || message->timestamp == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1548,0U,message->timestamp_sample == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1594,0,last_px4_delta_xy_north_m_ = message->delta_xy[0];,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1595,1,last_px4_delta_xy_east_m_ = message->delta_xy[1];,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1607,0U,if (!message || message->localization_epoch == 0U) return;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1609,0,message->header.stamp).value_or(0);,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1617,0,if (source_stamp_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1625,0,if (last_lio_diagnostics_ns_ > 0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1637,0,message->last_correction_stamp).value_or(0);,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1639,0,message->last_propagated_state_stamp).value_or(0);,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1641,0U,if (lio_localization_epoch_ != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1707,1U,command.emergency_candidate_commit_result == 1U;,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1728,0,if (source_stamp_ns <= 0 || reference_stamp_ns <= 0 || lease_until_ns <= 0 || now_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1728,0,if (source_stamp_ns <= 0 || reference_stamp_ns <= 0 || lease_until_ns <= 0 || now_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1728,0,if (source_stamp_ns <= 0 || reference_stamp_ns <= 0 || lease_until_ns <= 0 || now_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1728,0,if (source_stamp_ns <= 0 || reference_stamp_ns <= 0 || lease_until_ns <= 0 || now_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1729,0,now_ns < source_stamp_ns || now_ns < reference_stamp_ns || now_steady_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1760,1000,static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max() / 1000),EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1761,1000U,? static_cast<std::int64_t>(raw_px4.timestamp_sample_us * 1000U),EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1763,0,if (px4_sample_ns <= 0 || now_ns < px4_sample_ns) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1829,1.0e-9,timing.reference_age_s = static_cast<double>(now_ns - reference_stamp_ns) * 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1830,1.0e-9,timing.pair_skew_s = std::abs(static_cast<double>(source_stamp_ns - px4_sample_ns)) * 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1831,1.0e-9,timing.lio_source_age_s = static_cast<double>(now_ns - source_stamp_ns) * 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1832,0,timing.lio_receive_age_s = current_lio_receive_steady_ns > 0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1834,1.0e-9,? static_cast<double>(now_steady_ns - current_lio_receive_steady_ns) * 1.0e-9 : -1.0;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1834,-1.0,? static_cast<double>(now_steady_ns - current_lio_receive_steady_ns) * 1.0e-9 : -1.0;,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1835,1.0e-9,timing.px4_source_age_s = static_cast<double>(now_ns - px4_sample_ns) * 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1836,0,timing.px4_receive_age_s = raw_px4.receive_steady_ns > 0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1838,1.0e-9,? static_cast<double>(now_steady_ns - raw_px4.receive_steady_ns) * 1.0e-9 : -1.0;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1838,-1.0,? static_cast<double>(now_steady_ns - raw_px4.receive_steady_ns) * 1.0e-9 : -1.0;,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,1952,8,"std::array<std::uint64_t, 8> admission_rejections_by_stage;",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2003,0,"static_cast<unsigned long>(admission_rejections_by_stage[0]),",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2004,1,"static_cast<unsigned long>(admission_rejections_by_stage[1]),",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2005,2,"static_cast<unsigned long>(admission_rejections_by_stage[2]),",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2006,3,"static_cast<unsigned long>(admission_rejections_by_stage[3]),",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2007,4,"static_cast<unsigned long>(admission_rejections_by_stage[4]),",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2008,5,"static_cast<unsigned long>(admission_rejections_by_stage[5]),",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2009,6,"static_cast<unsigned long>(admission_rejections_by_stage[6]),",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2010,7,static_cast<unsigned long>(admission_rejections_by_stage[7]));,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2119,0,last_px4_position_receive_steady_ns_ > 0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2173,1.0e-12,orientation.squaredNorm() > 1.0e-12) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2216,1.0e-12,orientation.squaredNorm() > 1.0e-12) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2244,0,if (last_setpoint_update_ns_ > 0 && now_ns >= last_setpoint_update_ns_) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2294,0.5,if (!isArmed() || !odometry || odometry->pose.pose.position.z <= 0.5) {,INCLUDED:adapter_airborne_height_gate_m
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2300,0,if (airborne_start_ns_ == 0) airborne_start_ns_ = now.nanoseconds();,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2304,0,? navigation_common::rosTimeToNanoseconds(odometry->header.stamp).value_or(0) : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2304,0,? navigation_common::rosTimeToNanoseconds(odometry->header.stamp).value_or(0) : 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2344,0,const bool diagnostics_missing = !typed_health_seen || health_source_stamp_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2345,0,health_receive_steady_ns <= 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2346,0.5,"const double diagnostics_wait_s = std::min(0.5, std::max(0.0, trajectory_wait_timeout_s_));",INCLUDED:adapter_diagnostics_wait_cap_s
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2346,0.0,"const double diagnostics_wait_s = std::min(0.5, std::max(0.0, trajectory_wait_timeout_s_));",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2426,0,if (receive_ns > 0 && now.nanoseconds() >= receive_ns &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2435,0,if (command_stamp_ns <= 0 || command_stamp_ns > now.nanoseconds() ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2568,0,if (airborne_start_ns > 0 && now.nanoseconds() >= airborne_start_ns &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp,2569,1e9,static_cast<double>(now.nanoseconds() - airborne_start_ns) / 1e9 <=,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,23,0U,"enum class Mode : std::uint8_t { kOff = 0U, kShadow = 1U, kLevelA = 2U };",EXCLUDED:enum_or_bitmask
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,23,1U,"enum class Mode : std::uint8_t { kOff = 0U, kShadow = 1U, kLevelA = 2U };",EXCLUDED:enum_or_bitmask
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,23,2U,"enum class Mode : std::uint8_t { kOff = 0U, kShadow = 1U, kLevelA = 2U };",EXCLUDED:enum_or_bitmask
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,119,3U,"std::array<bool, 3U> position_valid{{false, false, false}};",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,120,3U,"std::array<bool, 3U> velocity_valid{{false, false, false}};",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,220,2.0,"return std::remainder(angle, 2.0 * std::numbers::pi_v<double>);",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,224,0.0,return finite(value) && value >= 0.0;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,228,0.0,return finite(value) && value > 0.0;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,232,0U,return identity.localization_epoch > 0U && !identity.mission_id.empty() &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,233,0U,identity.goal_epoch > 0U && identity.request_id > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,233,0U,identity.goal_epoch > 0U && identity.request_id > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,234,0U,identity.bundle_generation > 0U && identity.sample_id > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,234,0U,identity.bundle_generation > 0U && identity.sample_id > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,235,0,identity.reference_sample_time_ns > 0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,240,0U,return timing.reference_sample_id > 0U && timing.lio_localization_epoch > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,240,0U,return timing.reference_sample_id > 0U && timing.lio_localization_epoch > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,241,0U,timing.lio_sequence > 0U && timing.px4_timestamp_us > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,241,0U,timing.lio_sequence > 0U && timing.px4_timestamp_us > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,242,0U,timing.px4_timestamp_sample_us > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,243,0U,timing.clock_mapping_generation > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,246,0,timing.expected_reference_use_time_ns > 0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,279,1.0e-9,const double computed_age_s = static_cast<double>(delta_ns) * 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,281,1.0e-9,std::abs(computed_age_s - timing.reference_age_s) <= 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,298,0.0,"return (Eigen::Matrix3d() << 0.0, 1.0, 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,298,1.0,"return (Eigen::Matrix3d() << 0.0, 1.0, 0.0,",EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,298,0.0,"return (Eigen::Matrix3d() << 0.0, 1.0, 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,307,0.0,"return (Eigen::Matrix3d() << c, -s, 0.0,",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,316,1.0e-12,std::abs(policy.velocity_lambda) > 1.0e-12) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,327,0.0,policy.lio_position_feedback_gain_s_inv != 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,381,0,!lio.localization_epoch || !lio.sequence || lio.source_stamp_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,382,0,lio.receive_steady_ns <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,399,0.0,raw_px4.heading_variance_rad2 < 0.0 || raw_px4.timestamp_us == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,399,0U,raw_px4.heading_variance_rad2 < 0.0 || raw_px4.timestamp_us == 0U ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,400,0U,raw_px4.timestamp_sample_us == 0U || raw_px4.receive_steady_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,400,0,raw_px4.timestamp_sample_us == 0U || raw_px4.receive_steady_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,418,1.0e-12,timing.total_bound_s + 1.0e-12 < detail::conservativeTimingBoundV1(timing)) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp,447,2.0,std::numbers::pi_v<double> / 2.0 - raw_px4.yaw_ned);,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,13,0U,"enum class Role : std::uint8_t { kMain = 0U, kBackup = 1U, kEmergency = 2U };",EXCLUDED:enum_or_bitmask
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,13,1U,"enum class Role : std::uint8_t { kMain = 0U, kBackup = 1U, kEmergency = 2U };",EXCLUDED:enum_or_bitmask
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,13,2U,"enum class Role : std::uint8_t { kMain = 0U, kBackup = 1U, kEmergency = 2U };",EXCLUDED:enum_or_bitmask
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,85,0.0,return std::isfinite(policy.maximum_velocity_mps) && policy.maximum_velocity_mps > 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,87,0.0,policy.maximum_acceleration_mps2 > 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,88,0.0,std::isfinite(policy.maximum_jerk_mps3) && policy.maximum_jerk_mps3 > 0.0;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,92,0U,return !identity.mission_id.empty() && identity.request_id > 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,93,0U,identity.bundle_generation > 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,117,1U,current.waypoint_index == previous.waypoint_index + 1U &&,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,119,0U,return (same_waypoint || authorized_next_waypoint) && current.request_id > 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,133,0,if (!validIdentity(identity) || !desired_velocity_enu.allFinite() || now_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,137,1.0e-12,if (desired_velocity_enu.norm() > policy.maximum_velocity_mps + 1.0e-12) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,144,0,!previous->acceleration_enu.allFinite() || previous->stamp_ns <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,154,1.0e-12,if (previous->velocity_enu.norm() > policy.maximum_velocity_mps + 1.0e-12) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,158,1.0e-12,if (previous->acceleration_enu.norm() > policy.maximum_acceleration_mps2 + 1.0e-12) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,166,1.0e-9,const double dt_s = static_cast<double>(now_ns - previous->stamp_ns) * 1.0e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,167,0.0,if (!std::isfinite(dt_s) || dt_s <= 0.0 || dt_s > 1.0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,167,1.0,if (!std::isfinite(dt_s) || dt_s <= 0.0 || dt_s > 1.0) {,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,209,1.0e-12,if (viability_direction.norm() <= 1.0e-12) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,212,1.0e-12,if (viability_direction.norm() <= 1.0e-12) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,218,2.0,-previous->velocity_enu / (2.0 * dt_s) + viability_direction * (0.5 * jerk_radius);,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,218,0.5,-previous->velocity_enu / (2.0 * dt_s) + viability_direction * (0.5 * jerk_radius);,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,221,1.0e-12,if (radial_direction.norm() <= 1.0e-12) radial_direction = requested_acceleration;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,222,1.0e-12,if (radial_direction.norm() <= 1.0e-12) radial_direction = Eigen::Vector3d::UnitX();,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,225,0.0,"0.0, policy.maximum_velocity_mps - previous->velocity_enu.norm());",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,236,1.0e-12,requested_acceleration_norm > 1.0e-12) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,247,0,for (int iteration = 0; iteration < 4096; ++iteration) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,247,4096,for (int iteration = 0; iteration < 4096; ++iteration) {,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,248,1,result.projection_iterations = static_cast<std::uint32_t>(iteration + 1);,EXCLUDED:index/size
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,271,0.0,"std::max(0.0, acceleration.norm() - policy.maximum_acceleration_mps2);",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,273,0.0,"0.0, (acceleration - previous->acceleration_enu).norm() - jerk_radius);",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,275,0.0,"0.0, (previous->velocity_enu + acceleration * dt_s).norm() -",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,278,0.0,"0.0, (previous->velocity_enu +",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,299,1.0e-12,if (previous_acceleration_norm > 1.0e-12) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,318,0.0,"0.0, (result.acceleration_enu - previous->acceleration_enu).norm() / dt_s -",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,326,1.0e-12,if ((acceleration - requested_acceleration).norm() > 1.0e-12) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,336,0.0,"0.0, (result.acceleration_enu - previous->acceleration_enu).norm() / dt_s -",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp,346,1.0e-12,if (result.velocity_enu.norm() > policy.maximum_velocity_mps + 1.0e-12) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,35,0,if (!nanoseconds.has_value() || (!allow_zero && *nanoseconds <= 0)) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,64,0.0,if (!std::isfinite(max_age_s) || max_age_s <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,65,0.0,!std::isfinite(diagnostics_max_age_s) || diagnostics_max_age_s <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,66,0.0,!std::isfinite(position_jump_m_) || position_jump_m_ <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,67,0.0,!std::isfinite(orientation_jump_rad_) || orientation_jump_rad_ <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,69,0.0,maximum_expected_speed_mps_ <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,71,0.0,maximum_expected_angular_rate_rad_s_ <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,72,0.0,!std::isfinite(minimum_continuity_dt_s_) || minimum_continuity_dt_s_ <= 0.0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,161,0,if (!diagnostic_stamp || *diagnostic_stamp <= 0 ||,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,162,0,(last_lio_diagnostics_stamp_ns_ != 0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,209,0,if (last_lio_diagnostics_ns_ <= 0 || now_ns <= 0) return false;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,209,0,if (last_lio_diagnostics_ns_ <= 0 || now_ns <= 0) return false;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,212,0,return age.has_value() && *age >= 0 && *age <= diagnostics_max_age_ns_;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,228,0U,const bool epoch_changed = highest_received_lio_epoch_ != 0U &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,295,0,const bool transport_ready = output_->get_subscription_count() > 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,303,0U,public_generation > 0U;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,308,0U,"lio_public_frame_generation_valid_ && public_generation > 0U,",EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,320,0,public_generation > 0;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,430,1e-6,? static_cast<double>(now_ns - frame.timestamp_ns) * 1e-6,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp,450,1e3,"stream << "" dt_ms="" << last_jump_observation_.dt_s * 1e3",EXCLUDED:index/size
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,37,0.0,config.position_jump_margin_m >= 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,39,0.0,config.orientation_jump_margin_rad >= 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,41,0.0,config.maximum_expected_speed_mps >= 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,43,0.0,config.maximum_expected_angular_rate_rad_s >= 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,45,0.0,config.minimum_continuity_dt_s > 0.0 &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,68,0,return frame.timestamp_ns > 0 && frame.position_ned.allFinite() &&,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,73,1.0,std::abs(quaternion_squared_norm - 1.0) <= 1.0e-6;,EXCLUDED:index/size
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,73,1.0e-6,std::abs(quaternion_squared_norm - 1.0) <= 1.0e-6;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,85,0U,if (!generation_valid || generation == 0U) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,115,0,if (!dt || *dt <= 0) {,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,122,1e-9,observation.dt_s = static_cast<double>(*dt) * 1e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,127,1e-9,observation.dt_s = static_cast<double>(*dt) * 1e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp,134,1e-9,observation.dt_s = static_cast<double>(*dt) * 1e-9;,EXCLUDED:numeric_epsilon<=1e-6
+src/px4/px4_odometry_bridge/src/timestamp_conversion.cpp,46,0,if (timestamp_mapping_generation == 0) {,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,33,3,"def _finite_vector(values: Any, size: int = 3) -> bool:",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,92,1.0e-9,if not math.isfinite(norm) or norm <= 1.0e-9:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,106,4,if len(q) != 4 or not all(math.isfinite(value) for value in q):,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,109,1.0e-9,if not math.isfinite(norm) or norm <= 1.0e-9:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,151,0.0,if dot < 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,154,1.0,"dot = min(1.0, max(-1.0, dot))",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,154,-1.0,"dot = min(1.0, max(-1.0, dot))",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,155,0.9995,if dot > 0.9995:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,162,1.0e-12,if not math.isfinite(sine_theta) or abs(sine_theta) <= 1.0e-12:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,233,1,"index = min(len(ordered) - 1, round((len(ordered) - 1) * fraction))",EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,233,1,"index = min(len(ordered) - 1, round((len(ordered) - 1) * fraction))",EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,244,0.0,"setpoint_max = max(setpoint_speed_samples, default=0.0)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,247,0.10,or setpoint_max > float(expected_max_velocity_mps) + 0.10,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,253,0.10,or measured_p95 < float(required_measured_speed_mps) - 0.10,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,286,0,if executable_trajectory_count > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,515,20,"px4_qos = QoSProfile(depth=20, reliability=ReliabilityPolicy.BEST_EFFORT)",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,516,10,"reliable_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,618,0,if self.sim_now_ns > 0 and self.sim_start_ns is None:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,652,1,parse_bool = lambda value: parse_int(value) == 1,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,937,1,"current = _integer_value(values.get(""identity_current"")) == 1",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,938,1,"timed_out = _integer_value(values.get(""timeout"")) == 1",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,955,1,"after_failed=_integer_value(values.get(""after_failed"")) == 1,",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,957,1,"values.get(""terminal_hold_pending"")) == 1,",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1034,0,if previous_epoch > 0 and previous_epoch != localization_epoch:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1043,0,"and int(truth_frame_witness.get(""lio_localization_epoch"", 0)) != localization_epoch",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1081,8,if len(self.odom_pose_history) > 8:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1115,8,if len(self.ground_truth_pose_history) > 8:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1119,0.0,if not math.isfinite(vehicle_radius) or vehicle_radius <= 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1134,0.0,if not _finite_vector(half_extents) or any(float(value) <= 0.0 for value in half_extents):,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1137,0.0,"outside = math.sqrt(sum(max(value, 0.0) ** 2 for value in q))",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1137,2,"outside = math.sqrt(sum(max(value, 0.0) ** 2 for value in q))",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1138,0.0,"signed_distance = outside + min(max(q), 0.0)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1142,0.0,if not math.isfinite(radius) or not math.isfinite(half_height) or radius <= 0.0 or half_height <= 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1142,0.0,if not math.isfinite(radius) or not math.isfinite(half_height) or radius <= 0.0 or half_height <= 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1146,0.0,"signed_distance = math.hypot(max(radial_gap, 0.0), max(vertical_gap, 0.0)) + min(max(radial_gap, vertical_gap), 0.0)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1146,0.0,"signed_distance = math.hypot(max(radial_gap, 0.0), max(vertical_gap, 0.0)) + min(max(radial_gap, vertical_gap), 0.0)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1146,0.0,"signed_distance = math.hypot(max(radial_gap, 0.0), max(vertical_gap, 0.0)) + min(max(radial_gap, vertical_gap), 0.0)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1158,0.0,in_collision = clearance <= 0.0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1165,3,"if int(self.config.get(""pillar_waypoint_index"", 3)) < 0 or not _finite_vector(obstacle):",EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,1165,0,"if int(self.config.get(""pillar_waypoint_index"", 3)) < 0 or not _finite_vector(obstacle):",EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,1186,0,"x, y, z = (float(point[0]), float(point[1]), float(point[2]))",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1186,1,"x, y, z = (float(point[0]), float(point[1]), float(point[2]))",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1186,2,"x, y, z = (float(point[0]), float(point[1]), float(point[2]))",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1198,64,"if index % 64 == 0 and len(observation[""sampled_points_sensor""]) < 32:",EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,1198,0,"if index % 64 == 0 and len(observation[""sampled_points_sensor""]) < 32:",EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,1198,32,"if index % 64 == 0 and len(observation[""sampled_points_sensor""]) < 32:",EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,1203,0.5,inside = 0.5 <= x <= 1.6 and abs(y) <= 20.0 and -3.5 <= z <= 8.5,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1203,1.6,inside = 0.5 <= x <= 1.6 and abs(y) <= 20.0 and -3.5 <= z <= 8.5,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1203,20.0,inside = 0.5 <= x <= 1.6 and abs(y) <= 20.0 and -3.5 <= z <= 8.5,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1203,-3.5,inside = 0.5 <= x <= 1.6 and abs(y) <= 20.0 and -3.5 <= z <= 8.5,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1203,8.5,inside = 0.5 <= x <= 1.6 and abs(y) <= 20.0 and -3.5 <= z <= 8.5,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1205,0.5,inside = 0.5 <= x <= 1.5 and abs(y) <= 20.0 and 0.0 <= z <= 12.0,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1205,1.5,inside = 0.5 <= x <= 1.5 and abs(y) <= 20.0 and 0.0 <= z <= 12.0,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1205,20.0,inside = 0.5 <= x <= 1.5 and abs(y) <= 20.0 and 0.0 <= z <= 12.0,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1205,0.0,inside = 0.5 <= x <= 1.5 and abs(y) <= 20.0 and 0.0 <= z <= 12.0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1205,12.0,inside = 0.5 <= x <= 1.5 and abs(y) <= 20.0 and 0.0 <= z <= 12.0,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1217,0,"message, sensor_frame=sensor_frame).get(""roi_points"", 0))",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1224,20,if count >= 20:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1226,1,if self.raw_lidar_roi_scan_count == 1:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1251,512,if len(self.raw_lidar_observations) > 512:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1260,40,if abs(self.latest_odom_stamp_ns - self.latest_ground_truth_stamp_ns) > 40_000_000:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1290,0,"int(lio_reference.get(""localization_epoch"", 0)) > 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1290,0,"int(lio_reference.get(""localization_epoch"", 0)) > 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1291,0,"int(lio_reference.get(""localization_epoch"", 0)) ==",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1374,20000,if len(self.post_completion_lio_position_residual_samples) < 20000:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1378,20000,if len(self.lio_position_residual_samples) < 20000:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1394,0.45,position_error > 0.45 if expected_failure else,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1395,0.5,(position_error > 0.5 and velocity_error > 0.75),INCLUDED:lio_residual_watchdog_m
+tools/runtime/external_mode_scenario.py,1395,0.75,(position_error > 0.5 and velocity_error > 0.75),INCLUDED:lio_residual_watchdog_velocity_mps
+tools/runtime/external_mode_scenario.py,1396,1.0,) or velocity_error > 1.0,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1408,500,self.sim_now_ns - self.localization_divergence_started_ns >= 500_000_000):,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1429,1,if mask & (1 << candidate):,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1472,0,if active_before_status and self.exit_requested and int(message.executor_in_charge) == 0 and not self.mode_exit_observed:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1552,0,"message.header.frame_id == ""lio_odom"" and message.sample_id > 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1553,0,message.localization_epoch > 0 and message.goal_epoch > 0 and,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1553,0,message.localization_epoch > 0 and message.goal_epoch > 0 and,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1554,0,message.world_generation > 0 and message.world_revision > 0 and,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1554,0,message.world_generation > 0 and message.world_revision > 0 and,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1555,0,(message.bundle_generation > 0 or,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1556,0,message.status == self.NavigationCommand.STATUS_REJECTED) and header_ns > 0 and,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1557,0,valid_until_ns >= header_ns and world_stamp_ns > 0 and state_stamp_ns > 0 and,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1557,0,valid_until_ns >= header_ns and world_stamp_ns > 0 and state_stamp_ns > 0 and,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1580,0,"not terminal_failure and int(getattr(message, ""bundle_generation"", 0)) > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1580,0,"not terminal_failure and int(getattr(message, ""bundle_generation"", 0)) > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,1732,-1,"not trajectory[""position_points""] or trajectory[""position_points""][-1] != position",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1736,4096,"if len(trajectory[""position_points""]) > 4096:",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1794,512,if len(self._execution_diagnostics_by_sample) > 512:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,1935,-1,if not self.goal_indices or self.goal_indices[-1] != index:,EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,1947,100,self.mode_failure_observed = self.mode_completion_result == 100,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2026,-1,if not self.goal_indices or self.goal_indices[-1] != waypoint_index:,EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,2082,0,if source_stamp_ns <= 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2086,0.0,if not math.isfinite(max_age_s) or max_age_s <= 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2088,-0.05,if not math.isfinite(age_s) or age_s < -0.05 or age_s > max_age_s:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2124,1,if self.local_takeoff_setpoint_count == 1:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2187,1,if self.setpoint_count == 1 or self.setpoint_count % 50 == 0:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2187,50,if self.setpoint_count == 1 or self.setpoint_count % 50 == 0:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2187,0,if self.setpoint_count == 1 or self.setpoint_count % 50 == 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2210,0,and int(message.result) == 0):,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2217,0.0,"return max(0.0, (self.sim_now_ns - self.sim_start_ns) / 1e9)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2217,1e9,"return max(0.0, (self.sim_now_ns - self.sim_start_ns) / 1e9)",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2277,0.0,"def _retry(self, name: str, command: int, p1: float = 0.0) -> None:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2279,-10,"if self.sim_now_ns - self.last_command_ns.get(name, -10**18) >= period_ns:",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2279,18,"if self.sim_now_ns - self.last_command_ns.get(name, -10**18) >= period_ns:",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2316,1,if schema_version != 1:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2335,0.0,if not math.isfinite(value) or value <= 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2343,0.0,if not math.isfinite(value) or value < 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2352,256,if (not route_id or len(route_id) > 256 or not route_frame or,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2353,128,"len(route_frame) > 128 or not isinstance(raw_waypoints, list) or",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2354,4096,not raw_waypoints or len(raw_waypoints) > 4096):,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2378,0.0,"(""stop"" if hold_s > 0.0 or waypoint_index + 1 == len(raw_waypoints)",EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,2378,1,"(""stop"" if hold_s > 0.0 or waypoint_index + 1 == len(raw_waypoints)",EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,2381,256,if (not waypoint_id or len(waypoint_id) > 256 or,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2383,0.0,not math.isfinite(radius) or radius <= 0.0 or,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2384,0.0,not math.isfinite(hold_s) or hold_s < 0.0 or,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2385,0.0,"(behavior == ""pass_through"" and hold_s > 0.0) or",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2425,0.0,float(acceptance_radius_m) <= 0.0 or,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2447,1,message.has_next_target = len(route_waypoints) > 1,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2502,120.0,"if time.monotonic() - self.wall_start > float(self.config.get(""wall_timeout_s"", 120.0)):",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2531,0.5,if not math.isfinite(takeoff_altitude_m) or takeoff_altitude_m <= 0.5:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2540,0.0,"max(0.0, (self.sim_now_ns - self.takeoff_stable_since_ns) / 1e9)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2540,1e9,"max(0.0, (self.sim_now_ns - self.takeoff_stable_since_ns) / 1e9)",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2544,0.0,"max(0.0, (self.sim_now_ns - self.takeoff_requested_sim_ns) / 1e9)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2544,1e9,"max(0.0, (self.sim_now_ns - self.takeoff_requested_sim_ns) / 1e9)",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2571,-10,"if self.sim_now_ns - self.last_command_ns.get(""arm"", -10**18) >= arm_retry_ns:",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2571,18,"if self.sim_now_ns - self.last_command_ns.get(""arm"", -10**18) >= arm_retry_ns:",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2630,-1,"int(self.latest_status.get(""nav_state"", -1)) != hold_nav_state",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2631,0,"or int(self.latest_status.get(""executor_in_charge"", 0)) != 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2631,0,"or int(self.latest_status.get(""executor_in_charge"", 0)) != 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2672,-0.9,float(z_ned) <= -0.9 * takeoff_altitude_m and,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2673,0.5,all(value is not None and math.isfinite(float(value)) and abs(float(value)) < 0.5,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2679,45.0,"elif takeoff_elapsed_s > float(self.config.get(""takeoff_timeout_s"", 45.0)):",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2695,2,math.sqrt(sum(float(value) ** 2 for value in stable_speeds)) <= stable_speed_limit),EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2715,-0.05,-0.05 <= odometry_age_s <= odometry_max_age_s,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2753,0.0,"max(0.0, (self.sim_now_ns - self.mode_entered_sim_ns) / 1e9)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2753,1e9,"max(0.0, (self.sim_now_ns - self.mode_entered_sim_ns) / 1e9)",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2755,90.0,"if mode_elapsed_s > float(self.config.get(""mission_timeout_s"", 90.0)):",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2773,-1,"if int(self.latest_status.get(""nav_state"", -1)) == px4_hold:",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2791,-1,"elif int(self.latest_status.get(""nav_state"", -1)) == px4_hold:",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2803,-1,"int(self.latest_status.get(""nav_state"", -1)) == px4_hold):",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2807,-1,"if int(self.latest_status.get(""nav_state"", -1)) == px4_hold:",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2813,0,"if getattr(self, ""pva_command_success_count"", 0) == 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2813,0,"if getattr(self, ""pva_command_success_count"", 0) == 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2820,30.0,"if elapsed > float(self.config.get(""activation_timeout_s"", 30.0)):",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2835,30.0,"if elapsed > float(self.config.get(""activation_timeout_s"", 30.0)):",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2842,0.0,"else max(0.0, (self.sim_now_ns - self.mode_entered_sim_ns) / 1e9)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2842,1e9,"else max(0.0, (self.sim_now_ns - self.mode_entered_sim_ns) / 1e9)",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2847,8.0,"and mode_elapsed_s >= float(self.config.get(""post_activation_s"", 8.0))",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2854,-1,"if self.mode_exit_observed and int(self.latest_status.get(""nav_state"", -1)) == int(self.VehicleStatus.NAVIGATION_STATE_AUTO_LOITER):",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2871,0,"if expected_outcome == ""complete"" and self.pva_command_success_count <= 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2875,0,if self.setpoint_count <= 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2877,0,if self.setpoint_count > 0 and self.finite_setpoint_count != self.setpoint_count:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2879,0,"if expected_outcome == ""complete"" and self.yaw_controlled_setpoint_count <= 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2901,0,"expected_indices = list(range(max(0, expected_count)))",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2910,1,accepted_indices == expected_indices[1:],EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2914,0,if expected_count <= 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,2923,0.35,if residual_p95 is not None and residual_p95 > 0.35:,INCLUDED:lio_residual_p95_warning_m
+tools/runtime/external_mode_scenario.py,2994,0.45,"""fail_closed_trigger_m"": 0.45 if expected_outcome == ""fail_closed"" else 0.5,",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,2994,0.5,"""fail_closed_trigger_m"": 0.45 if expected_outcome == ""fail_closed"" else 0.5,",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,3081,0,elif expected_count <= 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,3088,1,self.goal_indices == expected_indices[1:]),EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,3100,0,"if (summary[""outcome""] == ""COMPLETE"" and pillar_waypoint_index >= 0 and",EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,3105,-1,"if int(item.get(""waypoint_index"", -1)) == pillar_waypoint_index and",EXCLUDED:index/size
+tools/runtime/external_mode_scenario.py,3110,0.8,"elif min(detour_distances) <= float(self.config.get(""pillar_clearance_m"", 0.8)):",INCLUDED:pillar_clearance_m
+tools/runtime/external_mode_scenario.py,3112,0.05,if self.actual_min_clearance_m is not None and self.actual_min_clearance_m <= 0.05:,INCLUDED:ground_truth_collision_clearance_m
+tools/runtime/external_mode_scenario.py,3119,0.0,and clearance_limit > 0.0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,3125,0,if self.collision_count > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/external_mode_scenario.py,3128,5,if self.raw_lidar_roi_scan_count < 5 or self.raw_lidar_roi_max_points < 20:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,3128,20,if self.raw_lidar_roi_scan_count < 5 or self.raw_lidar_roi_max_points < 20:,EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,3144,2,"self.output.write_text(json.dumps(summary, indent=2, sort_keys=True) + ""\n"", encoding=""utf-8"")",EXCLUDED:test_only
+tools/runtime/external_mode_scenario.py,3166,0.1,"rclpy.spin_once(scenario.node, timeout_sec=0.1)",EXCLUDED:test_only
+tools/runtime/report.py,105,0.0,"def _number(value: Any, default: float = 0.0) -> float:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,122,1,"return ordered[min(len(ordered) - 1, round((len(ordered) - 1) * fraction))]",EXCLUDED:test_only
+tools/runtime/report.py,122,1,"return ordered[min(len(ordered) - 1, round((len(ordered) - 1) * fraction))]",EXCLUDED:test_only
+tools/runtime/report.py,154,1,"and manifest.get(""schema_version"") == 1",EXCLUDED:test_only
+tools/runtime/report.py,164,2,"(json.dumps(manifest, indent=2, sort_keys=True) + ""\n"").encode(""utf-8"")",EXCLUDED:test_only
+tools/runtime/report.py,175,0,"and artifact[""size_bytes""] >= 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,177,64,"and len(artifact[""sha256""]) == 64",EXCLUDED:test_only
+tools/runtime/report.py,222,0,"and record[""size_bytes""] >= 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,224,64,"and len(record[""sha256""]) == 64",EXCLUDED:test_only
+tools/runtime/report.py,257,1,"if external.get(""schema_version"") != 1:",EXCLUDED:test_only
+tools/runtime/report.py,270,64,"or len(external[""dirty_status_sha256""]) != 64",EXCLUDED:test_only
+tools/runtime/report.py,272,64,"or len(external[""tracked_diff_sha256""]) != 64",EXCLUDED:test_only
+tools/runtime/report.py,278,64,"and isinstance(source.get(""sha256""), str) and len(source[""sha256""]) == 64",EXCLUDED:test_only
+tools/runtime/report.py,281,0,"and source[""file_count""] >= 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,355,3,"if not isinstance(value, (list, tuple)) or len(value) < 3:",EXCLUDED:test_only
+tools/runtime/report.py,374,0.0,if scale == 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,384,0.0,"projection = max(0.0, min(1.0, projection))",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,384,1.0,"projection = max(0.0, min(1.0, projection))",EXCLUDED:test_only
+tools/runtime/report.py,408,0.0,if math.isfinite(value) and value >= 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,449,0.0,base_m == 0.0 and lateral_alpha_s == 0.0 and longitudinal_beta_s == 0.0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,449,0.0,base_m == 0.0 and lateral_alpha_s == 0.0 and longitudinal_beta_s == 0.0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,449,0.0,base_m == 0.0 and lateral_alpha_s == 0.0 and longitudinal_beta_s == 0.0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,572,1,"if len({signature(value) for _, value in all_candidates}) != 1:",EXCLUDED:test_only
+tools/runtime/report.py,648,2,if len(waypoints) < 2:,EXCLUDED:test_only
+tools/runtime/report.py,705,0,"enabled = execution == ""mission"" or waypoint_count > 0 or ""mission_complete_observed"" in scenario",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,740,0,"expected_indices = list(range(max(0, waypoint_count)))",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,743,0,if waypoint_count <= 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,764,1,allow_initial_skip and bool(expected_indices) and accepted_indices == expected_indices[1:],EXCLUDED:test_only
+tools/runtime/report.py,767,0,valid_acceptance_indices if waypoint_count > 0 else False,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,771,0,elif waypoint_count <= 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,804,0,accepted_index == first_expected_acceptance_index and sim_time_ns >= 0):,EXCLUDED:index/size
+tools/runtime/report.py,872,0,"if isinstance(value, int) and value >= 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,878,0,"if isinstance(value, int) and value >= 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,906,0,"isinstance(item.get(""time_ns""), int) and item[""time_ns""] >= 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1010,0,if arrival_ns > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1028,0,if first_tracking_ns is not None and first_tracking_ns > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1035,0,if navigation_start_ns > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1114,0.0,if not math.isfinite(stale_after_s) or stale_after_s <= 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1129,0,"if isinstance(value, int) and not isinstance(value, bool) and value > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1133,-1,"int(row.get(""arrival_gap_event_count"", -1)) != len(direct_times)",EXCLUDED:test_only
+tools/runtime/report.py,1134,-1,"or int(row.get(""arrival_gap_event_record_count"", -1)) != len(direct_times)",EXCLUDED:test_only
+tools/runtime/report.py,1135,-1,"or int(row.get(""arrival_gap_event_overflow_count"", -1)) != 0",EXCLUDED:test_only
+tools/runtime/report.py,1135,0,"or int(row.get(""arrival_gap_event_overflow_count"", -1)) != 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1152,0,or before <= 0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1156,1e6,or abs(gap_ms - (after - before) / 1e6) > 1e-6,EXCLUDED:test_only
+tools/runtime/report.py,1156,1e-6,or abs(gap_ms - (after - before) / 1e6) > 1e-6,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1207,0,"if int(item.get(""arrival_wall_ns"", 0)) > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1207,0,"if int(item.get(""arrival_wall_ns"", 0)) > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1280,0,if arrival_ns > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1283,0,if stale_after_ns <= 0 or not records:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1290,0,while next_index < len(records) and records[next_index][0] <= event_ns:,EXCLUDED:index/size
+tools/runtime/report.py,1298,1,if before[1] <= 0 or after[1] <= 0 or source_gap_ns <= 0 or source_gap_ns > stale_after_ns:,EXCLUDED:test_only
+tools/runtime/report.py,1298,0,if before[1] <= 0 or after[1] <= 0 or source_gap_ns <= 0 or source_gap_ns > stale_after_ns:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1298,1,if before[1] <= 0 or after[1] <= 0 or source_gap_ns <= 0 or source_gap_ns > stale_after_ns:,EXCLUDED:test_only
+tools/runtime/report.py,1298,0,if before[1] <= 0 or after[1] <= 0 or source_gap_ns <= 0 or source_gap_ns > stale_after_ns:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1298,0,if before[1] <= 0 or after[1] <= 0 or source_gap_ns <= 0 or source_gap_ns > stale_after_ns:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1343,0,"if int(clock.get(""sample_count"", 0) or 0) <= 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1343,0,"if int(clock.get(""sample_count"", 0) or 0) <= 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1343,0,"if int(clock.get(""sample_count"", 0) or 0) <= 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1348,0,if gap_count > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1368,0.0,"scale = max((abs(value) for value in values), default=0.0)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1369,0.0,if scale == 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1387,3,"if not isinstance(value, list) or len(value) != 3:",EXCLUDED:test_only
+tools/runtime/report.py,1397,4,"if not isinstance(value, (list, tuple)) or len(value) != 4:",EXCLUDED:test_only
+tools/runtime/report.py,1404,1e-9,if not math.isfinite(norm) or norm < 1e-9:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1411,4,"if not isinstance(value, list) or len(value) != 4:",EXCLUDED:test_only
+tools/runtime/report.py,1447,0.0,if trace > 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1455,0,elif matrix[0][0] > matrix[1][1] and matrix[0][0] > matrix[2][2]:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1455,0,elif matrix[0][0] > matrix[1][1] and matrix[0][0] > matrix[2][2]:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1455,1,elif matrix[0][0] > matrix[1][1] and matrix[0][0] > matrix[2][2]:,EXCLUDED:test_only
+tools/runtime/report.py,1455,1,elif matrix[0][0] > matrix[1][1] and matrix[0][0] > matrix[2][2]:,EXCLUDED:test_only
+tools/runtime/report.py,1455,0,elif matrix[0][0] > matrix[1][1] and matrix[0][0] > matrix[2][2]:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1455,0,elif matrix[0][0] > matrix[1][1] and matrix[0][0] > matrix[2][2]:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1455,2,elif matrix[0][0] > matrix[1][1] and matrix[0][0] > matrix[2][2]:,EXCLUDED:test_only
+tools/runtime/report.py,1455,2,elif matrix[0][0] > matrix[1][1] and matrix[0][0] > matrix[2][2]:,EXCLUDED:test_only
+tools/runtime/report.py,1463,1,elif matrix[1][1] > matrix[2][2]:,EXCLUDED:test_only
+tools/runtime/report.py,1463,1,elif matrix[1][1] > matrix[2][2]:,EXCLUDED:test_only
+tools/runtime/report.py,1463,2,elif matrix[1][1] > matrix[2][2]:,EXCLUDED:test_only
+tools/runtime/report.py,1463,2,elif matrix[1][1] > matrix[2][2]:,EXCLUDED:test_only
+tools/runtime/report.py,1523,2.0,"return 2.0 * math.acos(max(-1.0, min(1.0, dot)))",EXCLUDED:test_only
+tools/runtime/report.py,1523,-1.0,"return 2.0 * math.acos(max(-1.0, min(1.0, dot)))",EXCLUDED:test_only
+tools/runtime/report.py,1523,1.0,"return 2.0 * math.acos(max(-1.0, min(1.0, dot)))",EXCLUDED:test_only
+tools/runtime/report.py,1547,0.0,if math.isfinite(number) and number >= 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1577,0.0,if maintenance >= 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1639,0.0,accepted_value = accepted_count / residual_count if residual_count > 0.0 else math.nan,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1648,400,if timestamp - previous > 400_000_000:,EXCLUDED:test_only
+tools/runtime/report.py,1658,0,"""rejection_count"": max(rejection_counts, default=0),",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1661,0.0,"""maximum_rejection_burst_s"": max(bursts, default=0.0),",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1675,0,if type(value) is int and 0 <= value <= 255:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1675,255,if type(value) is int and 0 <= value <= 255:,EXCLUDED:test_only
+tools/runtime/report.py,1688,1,"if any(left[1] > right[1] for left, right in zip(timestamped_a, timestamped_a[1:])):",EXCLUDED:test_only
+tools/runtime/report.py,1688,1,"if any(left[1] > right[1] for left, right in zip(timestamped_a, timestamped_a[1:])):",EXCLUDED:test_only
+tools/runtime/report.py,1688,1,"if any(left[1] > right[1] for left, right in zip(timestamped_a, timestamped_a[1:])):",EXCLUDED:test_only
+tools/runtime/report.py,1690,1,"if any(left[1] > right[1] for left, right in zip(timestamped_b, timestamped_b[1:])):",EXCLUDED:test_only
+tools/runtime/report.py,1690,1,"if any(left[1] > right[1] for left, right in zip(timestamped_b, timestamped_b[1:])):",EXCLUDED:test_only
+tools/runtime/report.py,1690,1,"if any(left[1] > right[1] for left, right in zip(timestamped_b, timestamped_b[1:])):",EXCLUDED:test_only
+tools/runtime/report.py,1696,1,while index + 1 < len(timestamped_b) and timestamped_b[index + 1][1] <= target:,EXCLUDED:index/size
+tools/runtime/report.py,1696,1,while index + 1 < len(timestamped_b) and timestamped_b[index + 1][1] <= target:,EXCLUDED:index/size
+tools/runtime/report.py,1696,1,while index + 1 < len(timestamped_b) and timestamped_b[index + 1][1] <= target:,EXCLUDED:index/size
+tools/runtime/report.py,1698,0,"candidates = timestamped_b[max(0, index - 1) : min(len(timestamped_b), index + 2)]",EXCLUDED:index/size
+tools/runtime/report.py,1698,1,"candidates = timestamped_b[max(0, index - 1) : min(len(timestamped_b), index + 2)]",EXCLUDED:index/size
+tools/runtime/report.py,1698,2,"candidates = timestamped_b[max(0, index - 1) : min(len(timestamped_b), index + 2)]",EXCLUDED:index/size
+tools/runtime/report.py,1701,1,"right, right_time = min(candidates, key=lambda pair: abs(pair[1] - target))",EXCLUDED:test_only
+tools/runtime/report.py,1756,1,frame_valid = pose_frame == 1 and source_velocity_frame == 1,EXCLUDED:test_only
+tools/runtime/report.py,1756,1,frame_valid = pose_frame == 1 and source_velocity_frame == 1,EXCLUDED:test_only
+tools/runtime/report.py,1827,1,if legacy_velocity_frame == 1,EXCLUDED:test_only
+tools/runtime/report.py,1929,0,"""unmatched_sample_count"": max(0, len(lio) - len(matches)),",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1972,0,"if int(converted.get(""pose_frame"", 0)) != 1 or int(converted.get(""velocity_frame"", 0)) != 1:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1972,1,"if int(converted.get(""pose_frame"", 0)) != 1 or int(converted.get(""velocity_frame"", 0)) != 1:",EXCLUDED:test_only
+tools/runtime/report.py,1972,0,"if int(converted.get(""pose_frame"", 0)) != 1 or int(converted.get(""velocity_frame"", 0)) != 1:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,1972,1,"if int(converted.get(""pose_frame"", 0)) != 1 or int(converted.get(""velocity_frame"", 0)) != 1:",EXCLUDED:test_only
+tools/runtime/report.py,2000,0,"""unmatched_sample_count"": max(0, len(lio) - len(matches)),",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2036,1,if pose_frame != 1:,EXCLUDED:test_only
+tools/runtime/report.py,2039,0,if timestamp <= 0 or position is None:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2042,0,timestamped_px4.sort(key=lambda pair: pair[0]),EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2053,0.0,"tolerance_ns = int(max(0.0, tolerance_ms) * 1e6)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2053,1e6,"tolerance_ns = int(max(0.0, tolerance_ms) * 1e6)",EXCLUDED:test_only
+tools/runtime/report.py,2056,0,if target_ns <= 0 or not px4_times:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2059,0,"candidates = timestamped_px4[max(0, index - 1):min(len(timestamped_px4), index + 1)]",EXCLUDED:index/size
+tools/runtime/report.py,2059,1,"candidates = timestamped_px4[max(0, index - 1):min(len(timestamped_px4), index + 1)]",EXCLUDED:index/size
+tools/runtime/report.py,2059,1,"candidates = timestamped_px4[max(0, index - 1):min(len(timestamped_px4), index + 1)]",EXCLUDED:index/size
+tools/runtime/report.py,2062,0,"px4_time, px4_item = min(candidates, key=lambda pair: abs(pair[0] - target_ns))",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2086,0,if candidate_time_ns > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2230,0.0,if horizon_s is not None and math.isfinite(horizon_s) and horizon_s > 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2234,0.0,elif distance_m is not None and math.isfinite(distance_m) and distance_m > 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2241,512,"scan_end = min(path_target, index + 512)",EXCLUDED:index/size
+tools/runtime/report.py,2487,1.0,"""rpe_1s"": _relative_position_error(lio_matches, horizon_s=1.0),",EXCLUDED:test_only
+tools/runtime/report.py,2488,5.0,"""rpe_5m"": _relative_position_error(lio_matches, distance_m=5.0),",EXCLUDED:test_only
+tools/runtime/report.py,2569,0.0,"""samples_with_saturation"": sum(value > 0.0 for value in saturation_counts),",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2606,0.0,"and int(_number(status_values.get(""world_snapshot_published""), 0.0)) != 1",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2606,1,"and int(_number(status_values.get(""world_snapshot_published""), 0.0)) != 1",EXCLUDED:test_only
+tools/runtime/report.py,2610,0.0,if value >= 0.0 and math.isfinite(value):,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2665,2,"statuses = [item[2] for item in sorted(planner_statuses, key=lambda item: (item[0], item[1]))]",EXCLUDED:test_only
+tools/runtime/report.py,2665,0,"statuses = [item[2] for item in sorted(planner_statuses, key=lambda item: (item[0], item[1]))]",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2665,1,"statuses = [item[2] for item in sorted(planner_statuses, key=lambda item: (item[0], item[1]))]",EXCLUDED:test_only
+tools/runtime/report.py,2761,1e-9,length / trajectory_length if trajectory_length > 1e-9 else None,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2821,0,event_key = event_key if event_key > 0 else event_order,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2839,0,if lifecycle_event is None or event_key >= lifecycle_event[0]:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,2863,0,"lifecycle_event = max(latest_lifecycle_by_owner.values(), key=lambda item: item[0])",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3067,0,"if world_timing[field][""sample_count""] > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3101,0,if count > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3105,1,) != 1:,EXCLUDED:test_only
+tools/runtime/report.py,3110,0,if violation_count > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3118,0,if count > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3123,0,if received > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3129,0.0,"elif received != int(_number(rejected_before_inbox, 0.0)) + accepted:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3212,0,if published_snapshots > 0 and revision <= 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3212,0,if published_snapshots > 0 and revision <= 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3216,0,if published > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3220,0,if observation_stamp <= 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3227,0,if attempt_stamp > 0 and observation_stamp > attempt_stamp:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3239,0,if outcomes[field] > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3274,0,"valid_expected = isinstance(expected, int) and not isinstance(expected, bool) and expected > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3292,0,"isinstance(value, int) and not isinstance(value, bool) and value > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3303,0,"if valid and requested_rate > 0 else None,",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3331,0,if ready_count <= 0 or not generations or min(generations) <= 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3331,0,if ready_count <= 0 or not generations or min(generations) <= 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3333,0,if emergency_count != 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3342,0,"if planning_timing_count <= 0 and isinstance(trace, dict):",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3352,0.0,"and float(record[""planning_latency_ms""]) >= 0.0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3354,0,if planning_timing_count <= 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3356,0,"if not isinstance(trace, dict) or int(trace.get(""record_count"", 0)) <= 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3356,0,"if not isinstance(trace, dict) or int(trace.get(""record_count"", 0)) <= 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3383,0,"if row[""sample_count""] <= 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3397,0,"if int(diagnostics.get(""current_queue_depth"", diagnostics.get(""current_input_queue_depth"", 0)) or 0) != 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3397,0,"if int(diagnostics.get(""current_queue_depth"", diagnostics.get(""current_input_queue_depth"", 0)) or 0) != 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3397,0,"if int(diagnostics.get(""current_queue_depth"", diagnostics.get(""current_input_queue_depth"", 0)) or 0) != 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3526,0,"if streams[name][""sample_count""] <= 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3547,0.90,"if external_expected and streams[""external_odometry""][""mean_rate_hz""] < external_expected * _number(thresholds.get(""minimum_rate_fraction""), 0.90):",EXCLUDED:test_only
+tools/runtime/report.py,3596,0,"""estimator_initialized"": streams[""estimator_status_flags""][""sample_count""] > 0,",EXCLUDED:enum_or_bitmask
+tools/runtime/report.py,3759,2,"(session / ""report.json"").write_text(json.dumps(report, indent=2, sort_keys=True) + ""\n"", encoding=""utf-8"")",EXCLUDED:test_only
+tools/runtime/report.py,3813,2,"json.dumps(fallback, indent=2, sort_keys=True) + ""\n"",",EXCLUDED:test_only
+tools/runtime/report.py,3833,2,"parser.add_argument(""--workspace"", type=Path, default=Path(__file__).resolve().parents[2])",EXCLUDED:test_only
+tools/runtime/report.py,3839,0,"return 0 if report[""verdict""] == ""PASS"" else 1",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/report.py,3839,1,"return 0 if report[""verdict""] == ""PASS"" else 1",EXCLUDED:test_only
+tools/runtime/evaluation.py,87,3,"def _vector(value: Any, size: int = 3) -> tuple[float, ...] | None:",EXCLUDED:test_only
+tools/runtime/evaluation.py,102,1,"index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * fraction)))",EXCLUDED:index/size
+tools/runtime/evaluation.py,102,0,"index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * fraction)))",EXCLUDED:index/size
+tools/runtime/evaluation.py,102,1,"index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * fraction)))",EXCLUDED:index/size
+tools/runtime/evaluation.py,124,0,if stamp is not None and stamp > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,127,0,if stamp is not None and stamp > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,152,0,"elif basis != ""source_stamp"" or stamp is None or stamp <= 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,160,0,if stamp is not None and stamp > 0 and previous_stamp is not None:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,165,0,if stamp is not None and stamp > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,240,1,if len(reference_clocks) != 1 or len(measured_clocks) != 1:,EXCLUDED:test_only
+tools/runtime/evaluation.py,240,1,if len(reference_clocks) != 1 or len(measured_clocks) != 1:,EXCLUDED:test_only
+tools/runtime/evaluation.py,261,0,return math.isfinite(float(value)) and value > 0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,278,0,generation == 0 and (,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,279,0,"event.get(""goal_epoch"") == 0 or (",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,280,0,"_integer(event.get(""causal_planning_cycle_id"")) == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,281,0,_integer(declared_cycle) == 0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,290,2,"event.get(""purpose"") == 2 else",EXCLUDED:test_only
+tools/runtime/evaluation.py,351,5,"item.get(""disposition_code"") == 5 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,352,0,"item.get(""purpose"") == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,357,0,"dict(item, purpose=0,",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,361,5,"item.get(""disposition_code"") == 5 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,362,2,"item.get(""purpose"") == 2 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,367,5,"event.get(""disposition_code"") == 5 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,454,1,if len(exact_authorization_owners) == 1:,EXCLUDED:test_only
+tools/runtime/evaluation.py,463,1,if len(exact_authorization_owners) > 1:,EXCLUDED:test_only
+tools/runtime/evaluation.py,472,1,if len(owners) == 1:,EXCLUDED:test_only
+tools/runtime/evaluation.py,528,5,"else ""NO_EXECUTION_SIGNAL"" if tx_key[5][0] == ""no_execution""",EXCLUDED:test_only
+tools/runtime/evaluation.py,528,0,"else ""NO_EXECUTION_SIGNAL"" if tx_key[5][0] == ""no_execution""",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,529,5,"else ""TERMINAL_MONITOR"" if tx_key[5][0] == ""terminal_monitor""",EXCLUDED:test_only
+tools/runtime/evaluation.py,529,0,"else ""TERMINAL_MONITOR"" if tx_key[5][0] == ""terminal_monitor""",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,530,5,"else ""HEADING_REBIND"" if tx_key[5][1] == 2",EXCLUDED:test_only
+tools/runtime/evaluation.py,530,1,"else ""HEADING_REBIND"" if tx_key[5][1] == 2",EXCLUDED:test_only
+tools/runtime/evaluation.py,530,2,"else ""HEADING_REBIND"" if tx_key[5][1] == 2",EXCLUDED:test_only
+tools/runtime/evaluation.py,534,5,"else tx_key[5][1] if tx_key[5][0] == ""no_execution""",EXCLUDED:test_only
+tools/runtime/evaluation.py,534,1,"else tx_key[5][1] if tx_key[5][0] == ""no_execution""",EXCLUDED:test_only
+tools/runtime/evaluation.py,534,5,"else tx_key[5][1] if tx_key[5][0] == ""no_execution""",EXCLUDED:test_only
+tools/runtime/evaluation.py,534,0,"else tx_key[5][1] if tx_key[5][0] == ""no_execution""",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,535,5,"else tx_key[5][1:] if tx_key[5][0] == ""terminal_monitor""",EXCLUDED:test_only
+tools/runtime/evaluation.py,535,1,"else tx_key[5][1:] if tx_key[5][0] == ""terminal_monitor""",EXCLUDED:test_only
+tools/runtime/evaluation.py,535,5,"else tx_key[5][1:] if tx_key[5][0] == ""terminal_monitor""",EXCLUDED:test_only
+tools/runtime/evaluation.py,535,0,"else tx_key[5][1:] if tx_key[5][0] == ""terminal_monitor""",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,625,0,"authorize.get(""bundle_generation"") == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,646,8,elif (disposition == 8 and,EXCLUDED:test_only
+tools/runtime/evaluation.py,647,1,"retained.get(""owner_snapshot_current"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,648,1,"retained.get(""callback_request_current"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,649,1,"retained.get(""monitor_window_current"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,650,1,"retained.get(""after_command_available"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,651,0,"retained.get(""after_failure_latched"") == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,653,0,"retained.get(""final_freshness_reason"") == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,654,1,"retained.get(""final_witness_age_bounded"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,655,1,"retained.get(""final_body_known_free"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,656,1,"retained.get(""final_anchor_valid"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,663,0,"(retained.get(""owner_snapshot_current"") == 0 or",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,664,0,"retained.get(""callback_request_current"") == 0 or",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,665,0,"retained.get(""monitor_window_current"") == 0) and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,671,4,elif (disposition == 4 and,EXCLUDED:test_only
+tools/runtime/evaluation.py,672,0,"retained.get(""after_command_available"") == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,673,1,"retained.get(""after_failure_latched"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,679,5,elif (disposition == 5 and,EXCLUDED:test_only
+tools/runtime/evaluation.py,682,1,"retained.get(""callback_request_current"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,683,1,"retained.get(""after_command_available"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,684,0,"retained.get(""after_failure_latched"") == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,685,0,"retained.get(""final_freshness_reason"") == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,686,1,"retained.get(""final_witness_age_bounded"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,700,0,replacement_generation == 0 and,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,717,4,"result.get(""planner_status"") == 4 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,718,4,"result.get(""planner_disposition"") == 4 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,720,5,"planner_emergency.get(""disposition_code"") == 5 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,721,1,"planner_emergency.get(""callback_request_current"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,722,1,"planner_emergency.get(""after_command_available"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,723,0,"planner_emergency.get(""after_failure_latched"") == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,782,1,"and retained.get(""after_command_available"") == 1",EXCLUDED:test_only
+tools/runtime/evaluation.py,783,0,"and retained.get(""after_failure_latched"") == 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,784,1,"and retained.get(""owner_snapshot_current"") == 1",EXCLUDED:test_only
+tools/runtime/evaluation.py,785,1,"and retained.get(""callback_request_current"") == 1",EXCLUDED:test_only
+tools/runtime/evaluation.py,794,2,"""STALE_DISCARDED"" if disposition == 2 else ""SUPERSEDED""",EXCLUDED:test_only
+tools/runtime/evaluation.py,798,4,"if (disposition == 4 and retained.get(""owner_snapshot_current"") == 1",EXCLUDED:test_only
+tools/runtime/evaluation.py,798,1,"if (disposition == 4 and retained.get(""owner_snapshot_current"") == 1",EXCLUDED:test_only
+tools/runtime/evaluation.py,799,1,"and retained.get(""callback_request_current"") == 1",EXCLUDED:test_only
+tools/runtime/evaluation.py,800,0,"and retained.get(""after_command_available"") == 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,801,1,"and retained.get(""after_failure_latched"") == 1",EXCLUDED:test_only
+tools/runtime/evaluation.py,834,5,"if (retained.get(""disposition_code"") != 5 or",EXCLUDED:test_only
+tools/runtime/evaluation.py,836,1,"retained.get(""after_command_available"") != 1 or",EXCLUDED:test_only
+tools/runtime/evaluation.py,837,0,"retained.get(""after_failure_latched"") != 0):",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,853,1,elif len(bundle_generations) > 1:,EXCLUDED:test_only
+tools/runtime/evaluation.py,1111,0,if parsed is None or parsed < 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1122,0,"if counters.get(field, 0) > 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1122,0,"if counters.get(field, 0) > 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1124,0,"if counters.get(""dropped_records"", 0) > 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1124,0,"if counters.get(""dropped_records"", 0) > 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1134,0,"if accepted != written or pending != max(0, accepted - written):",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1154,0,if parsed is None or parsed < 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1270,0,if sequence is None or sequence <= 0 or not runtime_instance or not kind or not tx_key:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1280,0,"if (any(value is None or value <= 0 for field, value in identity.items()",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1283,0,"identity[""next_world_source_stamp_ns""] < 0):",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1298,0,if active_generation is None or active_generation < 0 or \,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1299,0,pending_generation is None or pending_generation < 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1303,0,if active_generation > 0 and any(,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1304,0,"(_integer(event.get(f""{prefix}_active_{field}"")) or 0) <= 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1304,0,"(_integer(event.get(f""{prefix}_active_{field}"")) or 0) <= 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1309,0,if pending_generation > 0 and any(,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1310,0,"(_integer(event.get(f""{prefix}_pending_{field}"")) or 0) <= 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1310,0,"(_integer(event.get(f""{prefix}_pending_{field}"")) or 0) <= 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1354,1,"} for left, right in zip(ordered, ordered[1:]) if right > left + 1)",EXCLUDED:test_only
+tools/runtime/evaluation.py,1354,1,"} for left, right in zip(ordered, ordered[1:]) if right > left + 1)",EXCLUDED:test_only
+tools/runtime/evaluation.py,1359,0,if not runtime_instance or value is None or value < 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1364,1,"if any(right < left for left, right in zip(values, values[1:])):",EXCLUDED:test_only
+tools/runtime/evaluation.py,1388,0,not all((_integer(event.get(field)) or 0) > 0 for field in (,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1388,0,not all((_integer(event.get(field)) or 0) > 0 for field in (,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1424,1,if len(producer_runtime_ids) != 1:,EXCLUDED:test_only
+tools/runtime/evaluation.py,1429,-1,if observed and observed[-1] < produced:,EXCLUDED:test_only
+tools/runtime/evaluation.py,1434,-1,elif observed and produced < observed[-1]:,EXCLUDED:test_only
+tools/runtime/evaluation.py,1439,0,if expected_transaction_count is None or expected_transaction_count < 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1663,0,"if int(counters.get(""monitor_rejected_rows"", 0)) > 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1663,0,"if int(counters.get(""monitor_rejected_rows"", 0)) > 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1667,0,"if int(counters.get(""normalization_rejected_rows"", 0)) > 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1667,0,"if int(counters.get(""normalization_rejected_rows"", 0)) > 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1671,0,"if int(counters.get(""acceptance_witness_missing_rows"", 0)) > 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1671,0,"if int(counters.get(""acceptance_witness_missing_rows"", 0)) > 0:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1683,0,if int(_number(monitor_stream.get(field)) or 0) > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1683,0,if int(_number(monitor_stream.get(field)) or 0) > 0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1695,0,"int(_number(item.get(""trace_drop_count"")) or 0) > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1695,0,"int(_number(item.get(""trace_drop_count"")) or 0) > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1700,0,"int(_number(item.get(""trace_publish_error_count"")) or 0) > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1700,0,"int(_number(item.get(""trace_publish_error_count"")) or 0) > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1726,0,if sequence is not None and sequence > 0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1728,0,if trace_sequences and trace_sequences[0] != 1:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1728,1,if trace_sequences and trace_sequences[0] != 1:,EXCLUDED:test_only
+tools/runtime/evaluation.py,1730,1,"if any(right != left + 1 for left, right in zip(trace_sequences, trace_sequences[1:])):",EXCLUDED:test_only
+tools/runtime/evaluation.py,1730,1,"if any(right != left + 1 for left, right in zip(trace_sequences, trace_sequences[1:])):",EXCLUDED:test_only
+tools/runtime/evaluation.py,1800,1e9,(stamp - previous_stamp) / 1e9 > max_gap_s or,EXCLUDED:test_only
+tools/runtime/evaluation.py,1848,0,if index <= 0 or index >= len(ordered):,EXCLUDED:index/size
+tools/runtime/evaluation.py,1850,1,"left, right = ordered[index - 1], ordered[index]",EXCLUDED:index/size
+tools/runtime/evaluation.py,1852,0,if gap <= 0 or gap / 1e9 > max_gap_s:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1852,1e9,if gap <= 0 or gap / 1e9 > max_gap_s:,EXCLUDED:test_only
+tools/runtime/evaluation.py,1891,0,"""unmatched_sample_count"": max(0, total - matched),",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1938,3,"if not isinstance(value, (list, tuple)) or len(value) != 3:",EXCLUDED:test_only
+tools/runtime/evaluation.py,1942,3,"if not isinstance(row, (list, tuple)) or len(row) != 3:",EXCLUDED:test_only
+tools/runtime/evaluation.py,1951,1e-6,"def _rotation_matrix_valid(matrix: list[list[float]], tolerance: float = 1e-6) -> bool:",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1957,1.0,abs(gram[i][j] - (1.0 if i == j else 0.0)) <= tolerance,EXCLUDED:test_only
+tools/runtime/evaluation.py,1957,0.0,abs(gram[i][j] - (1.0 if i == j else 0.0)) <= tolerance,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,1965,1.0,return orthonormal and abs(determinant - 1.0) <= tolerance,EXCLUDED:test_only
+tools/runtime/evaluation.py,2004,1,if len(ref_frames) != 1 or len(measured_frames) != 1:,EXCLUDED:test_only
+tools/runtime/evaluation.py,2004,1,if len(ref_frames) != 1 or len(measured_frames) != 1:,EXCLUDED:test_only
+tools/runtime/evaluation.py,2031,3,or len(translation) != 3,EXCLUDED:test_only
+tools/runtime/evaluation.py,2074,1e-6,or any(abs(value) > 1e-6 for value in translation_value),EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2076,1e-6,abs(matrix_value[row][column] - identity[row][column]) > 1e-6,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2131,0.0,0.0 < minimum_ratio <= 1.0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2131,1.0,0.0 < minimum_ratio <= 1.0,EXCLUDED:test_only
+tools/runtime/evaluation.py,2132,0.0,and maximum_uncovered >= 0.0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2133,0.0,and maximum_pairing_gap > 0.0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2176,0.0,"valid_duration_s = max(0.0, required_duration_s - uncovered_duration_s)",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2177,0.0,ratio = valid_duration_s / required_duration_s if required_duration_s > 0.0 else None,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2212,3,"if isinstance(item, list) and len(item) == 3",EXCLUDED:test_only
+tools/runtime/evaluation.py,2449,0.0,if first is None or second is None or dt <= 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2498,1,"role_switches = sum(left != right for left, right in zip(roles, roles[1:]))",EXCLUDED:test_only
+tools/runtime/evaluation.py,2613,0.0,if duration is not None and duration >= 0.0,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2667,0,return number if 0 < number <= (1 << 64) - 1 else None,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2667,1,return number if 0 < number <= (1 << 64) - 1 else None,EXCLUDED:test_only
+tools/runtime/evaluation.py,2667,64,return number if 0 < number <= (1 << 64) - 1 else None,EXCLUDED:test_only
+tools/runtime/evaluation.py,2667,1,return number if 0 < number <= (1 << 64) - 1 else None,EXCLUDED:test_only
+tools/runtime/evaluation.py,2687,1,"if any(parsed[field] > (1 << 63) - 1 for field in (*steady_fields, *ros_fields)):",EXCLUDED:test_only
+tools/runtime/evaluation.py,2687,63,"if any(parsed[field] > (1 << 63) - 1 for field in (*steady_fields, *ros_fields)):",EXCLUDED:test_only
+tools/runtime/evaluation.py,2687,1,"if any(parsed[field] > (1 << 63) - 1 for field in (*steady_fields, *ros_fields)):",EXCLUDED:test_only
+tools/runtime/evaluation.py,2691,1,"if any(right < left for left, right in zip(steady, steady[1:])):",EXCLUDED:test_only
+tools/runtime/evaluation.py,2718,0,"age < 0 for age in values[""source_age_at_callback_ms""]),",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2720,0,"age < 0 for age in values[""source_age_at_update_ms""]),",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2771,2,if len(waypoints) < 2:,EXCLUDED:test_only
+tools/runtime/evaluation.py,2780,0,"dx, dy = end[0] - start[0], end[1] - start[1]",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2780,0,"dx, dy = end[0] - start[0], end[1] - start[1]",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2780,1,"dx, dy = end[0] - start[0], end[1] - start[1]",EXCLUDED:test_only
+tools/runtime/evaluation.py,2780,1,"dx, dy = end[0] - start[0], end[1] - start[1]",EXCLUDED:test_only
+tools/runtime/evaluation.py,2782,0.0,"alpha = max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / denominator)) if denominator > 1e-12 else 0.0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2782,1.0,"alpha = max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / denominator)) if denominator > 1e-12 else 0.0",EXCLUDED:test_only
+tools/runtime/evaluation.py,2782,0,"alpha = max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / denominator)) if denominator > 1e-12 else 0.0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2782,0,"alpha = max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / denominator)) if denominator > 1e-12 else 0.0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2782,1,"alpha = max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / denominator)) if denominator > 1e-12 else 0.0",EXCLUDED:test_only
+tools/runtime/evaluation.py,2782,1,"alpha = max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / denominator)) if denominator > 1e-12 else 0.0",EXCLUDED:test_only
+tools/runtime/evaluation.py,2782,1e-12,"alpha = max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / denominator)) if denominator > 1e-12 else 0.0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2782,0.0,"alpha = max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / denominator)) if denominator > 1e-12 else 0.0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2806,0,"retained.get(""purpose"") == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2807,4,"retained.get(""disposition_code"") == 4 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,2808,1,"retained.get(""owner_snapshot_current"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,2809,1,"retained.get(""callback_request_current"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,2810,1,"retained.get(""monitor_window_current"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,2811,0,"retained.get(""after_command_available"") == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2812,1,"retained.get(""after_failure_latched"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,2816,0,"retained.get(""final_freshness_reason"") == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2817,1,"retained.get(""final_witness_age_bounded"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,2818,1,"retained.get(""final_body_known_free"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,2819,1,"retained.get(""final_anchor_valid"") == 1 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,2820,0,"retained.get(""final_bridge_usable"") == 0 and",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,2845,4,"result.get(""planner_disposition"") == 4 and",EXCLUDED:test_only
+tools/runtime/evaluation.py,2932,10,"if isinstance(item, list) and len(item) == 10",EXCLUDED:test_only
+tools/runtime/evaluation.py,2936,10,"if isinstance(item, list) and len(item) == 10",EXCLUDED:test_only
+tools/runtime/evaluation.py,3019,1,len(worlds) > 1 for worlds in reference_payloads.values()),EXCLUDED:test_only
+tools/runtime/evaluation.py,3052,0,retained_sequences[0] != 1 or,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,3052,1,retained_sequences[0] != 1 or,EXCLUDED:test_only
+tools/runtime/evaluation.py,3053,1,"any(right != left + 1 for left, right in zip(",EXCLUDED:test_only
+tools/runtime/evaluation.py,3058,0,"(_integer(item.get(""failed_before_event"")) or 0) > 0 or",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,3058,0,"(_integer(item.get(""failed_before_event"")) or 0) > 0 or",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,3059,0,"(_integer(item.get(""suppressed_before_event"")) or 0) > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,3059,0,"(_integer(item.get(""suppressed_before_event"")) or 0) > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,3188,0.0,if value is None or value < 0.0:,EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,3282,0,"safety_reasons = [] if collision_count == 0 else [""COLLISION_EVIDENCE_MISSING"" if collision_count is None else ""COLLISION_ENVELOPE_BREACHED""]",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,3283,0,"safety_status = ""PASS"" if collision_count == 0 else ""NOT_EVALUABLE"" if collision_count is None else ""FAIL""",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,3298,0,"and truth_tracking.get(""matched_sample_count"", 0) > 0",EXCLUDED:numeric_epsilon<=1e-6
+tools/runtime/evaluation.py,3298,0,"and truth_tracking.get(""matched_sample_count"", 0) > 0",EXCLUDED:numeric_epsilon<=1e-6

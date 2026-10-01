@@ -1,0 +1,62 @@
+schema_version: 1
+qualification:
+  release_only: true
+  qualified_speed_mps: [1.0, 3.0, 5.0]
+  characterization_speed_mps: [6.0, 8.0]
+  deterministic:
+    scenes: [sanity_open, structured_corner, structured_obstacle]
+    consecutive_runs_per_speed: 10
+  stochastic_clutter:
+    minimum_seed_count: 30
+  pass_through:
+    turn_angles_deg: [0, 30, 45, 60, 90]
+    waypoint_chain_length: 9
+  recorded_data:
+    required_datasets: [aist-mid360-drive]
+  finalization_reserve:
+    initial_s: 0.04
+    update_rule: max(0.04, measured_p99_s + 0.005)
+    requires_sitl_and_recorded_distribution: true
+  required_artifacts:
+    - report.json
+    - REPORT.html
+    - perception_timeline.jsonl
+    - planning_timeline.jsonl
+    - execution_timeline.jsonl
+  fault_matrix:
+    - id: registered_scan_absent_vs_valid_empty
+      layer: perception
+      verification: test_mapping_worker
+      expected: absent_rejected_valid_empty_consumed_once
+    - id: world_revision_disjoint
+      layer: mapping
+      verification: test_world_snapshot_store
+      expected: recertify_same_bundle_on_new_identity
+    - id: world_revision_intersect
+      layer: mapping
+      verification: test_world_snapshot_store
+      expected: full_validation_or_reject
+    - id: route_epoch_supersede
+      layer: planning
+      verification: test_planning_worker
+      expected: cancel_or_reject_stale_result
+    - id: forced_cancel
+      layer: planning
+      verification: test_planning_worker
+      expected: one_complete_result_best_certified_bundle_retained
+    - id: worker_overload
+      layer: runtime
+      verification: test_planning_worker
+      expected: one_inflight_one_latest_pending
+    - id: one_shot_measured_brake
+      layer: recovery
+      verification: test_planner_fsm
+      expected: no_rearm_until_certified_stop
+    - id: propagated_state_stale
+      layer: estimation
+      verification: test_timestamp_freshness
+      expected: command_exposure_rejected
+    - id: moving_command_loss
+      layer: handover
+      verification: test_navigation_command
+      expected: px4_hold_after_0_10_s_stream_timeout
