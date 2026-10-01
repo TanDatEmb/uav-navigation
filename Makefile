@@ -82,7 +82,7 @@ test:
 	@$(CANONICAL_PYTHON_ENV) $(PYTHON) -m unittest discover -s tools/runtime/tests -p 'test_*.py' -v
 
 gate:
-	@tools/gate.sh all
+	@$(CANONICAL_PYTHON_ENV) tools/gate.sh all
 
 replay:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }

@@ -1,80 +1,225 @@
 #!/usr/bin/env python3
-"""Check the closed package dependency rules from ADR-018 E3/E6."""
+"""Check the closed dependency-direction rules for the Wave 3 baseline.
+
+The guard reads package.xml and CMake text only; it does not require ROS.  A
+known B3 violation is still printed as a warning with its removal WP.  Any
+new violation fails closed.
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-PACKAGE_RE = re.compile(r"<(?P<tag>depend|build_depend|exec_depend)>(?P<name>[^<]+)</")
-DEP_CALL_RE = re.compile(
-    r"(?:ament_target_dependencies|target_link_libraries)\s*\([^)]*?(?P<body>[^)]*)\)",
+PACKAGE_XML_RE = re.compile(
+    r"<(?P<tag>depend|build_depend|exec_depend)\s*>\s*"
+    r"(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*)\s*</(?P=tag)\s*>"
+)
+CMAKE_CALL_RE = re.compile(
+    r"(?P<kind>target_link_libraries|ament_target_dependencies)\s*\(\s*"
+    r"(?P<target>[^\s\)]+)(?P<body>.*?)\)",
     re.DOTALL,
 )
+TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_:$+.-]*")
+ACCESS_SPECIFIERS = {"PUBLIC", "PRIVATE", "INTERFACE"}
+
+# E6 is deliberately closed.  These are current B3 findings, not a blanket
+# exemption: the named W3-B3 move must remove them.
+PACKAGE_RULES: dict[str, set[str]] = {
+    "navigation_certifier": {"navigation_planning_backend"},
+    "navigation_execution": {
+        "navigation_planning_backend",
+        "navigation_mapping",
+        "navigation_world_model",
+        "rclcpp",
+    },
+    "navigation_mission": {
+        "navigation_planning_backend",
+        "navigation_mapping",
+        "rclcpp",
+    },
+    "navigation_planning": {
+        "navigation_planning_backend",
+        "navigation_mapping",
+        "rclcpp",
+    },
+}
+
+ALLOWED_VIOLATIONS: dict[tuple[str, str, str | None, str], dict[str, str]] = {
+    ("package", "navigation_execution", None, "navigation_world_model"): {
+        "finding": "V1",
+        "wp": "W3-B3",
+    },
+    ("cmake", "navigation_execution", "navigation_execution", "navigation_world_model"): {
+        "finding": "V1",
+        "wp": "W3-B3",
+    },
+    ("cmake", "navigation_runtime", "navigation_runtime_core", "rclcpp"): {
+        "finding": "A1",
+        "wp": "W3-B3",
+    },
+}
 
 
-def package_name(package_xml: Path) -> str:
-    match = re.search(r"<name>([^<]+)</name>", package_xml.read_text())
-    return match.group(1).strip() if match else package_xml.parent.name
+@dataclass(frozen=True)
+class DependencyUse:
+    package: str
+    target: str | None
+    dependency: str
+    source: Path
+    line: int
+    kind: str
 
 
-def package_dependencies() -> dict[str, set[str]]:
-    result: dict[str, set[str]] = {}
-    for package_xml in SRC.rglob("package.xml"):
-        name = package_name(package_xml)
-        result[name] = {
-            match.group("name").strip()
-            for match in PACKAGE_RE.finditer(package_xml.read_text())
-        }
-    return result
+@dataclass
+class PackageInfo:
+    name: str
+    path: Path
+    manifest_dependencies: set[str] = field(default_factory=set)
+    cmake_uses: list[DependencyUse] = field(default_factory=list)
 
 
-def cmake_dependencies() -> dict[str, set[str]]:
-    result: dict[str, set[str]] = {}
-    for cmake in SRC.rglob("CMakeLists.txt"):
-        package = cmake.parent.name
-        text = cmake.read_text()
-        deps = set()
-        for match in DEP_CALL_RE.finditer(text):
-            deps.update(re.findall(r"\b[a-z][a-z0-9_]+\b", match.group("body")))
-        result.setdefault(package, set()).update(deps)
-    return result
+def _line_number(text: str, offset: int) -> int:
+    return text.count("\n", 0, offset) + 1
+
+
+def _package_name(path: Path) -> str | None:
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r"<name\s*>\s*([^<\s]+)\s*</name\s*>", text)
+    return match.group(1) if match else None
+
+
+def _resolve_target(raw_target: str, package: str) -> str:
+    return raw_target.replace("${PROJECT_NAME}", package)
+
+
+def _known_dependency(token: str, known: set[str]) -> str | None:
+    token = token.strip()
+    if token in ACCESS_SPECIFIERS or token.startswith("${"):
+        return None
+    base = token.split("::", 1)[0]
+    return base if base in known else None
+
+
+def collect_packages(root: Path = ROOT) -> list[PackageInfo]:
+    rows: list[PackageInfo] = []
+    for manifest in sorted(root.glob("src/**/package.xml")):
+        name = _package_name(manifest)
+        if not name:
+            continue
+        text = manifest.read_text(encoding="utf-8")
+        deps = {match.group("name") for match in PACKAGE_XML_RE.finditer(text)}
+        rows.append(PackageInfo(name=name, path=manifest.parent, manifest_dependencies=deps))
+
+    known = {row.name for row in rows} | {"rclcpp"}
+    for row in rows:
+        cmake = row.path / "CMakeLists.txt"
+        if not cmake.is_file():
+            continue
+        text = cmake.read_text(encoding="utf-8")
+        for match in CMAKE_CALL_RE.finditer(text):
+            target = _resolve_target(match.group("target"), row.name)
+            for token in TOKEN_RE.findall(match.group("body")):
+                dependency = _known_dependency(token, known)
+                if dependency is None:
+                    continue
+                row.cmake_uses.append(
+                    DependencyUse(
+                        package=row.name,
+                        target=target,
+                        dependency=dependency,
+                        source=cmake,
+                        line=_line_number(text, match.start()),
+                        kind=match.group("kind"),
+                    )
+                )
+    return rows
+
+
+def _is_product_target(target: str | None) -> bool:
+    return bool(target) and not target.startswith("test_")
+
+
+def find_violations(root: Path = ROOT) -> list[DependencyUse]:
+    rows = collect_packages(root)
+    package_names = {row.name for row in rows}
+    violations: list[DependencyUse] = []
+    for row in rows:
+        forbidden = set(PACKAGE_RULES.get(row.name, set()))
+        if "navigation_sitl_harness" in package_names and row.name != "navigation_runtime":
+            forbidden.add("navigation_sitl_harness")
+        for dependency in sorted(row.manifest_dependencies & forbidden):
+            violations.append(
+                DependencyUse(
+                    package=row.name,
+                    target=None,
+                    dependency=dependency,
+                    source=row.path / "package.xml",
+                    line=1,
+                    kind="package.xml",
+                )
+            )
+        for use in row.cmake_uses:
+            if _is_product_target(use.target) and use.dependency in forbidden:
+                violations.append(use)
+            if (
+                _is_product_target(use.target)
+                and use.target.endswith(("_policy", "_core"))
+                and use.dependency == "rclcpp"
+            ):
+                violations.append(use)
+            if (
+                "navigation_sitl_harness" in package_names
+                and row.name != "navigation_runtime"
+                and use.dependency == "navigation_sitl_harness"
+            ):
+                violations.append(use)
+    return violations
+
+
+def _key(use: DependencyUse) -> tuple[str, str, str | None, str]:
+    source_kind = "package" if use.target is None else "cmake"
+    return source_kind, use.package, use.target, use.dependency
 
 
 def main() -> int:
-    package_deps = package_dependencies()
-    cmake_deps = cmake_dependencies()
-    effective = {
-        package: package_deps.get(package, set()) | cmake_deps.get(package, set())
-        for package in set(package_deps) | set(cmake_deps)
-    }
-    violations: list[str] = []
+    rows = collect_packages()
+    violations = find_violations()
+    unexpected: list[DependencyUse] = []
+    allowed = 0
+    for use in violations:
+        exception = ALLOWED_VIOLATIONS.get(_key(use))
+        location = f"{use.source.relative_to(ROOT)}:{use.line}"
+        if exception:
+            allowed += 1
+            print(
+                "DEPENDENCY_DIRECTION: WARNING "
+                f"allowed B3 violation {use.package} -> {use.dependency} "
+                f"({location}, target={use.target or 'manifest'}; "
+                f"finding={exception['finding']}, remove_in={exception['wp']})"
+            )
+        else:
+            unexpected.append(use)
 
-    def forbid(source: str, targets: set[str], reason: str) -> None:
-        for target in sorted(targets & effective.get(source, set())):
-            violations.append(f"{source} -> {target}: {reason}")
-
-    if "navigation_certifier" in effective:
-        forbid("navigation_certifier", {"navigation_planning_backend"}, "certifier must not depend on planner backend")
-    for source in ("navigation_execution", "navigation_mission", "navigation_planning"):
-        forbid(source, {"navigation_planning_backend", "navigation_mapping", "rclcpp"}, "core contract must not depend on backend/mapping/ROS")
-    for source in effective:
-        if source.endswith(("_policy", "_core")):
-            forbid(source, {"rclcpp"}, "policy/core must not depend on ROS")
-    if "navigation_sitl_harness" in effective:
-        for source, deps in effective.items():
-            if "navigation_sitl_harness" in deps and source != "navigation_runtime":
-                violations.append(f"{source} -> navigation_sitl_harness: only navigation_runtime may depend on harness")
-
-    if violations:
-        for violation in violations:
-            print(f"DEPENDENCY_DIRECTION: FAIL: {violation}", file=sys.stderr)
+    if unexpected:
+        print("DEPENDENCY_DIRECTION: FAIL", file=sys.stderr)
+        for use in unexpected:
+            location = f"{use.source.relative_to(ROOT)}:{use.line}"
+            print(
+                f"- {use.package} target={use.target or 'manifest'} "
+                f"depends on forbidden {use.dependency} ({location})",
+                file=sys.stderr,
+            )
         return 1
-    print(f"DEPENDENCY_DIRECTION: PASS ({len(effective)} package/CMake units checked)")
+
+    print(
+        "DEPENDENCY_DIRECTION: PASS "
+        f"(packages={len(rows)}, allowed_baseline_violations={allowed})"
+    )
     return 0
 
 
