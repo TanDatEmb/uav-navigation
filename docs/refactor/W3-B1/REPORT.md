@@ -59,10 +59,12 @@ NOT_APPLICABLE: SITL/replay không chạy vì đây là MOVE-only, không đổi
 
 ## Commit inventory
 
-Bảng này lấy từ `git log --format='%h %s' origin/main..HEAD` sau commit code và trước commit report carrier; report carrier/final HEAD được xác nhận lại trong REVIEW REQUEST trước push.
+Bảng này lấy từ `git log --format='%h %s' origin/main..HEAD` sau report carrier cuối; final HEAD và remote push được xác nhận trong REVIEW REQUEST.
 
 | SHA | Message |
 |---|---|
+| `b1cdfe2` | `docs(wave3): record B1 ROS gate result` |
+| `fd2634a` | `docs(wave3): update B1 contract v3 review report` |
 | `50e008f` | `refactor(planning): preserve moved color contract and enable PIC` |
 | `9a05722` | `docs(wave3): complete B1 commit inventory` |
 | `0f489e4` | `docs(wave3): complete B1 commit inventory` |
@@ -74,4 +76,4 @@ Bảng này lấy từ `git log --format='%h %s' origin/main..HEAD` sau commit c
 
 ## Handoff
 
-Branch được push bằng `--force-with-lease` sau khi report đã ghi đủ bằng chứng gate; gate vẫn FAIL do dependency attachment checks, nên REVIEW REQUEST chỉ báo cáo trạng thái và không tự cấp verdict. Không merge.
+Branch đã được push bằng `--force-with-lease` sau khi report ghi đủ bằng chứng gate; gate vẫn FAIL do dependency attachment checks, nên REVIEW REQUEST chỉ báo cáo trạng thái và không tự cấp verdict. Không merge.
