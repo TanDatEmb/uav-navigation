@@ -26,7 +26,7 @@ Gate v3 tooling and documentation drift cleanup are implemented on baseline `432
 |---|---|---|
 | S-02 missing `.agents/skills/build-and-test/SKILL.md` | FIXED | `5d5ea93` |
 | S-03 missing consolidated gate | FIXED | `5d5ea93` |
-| S-04 architecture-note drift banner and KB-08 Q2 | FIXED | `DOCS_PENDING` |
+| S-04 architecture-note drift banner and KB-08 Q2 | FIXED | `e9d3b51` |
 
 ## Open questions / deviations
 
@@ -38,3 +38,4 @@ Gate v3 tooling and documentation drift cleanup are implemented on baseline `432
 | SHA | Message |
 |---|---|
 | `5d5ea93` | `build(wave3): add gate and dependency direction checks` |
+| `e9d3b51` | `docs(wave3): mark historical architecture notes` |
