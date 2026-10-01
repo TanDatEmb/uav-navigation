@@ -131,7 +131,10 @@ class ExecutionAuthority {
                           bool retain_committed_bundle = false) noexcept {
     if (goal_epoch == 0) return false;
     std::lock_guard lock(mutex_);
-    if (goal_epoch < admission_goal_epoch_) return false;
+    if (goal_epoch < admission_goal_epoch_ ||
+        (!retain_committed_bundle && goal_epoch <= admission_goal_epoch_)) {
+      return false;
+    }
     admission_goal_epoch_ = goal_epoch;
     if (world_identity_) {
       admission_localization_epoch_ = world_identity_->localization_epoch;
@@ -155,6 +158,7 @@ class ExecutionAuthority {
     if (localization_epoch == 0U || goal_epoch == 0U) return false;
     std::lock_guard lock(mutex_);
     if (goal_epoch < admission_goal_epoch_ ||
+        (!retain_active && goal_epoch <= admission_goal_epoch_) ||
         localization_epoch < admission_localization_epoch_) return false;
     const bool retain = retain_active && active_.bundle && active_.goal &&
         lifecycle_.exposure == ExecutionExposure::kAvailable &&
