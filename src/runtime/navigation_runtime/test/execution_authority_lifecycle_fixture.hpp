@@ -8,8 +8,6 @@
 
 namespace navigation_runtime {
 
-using navigation_execution::ExecutionRecoveryEvent;
-
 // Test fixture whose every transition reaches the product
 // ExecutionAuthority; it has no second mutable lifecycle.
 class ExecutionLifecycleFixture final {
@@ -62,7 +60,7 @@ class ExecutionLifecycleFixture final {
     return authority_.requestRestartFromRest(bundle);
   }
   void clearRestartFromRest() noexcept { authority_.clearRestartFromRest(); }
-  bool applyRecoveryEvent(ExecutionRecoveryEvent event,
+  bool applyRecoveryEvent(navigation_execution::ExecutionRecoveryEvent event,
                           const navigation_planning::CandidateBundle& bundle) noexcept {
     return authority_.applyRecoveryEvent(event, bundle);
   }
