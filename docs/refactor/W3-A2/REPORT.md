@@ -1,6 +1,6 @@
 # W3-A2 report
 
-Gate v3 tooling and documentation drift cleanup are implemented on baseline `432dc94` in coordinator branch `refactor/wave3-execution`. The owner must split or cherry-pick this work into `refactor/W3-A2` before opening the draft PR; no merge or push was performed here.
+Gate v3 tooling and documentation drift cleanup are implemented on baseline `432dc94` in branch `refactor/W3-A2`. No merge or push was performed.
 
 ## Deliverable
 
@@ -14,10 +14,10 @@ Gate v3 tooling and documentation drift cleanup are implemented on baseline `432
 | Command | Result |
 |---|---|
 | `git diff --check` | PASS |
-| `./tools/check_dependency_direction.py` | PASS (21 package/CMake units checked) |
+| `./tools/check_dependency_direction.py` | PASS; 3 baseline B3 violations allow-listed with finding/WP, no new violation |
 | `tools/gate.sh static` | PASS; ledger PASS, mission authority PASS, citations `989 checked out_of_range=0`, dependency PASS |
-| `/usr/bin/python3 -m unittest tools.tests.test_gate -v` | PASS (2/2) |
-| `tools/gate.sh python` | PASS; Python 3.12.3, tools/tests 9/9, runtime/tests 420/420, 2 skips |
+| `tools/gate.sh python` | PASS; Python 3.12.3, tools/tests 12/12, runtime/tests 420/420, 2 skips |
+| `tools/tests/test_gate.py` + `tools/tests/test_dependency_direction.py` | PASS (5/5 targeted) |
 | `tools/gate.sh ros` | NOT_MEASURED |
 
 ## Findings
@@ -25,13 +25,13 @@ Gate v3 tooling and documentation drift cleanup are implemented on baseline `432
 | Finding | Status | Commit |
 |---|---|---|
 | S-02 missing `.agents/skills/build-and-test/SKILL.md` | FIXED | `5d5ea93` |
-| S-03 missing consolidated gate | FIXED | `5d5ea93` |
+| S-03 missing consolidated gate | FIXED | `5d5ea93`, `47beb3d` |
 | S-04 architecture-note drift banner and KB-08 Q2 | FIXED | `e9d3b51` |
 
 ## Open questions / deviations
 
-- `gate ros` currently builds the package set returned by `colcon list` when `PACKAGES` is unset; reverse-dependency narrowing and the special `px4_ros2_cpp` attachment policy require validation on a sourced ROS environment. Status: `CONDITIONAL`.
-- This coordinator branch is not the prompt-named `refactor/W3-A2`; the change must be transferred to that branch before push. Status: `CONDITIONAL`.
+- `gate ros` package selection and `px4_ros2_cpp` skip are implemented, but full ROS execution remains unmeasured on this branch. Status: `CONDITIONAL`.
+- ROS gate remains `NOT_MEASURED` because this W3-A2 write-set does not change a ROS package and no sourced ROS build was required for this branch. Status: `CONDITIONAL`.
 
 ## Commit table before transfer
 
@@ -39,3 +39,6 @@ Gate v3 tooling and documentation drift cleanup are implemented on baseline `432
 |---|---|
 | `5d5ea93` | `build(wave3): add gate and dependency direction checks` |
 | `e9d3b51` | `docs(wave3): mark historical architecture notes` |
+| `91c1f51` | `docs(wave3): finalize A2 gate report` |
+| `2ba95d0` | `docs(wave3): record A2 Python gate evidence` |
+| `47beb3d` | `fix(gate): enforce wave3 dependency and package scopes` |
