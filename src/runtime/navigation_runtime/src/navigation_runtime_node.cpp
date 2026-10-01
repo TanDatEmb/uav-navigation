@@ -42,6 +42,13 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 namespace navigation_runtime {
+using navigation_execution::ExecutionPhase;
+using navigation_execution::ExecutionRecoveryEvent;
+using navigation_execution::ExecutionRecoveryState;
+using navigation_execution::executionPhaseTelemetryCodeV1;
+using navigation_execution::executionRecoveryStateKnown;
+using navigation_execution::nominalPlanningAllowed;
+using navigation_execution::transitionExecutionRecovery;
 namespace {
 
 bool executionLifecycleSnapshotsEqual(

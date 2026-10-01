@@ -2,6 +2,11 @@
 
 #include "execution_authority_lifecycle_fixture.hpp"
 
+namespace navigation_runtime {
+using navigation_execution::ExecutionPhase;
+using navigation_execution::executionPhaseTelemetryCodeV1;
+}  // namespace navigation_runtime
+
 namespace {
 
 navigation_planning::CandidateBundle bundle(

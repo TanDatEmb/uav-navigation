@@ -17,8 +17,10 @@ struct SameIdentityRenewalFacts final {
   navigation_planning::PlanningStartMode start_mode{
       navigation_planning::PlanningStartMode::kStoppedMeasuredState};
   GoalTransitionKind transition_kind{GoalTransitionKind::kCancelOrLocalizationReset};
-  ExecutionRecoveryState recovery_state{ExecutionRecoveryState::kPx4Hold};
-  ExecutionPhase execution_phase{ExecutionPhase::kInitialHold};
+  navigation_execution::ExecutionRecoveryState recovery_state{
+      navigation_execution::ExecutionRecoveryState::kPx4Hold};
+  navigation_execution::ExecutionPhase execution_phase{
+      navigation_execution::ExecutionPhase::kInitialHold};
   bool desired_goal_valid{false};
   bool executing_goal_valid{false};
   bool desired_identity_matches_executing{false};
@@ -48,8 +50,9 @@ struct SameIdentityRenewalFacts final {
   return facts.start_mode ==
              navigation_planning::PlanningStartMode::kCommittedFutureState &&
          facts.transition_kind == GoalTransitionKind::kSteady &&
-         facts.recovery_state == ExecutionRecoveryState::kTrackMain &&
-         facts.execution_phase == ExecutionPhase::kTrackingMain &&
+         facts.recovery_state ==
+             navigation_execution::ExecutionRecoveryState::kTrackMain &&
+         facts.execution_phase == navigation_execution::ExecutionPhase::kTrackingMain &&
          facts.desired_goal_valid && facts.executing_goal_valid &&
          facts.desired_identity_matches_executing &&
          facts.goal_epoch_matches_command && facts.active_bundle_valid &&

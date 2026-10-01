@@ -23,6 +23,7 @@
 #include "navigation_runtime/navigation_runtime_node.hpp"
 
 namespace navigation_runtime {
+using navigation_execution::ExecutionRecoveryState;
 
 // Access-only peer: no executor is spun. The scheduler-only fixtures model
 // inputs, not a certificate proof. The real-facade handoff fixtures also invoke

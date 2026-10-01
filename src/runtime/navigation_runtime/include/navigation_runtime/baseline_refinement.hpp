@@ -82,8 +82,8 @@ class BaselineRefinementOpportunity final {
         execution.activeGoalEpoch() == a.goal_epoch &&
         execution.activeRequestId() == a.request_id &&
         execution.activeGeneration() == generation_ &&
-        lifecycle.phase == ExecutionPhase::kTrackingMain &&
-        lifecycle.recovery == ExecutionRecoveryState::kTrackMain &&
+        lifecycle.phase == navigation_execution::ExecutionPhase::kTrackingMain &&
+        lifecycle.recovery == navigation_execution::ExecutionRecoveryState::kTrackMain &&
         execution.commandAvailable() && !execution.failed() &&
         !execution.safetySuffixActive() && !execution.restartFromRest() &&
         !c.pending && c.desired_matches_executing &&

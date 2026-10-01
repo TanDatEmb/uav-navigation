@@ -15,6 +15,11 @@
 #include <memory>
 
 namespace navigation_runtime {
+using navigation_execution::ExecutionPhase;
+using navigation_execution::ExecutionRecoveryEvent;
+using navigation_execution::ExecutionRecoveryState;
+using navigation_execution::nominalPlanningAllowed;
+using navigation_execution::transitionExecutionRecovery;
 namespace {
 
 TEST(PlannerFsm, ValidatedStoppedHoldPreservesBackupWitnessOnly) {

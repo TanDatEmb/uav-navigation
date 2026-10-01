@@ -16,12 +16,6 @@
 
 namespace navigation_runtime {
 
-using navigation_execution::ExecutionRecoveryEvent;
-using navigation_execution::ExecutionRecoveryState;
-using navigation_execution::executionRecoveryStateKnown;
-using navigation_execution::nominalPlanningAllowed;
-using navigation_execution::transitionExecutionRecovery;
-
 // Small sole-owner model for the runtime's single pending request. It makes
 // callback/handoff interleavings explicit: enqueue, snapshot and consume are
 // each linearizable operations under the caller's input/transition critical
@@ -148,10 +142,11 @@ struct PassThroughTerminalAckFacts final {
 }
 
 inline bool watchdogTimeoutMayRetainSafetySuffix(
-    ExecutionRecoveryState state, bool command_available,
+    navigation_execution::ExecutionRecoveryState state, bool command_available,
     bool safety_suffix_active) noexcept {
-  const bool safety_state = state == ExecutionRecoveryState::kTrackBackup ||
-                            state == ExecutionRecoveryState::kEmergencyBrake;
+  const bool safety_state =
+      state == navigation_execution::ExecutionRecoveryState::kTrackBackup ||
+      state == navigation_execution::ExecutionRecoveryState::kEmergencyBrake;
   return safety_state && command_available && safety_suffix_active;
 }
 
@@ -160,9 +155,9 @@ inline bool watchdogTimeoutMayRetainSafetySuffix(
 // watchdog may retain that hold; the existing stopped-recovery timeout and its
 // failure handling remain the terminal authority.
 inline bool watchdogTimeoutMayRetainStoppedRecoveryHold(
-    ExecutionRecoveryState state, bool command_available,
+    navigation_execution::ExecutionRecoveryState state, bool command_available,
     bool restart_from_rest) noexcept {
-  return state == ExecutionRecoveryState::kStoppedRecovery &&
+  return state == navigation_execution::ExecutionRecoveryState::kStoppedRecovery &&
          command_available && restart_from_rest;
 }
 
@@ -508,7 +503,7 @@ inline bool measuredStateEmergencyMayReplaceCommittedCommand(
     bool validate_without_new_commit, bool committed_suffix_usable,
     bool fresh_vehicle_state, bool committed_command_available,
     bool command_anchor_valid, bool tracking_certificate_exceeded,
-    ExecutionRecoveryState recovery_state,
+    navigation_execution::ExecutionRecoveryState recovery_state,
     navigation_planning::CandidateRole committed_role,
     bool projected_tracking_certificate_exceeded = false,
     bool current_vehicle_state_known_free = false,
@@ -530,7 +525,7 @@ inline bool measuredStateEmergencyMayReplaceCommittedCommand(
          committed_command_available && command_anchor_valid &&
          (actual_anchor_recovery || projected_main_only_recovery ||
           indeterminate_terminal_main_recovery) &&
-         recovery_state == ExecutionRecoveryState::kTrackMain &&
+         recovery_state == navigation_execution::ExecutionRecoveryState::kTrackMain &&
          committed_role != navigation_planning::CandidateRole::kEmergency;
 }
 
@@ -601,9 +596,9 @@ inline bool committedTerminalBundleHoldIsPending(
 // then run PlanFromRest instead of treating the motion as an untransactioned
 // MotionObserved event.
 inline bool backupStopNeedsMeasuredRestart(
-    ExecutionRecoveryState state, bool completion_observed,
+    navigation_execution::ExecutionRecoveryState state, bool completion_observed,
     bool terminal_hold_pending) noexcept {
-  return state == ExecutionRecoveryState::kTrackBackup &&
+  return state == navigation_execution::ExecutionRecoveryState::kTrackBackup &&
          completion_observed && !terminal_hold_pending;
 }
 
@@ -627,10 +622,11 @@ inline bool waypointBehaviorContractValid(
 }
 
 inline bool stoppedPlanningTimeoutMayFailClosed(
-    ExecutionRecoveryState state, bool stationary,
+    navigation_execution::ExecutionRecoveryState state, bool stationary,
     double elapsed_s, double timeout_s) noexcept {
-  const bool stopped_state = state == ExecutionRecoveryState::kInitialHold ||
-                             state == ExecutionRecoveryState::kStoppedRecovery;
+  const bool stopped_state =
+      state == navigation_execution::ExecutionRecoveryState::kInitialHold ||
+      state == navigation_execution::ExecutionRecoveryState::kStoppedRecovery;
   return stopped_state && stationary && std::isfinite(elapsed_s) &&
          std::isfinite(timeout_s) && timeout_s > 0.0 && elapsed_s >= timeout_s;
 }
@@ -965,13 +961,15 @@ inline PhaseExecutionCertificate assessPhaseExecutionCertificate(
 inline bool phaseExecutionBridgeMayPreserveMain(
     bool phase_certificate_accepted, bool committed, bool fresh_vehicle_state,
     bool command_anchor_valid, bool plan_from_rest,
-    ExecutionRecoveryState recovery_state, std::uint64_t state_localization_epoch,
+    navigation_execution::ExecutionRecoveryState recovery_state,
+    std::uint64_t state_localization_epoch,
     std::uint64_t bundle_localization_epoch, bool failure_latched,
     std::int64_t now_ns, std::int64_t valid_until_ns,
     std::int64_t validation_interval_ns) noexcept {
   if (!phase_certificate_accepted || !committed || !fresh_vehicle_state ||
       !command_anchor_valid || plan_from_rest ||
-      recovery_state != ExecutionRecoveryState::kTrackMain || failure_latched ||
+      recovery_state != navigation_execution::ExecutionRecoveryState::kTrackMain ||
+      failure_latched ||
       state_localization_epoch == 0U ||
       state_localization_epoch != bundle_localization_epoch || now_ns <= 0 ||
       valid_until_ns < now_ns || validation_interval_ns <= 0) {

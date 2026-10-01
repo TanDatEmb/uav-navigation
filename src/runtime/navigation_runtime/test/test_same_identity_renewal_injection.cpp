@@ -11,6 +11,8 @@
 #include <navigation_runtime/execution_lifecycle_view.hpp>
 
 namespace navigation_runtime {
+using navigation_execution::ExecutionPhase;
+using navigation_execution::ExecutionRecoveryState;
 namespace {
 
 std::shared_ptr<const navigation_contracts::msg::NavigationGoal> goalFor(
