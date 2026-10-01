@@ -30,7 +30,7 @@ Branch `refactor/W3-B1` sẽ được push để kiến trúc sư review; không
 Lệnh: `git diff origin/main..HEAD -M --color-moved=zebra --color-moved-ws=allow-indentation-change --stat`
 
 ```text
-34 files changed, 103 insertions(+), 50 deletions(-)
+36 files changed, 106 insertions(+), 52 deletions(-)
 Piece header R080; RootFinder header R100; Trajectory header R098
 piece.cpp R099; root_finder.cpp R099; trajectory.cpp R098
 ```
@@ -66,6 +66,7 @@ piece.cpp R099; root_finder.cpp R099; trajectory.cpp R098
 |---|---|
 | `g++ -std=c++20 -Isrc/planning/navigation_planning/include -I/usr/include/eigen3 -fsyntax-only` trên 3 TU mới | PASS; cả `piece.cpp`, `root_finder.cpp`, `trajectory.cpp` exit 0 |
 | Header compile `piece.hpp`/`trajectory.hpp`/`root_finder.hpp` | PASS; exit 0 |
+| Direct syntax compile of `optimization_utils.h` and `kinematic_state_boundary.hpp` with navigation-math closure | PASS after review fix |
 | Old include guard trên `src` (loại trừ provenance JSON) | PASS; không còn match |
 | Forbidden dependency grep trong package mới | PASS; không có match |
 | `git diff --check` | PASS |
@@ -93,15 +94,19 @@ piece.cpp R099; root_finder.cpp R099; trajectory.cpp R098
 | Backend còn dùng include path cũ | FIXED | `fe39ee4` |
 | Piece kéo `rog_map_vendor`/ROS qua type_utils | FIXED trong contract mới; old backend `type_utils.hpp` giữ nguyên closure cho caller cũ | `fe39ee4` |
 | `trajectory.hpp` include `color_msg_utils.hpp` không dùng | FIXED | `fe39ee4` |
+| Backend include/type closure after removing the old trajectory transitive include | FIXED | `f6ce417` |
 | Dependency guard/gate v3 | NOT_FIXED trên baseline hiện tại; chờ A2 merge | — |
 | Release build + affected/reverse CTest | NOT_MEASURED do build lock | — |
 
 ## 8. Commit
 
-`git log --format='%h %s' origin/main..HEAD` ngay sau implementation commit:
+`git log --format='%h %s' origin/main..HEAD` ngay trước remote handoff:
 
 ```text
 fe39ee4 refactor(planning): move polynomial contract into navigation_planning
+efbe539 docs(planning): report W3-B1 move evidence
+aca3347 docs(wave3): record B1 remote handoff
+f6ce417 fix(planning): restore direct type includes
 ```
 
 Branch `refactor/W3-B1` được push để review; không merge. A1/A2 dependency và Release/CTest gate vẫn là điều kiện mở.
