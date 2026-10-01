@@ -439,7 +439,6 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     }
     // A prior owns its sample epoch. If it predates the scan, predict from
     // that exact epoch using the bracketed IMU history.
-    state_time_ = initial_epoch;
     propagation_start = initial_epoch;
   } else {
     if (!state_time_->sameClockDomain(group.propagation_start_time) ||
@@ -497,9 +496,9 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     }
     propagation_start = *state_time_;
   }
-  if (!state_time_.has_value() ||
-      !state_time_->sameClockDomain(propagation_start) ||
-      state_time_->nanoseconds() != propagation_start.nanoseconds()) {
+  if (state_time_.has_value() &&
+      (!state_time_->sameClockDomain(propagation_start) ||
+       state_time_->nanoseconds() != propagation_start.nanoseconds())) {
     result.rejection_reason = "PROPAGATION_START_DOES_NOT_MATCH_STATE_TIME";
     diagnostics_.reason = result.rejection_reason;
     recordUncorrectedUpdate(LidarUpdateFailureClass::kPrediction);
@@ -1650,6 +1649,15 @@ void FastLioPipeline::recordUncorrectedUpdate(
     LidarUpdateFailureClass failure_class) {
   diagnostics_.last_update_failure_class = failure_class;
   if (!tracking_ever_confirmed_) {
+    if (failure_class == LidarUpdateFailureClass::kPrediction &&
+        status_ == EstimatorStatus::kInitializingMap) {
+      ++initial_map_registration_failures_;
+      if (initial_map_registration_failures_ >=
+          config_.lifecycle.maximum_initial_map_registration_failures) {
+        transitionTo(EstimatorStatus::kLost,
+                     "INITIAL_MAP_PREDICTION_FAILURES_EXHAUSTED");
+      }
+    }
     return;
   }
   ++consecutive_uncorrected_lidar_updates_;

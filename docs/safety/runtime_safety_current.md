@@ -485,9 +485,12 @@ These labeled summaries are the only retained record of the legacy decisions.
 
 ### H3.4 / O1-03: final waypoint must be STOP
 
-- Lifecycle: ACTIVE. Implementation: IMPLEMENTED. Evidence: UNIT_VERIFIED. Authority: PRODUCT.
-- Owner/scope: `navigation_mission::Mission` contract and YAML loader; reject a mission whose final waypoint is `pass_through`.
-- Safety impact: prevents terminal acceptance from being represented by a pass-through waypoint; no threshold, lease, UNKNOWN policy, or PX4 boundary changed.
-- Evidence: RED `MissionContract.RejectsPassThroughFinalWaypoint` failed before the guard; GREEN and full package test required after the change.
-- Removal condition: only an owner-approved mission-contract redesign that preserves explicit STOP terminal semantics.
-- Verification: `test_mission_contract`, `python3 tools/validate_runtime_safety_ledger.py`, `git diff --check`.
+- Lifecycle/implementation/evidence/authority: `ACTIVE/IMPLEMENTED/UNIT_VERIFIED/PRODUCT`; owner: `navigation_mission::Mission` contract and YAML loader; scope: reject a final `pass_through` waypoint.
+- Safety/evidence/removal: prevents pass-through terminal acceptance without changing thresholds, leases, UNKNOWN policy, or PX4 boundaries; RED `MissionContract.RejectsPassThroughFinalWaypoint` failed before the guard and GREEN is required; remove only under an owner-approved terminal-contract redesign preserving explicit STOP semantics.
+- Verify: `test_mission_contract`, `python3 tools/validate_runtime_safety_ledger.py`, `git diff --check`.
+
+### H3.2 / R4-12: prediction failure must not commit the estimator epoch
+
+- Lifecycle/implementation/evidence/authority: `ACTIVE/IMPLEMENTED/UNIT_VERIFIED/PRODUCT`; owner: `FastLioPipeline::processInternal`; scope: commit `state_time_` only after successful prediction and count pre-tracking prediction failures against existing `maximum_initial_map_registration_failures`.
+- Safety/evidence/removal: failed prediction cannot advance the trusted epoch or retry unboundedly; no threshold changed; RED showed epoch advance/no lifecycle count and targeted GREEN passes; remove only under an owner-approved transaction redesign preserving fail-closed epoch ownership.
+- Verify: `test_fast_lio_pipeline`, `python3 tools/validate_runtime_safety_ledger.py`, `git diff --check`.

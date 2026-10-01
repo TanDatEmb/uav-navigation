@@ -189,6 +189,48 @@ TEST(FastLioPipelineTest, UsesSynchronizedPropagationStartForFirstGroup) {
             testTimestamp(scan_time_ns).nanoseconds());
 }
 
+TEST(FastLioPipelineTest,
+     PredictionFailureDoesNotCommitStateTimeOrPoisonNextPrediction) {
+  FastLioPipeline pipeline(testConfig());
+  auto failed_group = makeGroup(
+      makePlanarScan(100 * kMillisecondNs), 0,
+      {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
+       stationaryImu(100 * kMillisecondNs)});
+  failed_group.max_imu_gap_ns = 20 * kMillisecondNs;
+
+  const auto failed = pipeline.process(failed_group);
+  EXPECT_EQ(failed.rejection_reason, "Prediction IMU bracket contains an excessive gap");
+  EXPECT_FALSE(pipeline.stateTime().has_value());
+
+  auto valid_group = makeGroup(
+      makePlanarScan(200 * kMillisecondNs), 0,
+      {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
+       stationaryImu(100 * kMillisecondNs), stationaryImu(150 * kMillisecondNs),
+       stationaryImu(200 * kMillisecondNs)});
+  valid_group.max_imu_gap_ns = 200 * kMillisecondNs;
+  const auto recovered = pipeline.process(valid_group);
+  EXPECT_EQ(recovered.rejection_reason, "INITIAL_MAP_REFERENCE_CAPTURED");
+  ASSERT_TRUE(pipeline.stateTime().has_value());
+  EXPECT_EQ(pipeline.stateTime()->nanoseconds(), valid_group.scan.end_time.nanoseconds());
+}
+
+TEST(FastLioPipelineTest,
+     PredictionFailuresBeforeTrackingUseInitialMapFailureLimit) {
+  auto config = testConfig();
+  config.lifecycle.maximum_initial_map_registration_failures = 2U;
+  FastLioPipeline pipeline(config);
+  auto failed_group = makeGroup(
+      makePlanarScan(100 * kMillisecondNs), 0,
+      {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
+       stationaryImu(100 * kMillisecondNs)});
+  failed_group.max_imu_gap_ns = 20 * kMillisecondNs;
+
+  EXPECT_EQ(pipeline.process(failed_group).status_after,
+            EstimatorStatus::kInitializingMap);
+  EXPECT_EQ(pipeline.process(failed_group).status_after,
+            EstimatorStatus::kLost);
+}
+
 TEST(FastLioPipelineTest, RejectsPropagationStartThatDoesNotMatchStateTime) {
   FastLioPipeline pipeline(testConfig());
   ASSERT_EQ(pipeline.process(makeGroup(
