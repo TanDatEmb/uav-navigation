@@ -7,8 +7,8 @@
 - I2 không chạm, giữ `DEFERRED → W3-B5`.
 - Không đổi hành vi, ngưỡng, lease, UNKNOWN policy, authority hay safety ledger.
 - Compile runtime thành công; các CTest package bắt buộc và Python đều PASS.
-- Full build chưa đạt acceptance vì wrapper provenance fail-closed sau build; `make test` có một failure TB-003 không liên quan, CTest lặp package đã PASS.
-- Theo yêu cầu owner: chưa push, chưa mở PR, chưa merge.
+- Full build wrapper chưa đạt acceptance vì provenance fail-closed sau bước build; phần CTest/Python đã được chạy lại trên HEAD này và PASS.
+- Branch đã được push để review; chưa merge.
 
 ## Deliverable và write-set
 
@@ -39,11 +39,11 @@
 | CTest `navigation_runtime` với `-E integration_tests` | PASS: `19/19` |
 | CTest package set với ROS Jazzy sourced: `navigation_execution`, `navigation_mission`, `px4_navigation_external_mode`, `fast_lio_ros`, `navigation_planning_backend` | PASS lần lượt `2/2`, `2/2`, `8/8`, `12/12`, `9/9` |
 | `/usr/bin/python3 -m unittest discover -s tools/runtime/tests -p 'test_*.py' -v` | PASS: Python `3.12.3`, `420 tests`, `1 skipped` |
-| `make test` | NOT PASS: `93 tests`, `1 failure` tại `PlannerFacade.CruiseFutureAnchorDoesNotReturnToUnacceptedPassBoundary` (TB-003/known contract trial); CTest package lặp lại sau đó PASS `9/9` |
+| `make test` | PASS: CTest `16 packages`, `93 tests`, `0 errors, 0 failures`; Python `420 tests`, `1 skipped`; command RC `0` |
 
 ## Deviations, blockers và tiêu chí chưa đạt
 
-- Prompt yêu cầu push/draft PR, nhưng owner yêu cầu rõ `không push/merge`; branch upstream hiện `[gone]`, nên giữ commit local và không tạo PR.
+- Branch upstream cũ đã gone; sau khi hoàn tất evidence, branch `refactor/WP-P0.3` được push lại để review. Không merge.
 - Acceptance “build đủ workspace Release + authoritative manifest” chưa đạt: compile đã đi tới runtime, nhưng build wrapper không tạo manifest do artifact path `libpx4_navigation_external_mode_contract.a` không tồn tại trong target hiện tại. Đây là blocker provenance độc lập với I4.
 - Acceptance “CTest toàn bộ gate ổn định” chưa đóng hoàn toàn vì `make test` có failure TB-003; lần CTest sourced trực tiếp trên package set đều PASS, cần owner/kiến trúc sư quyết định cách xử lý nondeterministic/known trial trước merge.
 - SITL/replay không chạy; đây là refactor namespace/header, không tạo bằng chứng runtime qualification.
@@ -55,9 +55,16 @@ Bảng này lấy ngay trước khi cập nhật REPORT bằng `git log --format
 
 | SHA | Message |
 |---|---|
+| `7a92831` | `docs(p0.3): record W3-A1 evidence` |
 | `0f72686` | `refactor(runtime): qualify execution recovery symbols` |
 | `d7cfe8c` | `docs(p0.3/report): record current baseline evidence` |
 | `68cbfdd` | `docs(p0.3/i5): record frame and timing limitations` |
 | `cbb1ef0` | `refactor(p0.3/i4): remove recovery state shim` |
 | `14c40d1` | `refactor(p0.3/i3): remove unused QoS profiles` |
 | `c9bbd90` | `refactor(p0.3/i1): remove legacy mission controller` |
+
+## Remote handoff
+
+- HEAD: `7a92831`
+- Branch: `refactor/WP-P0.3`
+- Push: completed; no merge performed.
