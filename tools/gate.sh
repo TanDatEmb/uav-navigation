@@ -119,7 +119,18 @@ ros_gate() {
   rm -rf build/px4_ros2_cpp/test_results
   printf '%s\n' 'gate: ros: px4_ros2_cpp CTest is attachment-only (G1) and is skipped from the blocking result'
   colcon test --packages-select "${packages[@]}" --packages-skip px4_ros2_cpp --event-handlers console_direct+
-  colcon test-result --verbose
+  # Blocking result: only the selected packages' own result directories (G1:
+  # px4_ros2_cpp results, stale or fresh, must never enter the verdict).
+  local result_status=0
+  for package_name in "${packages[@]}"; do
+    [[ "$package_name" == px4_ros2_cpp ]] && continue
+    [[ -d "build/$package_name/test_results" ]] || continue
+    colcon test-result --verbose --test-result-base "build/$package_name/test_results" || result_status=1
+  done
+  ((result_status == 0)) || {
+    printf '%s\n' 'gate: ros: blocking CTest results contain failures' >&2
+    return 1
+  }
   if grep -Eq '^px4_ros2_cpp[[:space:]]' <<< "$colcon_list_output"; then
     mkdir -p artifacts/gate
     local px4_log=artifacts/gate/px4_ros2_cpp-ctest.log
