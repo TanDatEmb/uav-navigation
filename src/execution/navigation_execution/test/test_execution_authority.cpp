@@ -190,6 +190,19 @@ TEST(TestExecutionAuthority, EqualNonRetainedAdmissionCannotClearFailureLatch) {
             navigation_execution::ExecutionExposure::kFailed);
 }
 
+TEST(TestExecutionAuthority,
+     EqualRetainedRequestCannotClearFailureLatch) {
+  navigation_execution::ExecutionAuthority store;
+  ASSERT_TRUE(store.setAdmissionGoalEpoch(7));
+  store.failClosed();
+  ASSERT_EQ(store.snapshot().lifecycle.exposure,
+            navigation_execution::ExecutionExposure::kFailed);
+
+  EXPECT_FALSE(store.beginGoal(3, 7, true));
+  EXPECT_EQ(store.snapshot().lifecycle.exposure,
+            navigation_execution::ExecutionExposure::kFailed);
+}
+
 TEST(TestExecutionAuthority, MatchesExactActiveCommandIdentity) {
   navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};

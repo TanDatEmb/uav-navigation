@@ -332,6 +332,38 @@ TEST(FastLioPipelineTest, FailedRegistrationTransitionsToDegradedWithoutMapInser
 }
 
 TEST(FastLioPipelineTest,
+     FailedRecoveryPredictionDoesNotCommitTheSecondEpoch) {
+  auto config = testConfig();
+  config.synchronization.maximum_imu_gap_ns = 20 * kMillisecondNs;
+  FastLioPipeline pipeline(config);
+  static_cast<void>(pipeline.process(makeGroup(
+      makePlanarScan(0), 0,
+      {stationaryImu(-20 * kMillisecondNs), stationaryImu(-10 * kMillisecondNs),
+       stationaryImu(0)})));
+  static_cast<void>(pipeline.process(makeGroup(
+      makePlanarScan(100 * kMillisecondNs), 0,
+      {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
+       stationaryImu(100 * kMillisecondNs)})));
+  const auto failed_registration = pipeline.process(makeGroup(
+      makePlanarScan(200 * kMillisecondNs, 1.0), 100 * kMillisecondNs,
+      {stationaryImu(100 * kMillisecondNs), stationaryImu(150 * kMillisecondNs),
+       stationaryImu(200 * kMillisecondNs)}));
+  ASSERT_EQ(failed_registration.status_after, EstimatorStatus::kDegraded);
+  ASSERT_TRUE(pipeline.stateTime().has_value());
+  const auto committed_epoch = pipeline.stateTime();
+
+  auto failed_recovery = makeGroup(
+      makePlanarScan(400 * kMillisecondNs), 300 * kMillisecondNs,
+      {stationaryImu(300 * kMillisecondNs), stationaryImu(400 * kMillisecondNs)});
+  failed_recovery.max_imu_gap_ns = 20 * kMillisecondNs;
+  const auto rejected = pipeline.process(std::move(failed_recovery));
+
+  EXPECT_EQ(rejected.rejection_reason,
+            "Prediction IMU bracket contains an excessive gap");
+  EXPECT_EQ(pipeline.stateTime(), committed_epoch);
+}
+
+TEST(FastLioPipelineTest,
      ImuDiscontinuityRebasesBothEpochsAndDoesNotRepeatGap) {
   auto config = testConfig();
   config.synchronization.maximum_imu_gap_ns = 20 * kMillisecondNs;

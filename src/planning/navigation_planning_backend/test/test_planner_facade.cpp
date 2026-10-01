@@ -1800,6 +1800,7 @@ TEST(PlannerFacade, RequiresValidImmutableRouteBeforePlanning) {
   second.id = "wp-1";
   second.position_enu = Eigen::Vector3d{10.0, 0.0, 2.0};
   second.acceptance_radius_m = 1.0;
+  second.behavior = navigation_mission::MissionWaypoint::Behavior::Stop;
   mission.waypoints = {first, second};
   navigation_mission::RouteProgress progress(mission);
   ASSERT_TRUE(progress.update(Eigen::Vector3d{1.0, 0.0, 2.0}).valid);
@@ -1838,6 +1839,7 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   navigation_mission::MissionWaypoint terminal;
   terminal.id = "terminal";
   terminal.position_enu = Eigen::Vector3d{0.0, 8.0, 3.0};
+  terminal.behavior = navigation_mission::MissionWaypoint::Behavior::Stop;
   terminal.acceptance_radius_m = 0.5;
   mission.waypoints = {first, second, terminal};
 
