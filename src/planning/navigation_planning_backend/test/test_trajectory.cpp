@@ -2964,7 +2964,7 @@ navigation_mission::ImmutableRouteSnapshot makeStraightActiveRouteSnapshot(
   } else {
     navigation_mission::MissionWaypoint terminal;
     terminal.id = "terminal";
-    terminal.position_enu = active_position;
+    terminal.position_enu = active_position + Eigen::Vector3d{1.0, 0.0, 0.0};
     terminal.acceptance_radius_m = 0.5;
     terminal.behavior = navigation_mission::MissionWaypoint::Behavior::Stop;
     mission.waypoints = {start, active, terminal};
