@@ -7,6 +7,8 @@
 #include <navigation_execution/execution_authority.hpp>
 #include <navigation_runtime/desired_planning_intent.hpp>
 
+#include "execution_authority_test_helpers.hpp"
+
 namespace navigation_runtime {
 namespace {
 
@@ -84,7 +86,7 @@ TEST(DesiredExecutionBoundary,
   auto predecessor = std::make_shared<const CandidateBundle>(
       candidateFor(1U, predecessor_goal.request_id, world));
   ASSERT_TRUE(predecessor->valid());
-  ASSERT_EQ(authority.tryCommit(
+  ASSERT_EQ(test::commitProductForTest(authority,
                 CommitToken{world, 1U, 1U}, immutableGoal(predecessor_goal), predecessor),
             CommitDecision::kCommitted);
 
@@ -113,7 +115,7 @@ TEST(DesiredExecutionBoundary,
   const auto before_stale_result = authority.snapshot();
   auto stale_candidate = std::make_shared<const CandidateBundle>(
       candidateFor(1U, predecessor_goal.request_id, world));
-  EXPECT_EQ(authority.tryCommit(
+  EXPECT_EQ(test::commitProductForTest(authority,
                 CommitToken{world, 1U, 2U}, immutableGoal(predecessor_goal), stale_candidate),
             CommitDecision::kGoalAdvanced);
   const auto after_stale_result = authority.snapshot();

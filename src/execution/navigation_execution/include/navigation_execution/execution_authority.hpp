@@ -597,64 +597,6 @@ class ExecutionAuthority {
     return StageDecision::kStaged;
   }
 
-  template <typename FinalizeFn>
-  StageDecision stagePendingAndFinalize(
-      const CommitToken& expected, const ExecutionAnchor& anchor,
-      std::shared_ptr<const navigation_contracts::msg::NavigationGoal> goal,
-      std::shared_ptr<const navigation_planning::CandidateBundle> candidate,
-      FinalizeFn&& finalize) noexcept {
-    std::lock_guard lock(mutex_);
-    if (!goalMatchesCandidate(goal, candidate) || !candidate->valid() || expected.goal_epoch == 0U ||
-        expected.transaction_id == 0U) return StageDecision::kInvalidCandidate;
-    if (!anchor.valid() || candidate->valid_from_ns != anchor.activation_stamp_ns ||
-        candidate->activation_stamp_ns != anchor.activation_stamp_ns ||
-        candidate->localization_epoch != anchor.localization_epoch ||
-        !navigation_world_model::sameWorldSnapshotIdentity(
-            candidate->world_identity, expected.world_identity)) {
-      return StageDecision::kInvalidAnchor;
-    }
-    if (admission_goal_epoch_ == 0U) return StageDecision::kNoActiveGoal;
-    if (lifecycle_.exposure == ExecutionExposure::kFailed) return StageDecision::kCancelled;
-    if (admission_goal_epoch_ != expected.goal_epoch ||
-        candidate->goal_epoch != expected.goal_epoch) return StageDecision::kGoalAdvanced;
-    if (!world_identity_ ||
-        !navigation_world_model::sameWorldSnapshotIdentity(
-            *world_identity_, expected.world_identity)) return StageDecision::kWorldAdvanced;
-    if (expected.transaction_id <= last_transaction_id_) return StageDecision::kCancelled;
-    if (anchor.active_main_end_ns < anchor.activation_stamp_ns ||
-        candidate->valid_until_ns < anchor.activation_stamp_ns) {
-      return StageDecision::kActivationTooLate;
-    }
-    if (active_lineage_version_ != anchor.execution_lineage_version || !active_.bundle ||
-        !predecessorMatchesAnchor(*active_.bundle, anchor)) {
-      return StageDecision::kPredecessorAdvanced;
-    }
-    const auto previous_pending_goal = staged_.goal;
-    const auto previous_pending = staged_.bundle;
-    const auto previous_pending_activation = staged_.activation_ns;
-    const auto previous_transaction_id = last_transaction_id_;
-    staged_.goal = std::move(goal);
-    staged_.bundle = std::move(candidate);
-    staged_.activation_ns = anchor.activation_stamp_ns;
-    last_transaction_id_ = expected.transaction_id;
-    ++timeline_version_;
-    bool finalized = false;
-    try {
-      finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)());
-    } catch (...) {
-      finalized = false;
-    }
-    if (!finalized) {
-      staged_.goal = previous_pending_goal;
-      staged_.bundle = previous_pending;
-      staged_.activation_ns = previous_pending_activation;
-      last_transaction_id_ = previous_transaction_id;
-      ++timeline_version_;
-      return StageDecision::kFinalizationFailed;
-    }
-    return StageDecision::kStaged;
-  }
-
   // The command timer calls this operation before sampling. No callback or
   // planner code can replace active outside this single atomic boundary.
   // The exact timeline snapshot is a transaction token. Its version,
@@ -732,51 +674,6 @@ class ExecutionAuthority {
     return true;
   }
 
-  CommitDecision tryCommit(
-      const CommitToken& expected,
-      std::shared_ptr<const navigation_contracts::msg::NavigationGoal> goal,
-      std::shared_ptr<const navigation_planning::CandidateBundle> candidate) noexcept {
-    if (!goalMatchesCandidate(goal, candidate) || !candidate->valid() || expected.goal_epoch == 0 ||
-        expected.transaction_id == 0) {
-      return CommitDecision::kInvalidCandidate;
-    }
-    std::lock_guard lock(mutex_);
-    if (admission_goal_epoch_ == 0) return CommitDecision::kNoActiveGoal;
-    if (lifecycle_.exposure == ExecutionExposure::kFailed) return CommitDecision::kCancelled;
-    if (admission_goal_epoch_ != expected.goal_epoch ||
-        candidate->goal_epoch != expected.goal_epoch) {
-      return CommitDecision::kGoalAdvanced;
-    }
-    if (!world_identity_ ||
-        !navigation_world_model::sameWorldSnapshotIdentity(
-            *world_identity_, expected.world_identity) ||
-        !navigation_world_model::sameWorldSnapshotIdentity(
-            *world_identity_, candidate->world_identity)) {
-      return CommitDecision::kWorldAdvanced;
-    }
-    if (expected.transaction_id <= last_transaction_id_) {
-      return CommitDecision::kCancelled;
-    }
-    // Planner generations are monotonic. A late result may never replace the
-    // active record with an older generation using a newer queue ID. Exact
-    // same-generation identity-preserving replacements remain legal.
-    if (active_.bundle &&
-        candidate->bundle_generation < active_.bundle->bundle_generation) {
-      return CommitDecision::kPredecessorAdvanced;
-    }
-    const auto prior_generation = active_.bundle
-        ? active_.bundle->bundle_generation : 0U;
-    active_.goal = std::move(goal);
-    active_.bundle = std::move(candidate);
-    committedLifecycleLocked(*active_.bundle, prior_generation);
-    ++active_lineage_version_;
-    clearStagedLocked();
-    staged_.activation_ns = 0;
-    last_transaction_id_ = expected.transaction_id;
-    ++timeline_version_;
-    return CommitDecision::kCommitted;
-  }
-
   // An immediate replacement prepared outside the store lock may depend on
   // both an exact predecessor and a phase/deadline that can expire while it
   // waits. Check both at the cutover, before any mutation. Unlike a rollback
@@ -845,82 +742,6 @@ class ExecutionAuthority {
     staged_.activation_ns = 0;
     last_transaction_id_ = expected.transaction_id;
     ++timeline_version_;
-    return CommitDecision::kCommitted;
-  }
-
-  // Commit the execution candidate and run the planner-history finalizer as
-  // one rollback-safe transaction.  The execution pointer remains the sole
-  // authority: if the cache/history update fails, restore the exact previous
-  // pointer and transaction watermark instead of invalidating a command that
-  // was already accepted for execution.
-  template <typename FinalizeFn>
-  CommitDecision tryCommitAndFinalize(
-      const CommitToken& expected,
-      std::shared_ptr<const navigation_contracts::msg::NavigationGoal> goal,
-      std::shared_ptr<const navigation_planning::CandidateBundle> candidate,
-      FinalizeFn&& finalize) noexcept {
-    if (!goalMatchesCandidate(goal, candidate) || !candidate->valid() || expected.goal_epoch == 0 ||
-        expected.transaction_id == 0) {
-      return CommitDecision::kInvalidCandidate;
-    }
-    std::lock_guard lock(mutex_);
-    if (admission_goal_epoch_ == 0) return CommitDecision::kNoActiveGoal;
-    if (lifecycle_.exposure == ExecutionExposure::kFailed) return CommitDecision::kCancelled;
-    if (admission_goal_epoch_ != expected.goal_epoch ||
-        candidate->goal_epoch != expected.goal_epoch) {
-      return CommitDecision::kGoalAdvanced;
-    }
-    if (!world_identity_ ||
-        !navigation_world_model::sameWorldSnapshotIdentity(
-            *world_identity_, expected.world_identity) ||
-        !navigation_world_model::sameWorldSnapshotIdentity(
-            *world_identity_, candidate->world_identity)) {
-      return CommitDecision::kWorldAdvanced;
-    }
-    if (expected.transaction_id <= last_transaction_id_) {
-      return CommitDecision::kCancelled;
-    }
-    // Planner generations are monotonic. A late result may never replace the
-    // active record with an older generation using a newer queue ID. Exact
-    // same-generation identity-preserving replacements remain legal.
-    if (active_.bundle &&
-        candidate->bundle_generation < active_.bundle->bundle_generation) {
-      return CommitDecision::kPredecessorAdvanced;
-    }
-
-    const auto previous_lifecycle = lifecycle_;
-    const auto previous_goal = active_.goal;
-    const auto previous = active_.bundle;
-    const auto previous_pending_goal = staged_.goal;
-    const auto previous_pending = staged_.bundle;
-    const auto previous_pending_activation = staged_.activation_ns;
-    const auto previous_transaction_id = last_transaction_id_;
-    active_.goal = std::move(goal);
-    active_.bundle = std::move(candidate);
-    committedLifecycleLocked(
-        *active_.bundle, previous ? previous->bundle_generation : 0U);
-    clearStagedLocked();
-    staged_.activation_ns = 0;
-    last_transaction_id_ = expected.transaction_id;
-    ++timeline_version_;
-    bool finalized = false;
-    try {
-      finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)());
-    } catch (...) {
-      finalized = false;
-    }
-    if (!finalized) {
-      lifecycle_ = previous_lifecycle;
-      active_.goal = previous_goal;
-      active_.bundle = previous;
-      staged_.goal = previous_pending_goal;
-      staged_.bundle = previous_pending;
-      staged_.activation_ns = previous_pending_activation;
-      last_transaction_id_ = previous_transaction_id;
-      ++timeline_version_;
-      return CommitDecision::kFinalizationFailed;
-    }
-    ++active_lineage_version_;
     return CommitDecision::kCommitted;
   }
 

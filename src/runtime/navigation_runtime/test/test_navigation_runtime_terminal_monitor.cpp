@@ -22,6 +22,8 @@
 
 #include "navigation_runtime/navigation_runtime_node.hpp"
 
+#include "execution_authority_test_helpers.hpp"
+
 namespace navigation_runtime {
 using navigation_execution::ExecutionRecoveryState;
 
@@ -139,7 +141,7 @@ class NavigationRuntimeTerminalMonitorTestPeer {
             candidate.localization_epoch, candidate.goal_epoch, false)) return false;
     const auto command = std::make_shared<const navigation_planning::CandidateBundle>(
         std::move(candidate));
-    if (node.execution_authority_.tryCommit(
+    if (test::commitProductForTest(node.execution_authority_,
             {identity, command->goal_epoch, 1U},
             std::make_shared<const navigation_contracts::msg::NavigationGoal>(goal),
             command) !=
