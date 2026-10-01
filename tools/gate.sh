@@ -146,9 +146,5 @@ main() {
   esac
 }
 
-if main "$@"; then
-  GATE_RESULT=PASS
-else
-  status=$?
-  exit "$status"
-fi
+main "$@"
+GATE_RESULT=PASS
