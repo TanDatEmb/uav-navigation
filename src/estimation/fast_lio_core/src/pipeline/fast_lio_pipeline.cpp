@@ -411,6 +411,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   }
 
   Timestamp propagation_start = group.propagation_start_time;
+  bool propagation_start_rebased = false;
   if (!state_time_.has_value()) {
     const bool configured_prior_owns_epoch =
         config_.initial_prior.source != InitialStatePriorSource::kZero &&
@@ -485,6 +486,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
         return finalizeResult(std::move(result));
       }
       estimator_.rebase(state_, covariance_);
+      propagation_start_rebased = true;
       ++diagnostics_.propagation_discontinuity_count;
       diagnostics_.last_propagation_gap_ns =
           propagation_gap.value().nanoseconds();
@@ -492,9 +494,11 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       recordUncorrectedUpdate(
           LidarUpdateFailureClass::kPropagationDiscontinuity);
     }
-    propagation_start = *state_time_;
+    propagation_start = propagation_start_rebased
+                            ? group.propagation_start_time
+                            : *state_time_;
   }
-  if (state_time_.has_value() &&
+  if (!propagation_start_rebased && state_time_.has_value() &&
       (!state_time_->sameClockDomain(propagation_start) ||
        state_time_->nanoseconds() != propagation_start.nanoseconds())) {
     result.rejection_reason = "PROPAGATION_START_DOES_NOT_MATCH_STATE_TIME";
