@@ -58,6 +58,7 @@ Không giết hoặc chạy song song build dùng chung.
 | `42b4c18` | `docs: report W3-B6 package gate` |
 | `7954be0` | `docs(wave3): record B6 remote handoff` |
 | `711895d` | `docs(wave3): qualify B6 gate evidence` |
+| `cb962f3` | `docs(wave3): complete B6 commit inventory` |
 
 ## Open questions
 
