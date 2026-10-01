@@ -12,9 +12,15 @@
 #include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_planning/planner_status.hpp>
 #include <navigation_planning/planning_timing.hpp>
-#include "navigation_runtime/execution_recovery_state.hpp"
+#include <navigation_execution/execution_recovery_state.hpp>
 
 namespace navigation_runtime {
+
+using navigation_execution::ExecutionRecoveryEvent;
+using navigation_execution::ExecutionRecoveryState;
+using navigation_execution::executionRecoveryStateKnown;
+using navigation_execution::nominalPlanningAllowed;
+using navigation_execution::transitionExecutionRecovery;
 
 // Small sole-owner model for the runtime's single pending request. It makes
 // callback/handoff interleavings explicit: enqueue, snapshot and consume are
@@ -602,7 +608,7 @@ inline bool backupStopNeedsMeasuredRestart(
 }
 
 // Once a finite PASS_THROUGH command has reached its declared endpoint, the
-// planner must continue from measured state while MissionController completes
+// planner must continue from measured state while MissionProgress completes
 // the measured waypoint handoff.  STOP remains terminal and a frontier
 // trajectory follows the existing non-goal completion path.
 inline bool completedPassThroughRequiresContinuation(

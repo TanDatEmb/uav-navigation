@@ -40,7 +40,7 @@
 #include "navigation_runtime/runtime_boundaries.hpp"
 #include "navigation_runtime/baseline_refinement.hpp"
 #include "navigation_runtime/same_identity_renewal_injection.hpp"
-#include "navigation_runtime/execution_recovery_state.hpp"
+#include <navigation_execution/execution_recovery_state.hpp>
 #include "navigation_runtime/execution_lifecycle_view.hpp"
 #include "navigation_runtime/trajectory_completion.hpp"
 #include "navigation_runtime/planning_worker.hpp"

@@ -4,9 +4,11 @@
 
 #include <navigation_execution/execution_authority.hpp>
 #include <navigation_runtime/execution_lifecycle_view.hpp>
-#include <navigation_runtime/execution_recovery_state.hpp>
+#include <navigation_execution/execution_recovery_state.hpp>
 
 namespace navigation_runtime {
+
+using navigation_execution::ExecutionRecoveryEvent;
 
 // Test fixture whose every transition reaches the product
 // ExecutionAuthority; it has no second mutable lifecycle.
