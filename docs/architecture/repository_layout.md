@@ -1,5 +1,3 @@
-> Historical design note. Authority: `docs/refactor/kb/` + ADR-017/018. Không dùng làm spec.
-
 # Repository layout
 
 The active source tree is organized by product ownership. Third-party source

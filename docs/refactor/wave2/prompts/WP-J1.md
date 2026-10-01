@@ -45,4 +45,4 @@ Mỗi commit judge-behavior ghi một entry vào `docs/safety/runtime_safety_cur
 - REPORT có `verdicts_baseline.csv` và bảng diff sau từng commit. Mọi thay đổi đều được giải thích bằng finding ID.
 - Commit refactor (J1.10–J1.12) có diff verdict **rỗng**.
 
-(Áp dụng `COMMON_CONTRACT_v2.md`.)
+(Áp dụng `../../wave3/COMMON_CONTRACT_v3.md`.)

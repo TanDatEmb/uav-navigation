@@ -1,5 +1,3 @@
-> Historical design note. Authority: `docs/refactor/kb/` + ADR-017/018. Không dùng làm spec.
-
 # Immutable world snapshot representation decision
 
 ## Scope

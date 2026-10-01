@@ -94,4 +94,4 @@ Mỗi commit phải có đủ ba thứ: test RED, ledger entry, và witness sau 
   - REPORT dán dòng witness của từng process, chạy bằng launch hoặc bằng test node có param thật.
 - **PR-B:** mỗi commit có RED → GREEN; `mismatches=[]`. Có một run SITL smoke nếu máy có PX4 SITL; nếu không có thì ghi `NOT_EVALUABLE` và PR giữ draft.
 
-(Áp dụng `COMMON_CONTRACT_v2.md`.)
+(Áp dụng `../../wave3/COMMON_CONTRACT_v3.md`.)

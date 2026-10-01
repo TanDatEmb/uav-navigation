@@ -1,6 +1,6 @@
 # A1 — Bản đồ sở hữu module: hiện tại → đích
 
-Baseline `main @ 7e0b850`. Tài liệu này ở **mức kiến trúc**: chỉ quyết định cho các symbol **đổi module** (MOVE / SPLIT / DELETE). Code nằm yên trong module của nó thì chỉ ghi ở mức package. Inventory đủ 801 symbol là của WP-A1-R1 (`docs/refactor/WP-A1/class_inventory.csv`, đã kiểm lại: coverage PASS, semantic checker PASS, oracle `MissionController → DELETE` đúng). Khi file đó mâu thuẫn với tài liệu này, **tài liệu này thắng**, và file inventory phải được sửa lại.
+Baseline `main @ 7e0b850`. Tài liệu này ở **mức kiến trúc**: chỉ quyết định cho các symbol **đổi module** (MOVE / SPLIT / DELETE). Code nằm yên trong module của nó thì chỉ ghi ở mức package. Inventory đủ 801 symbol là bản đã chốt trong `432dc94:docs/refactor/WP-A1/class_inventory.csv` (đã kiểm lại: coverage PASS, semantic checker PASS, oracle `MissionController → DELETE` đúng). Khi file đó mâu thuẫn với tài liệu này, **tài liệu này thắng**, và file inventory phải được sửa lại.
 
 ## 1. Mức package: giữ nguyên
 

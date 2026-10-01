@@ -67,4 +67,4 @@ Chia 2 PR:
   - một bag SITL (nếu có) chứa msg typed với sequence không gap; không có SITL thì dùng bag tổng hợp từ test node.
 - **PR-B:** bảng parity theo từng bag và từng trục.
 
-(Áp dụng `COMMON_CONTRACT_v2.md`.)
+(Áp dụng `../../wave3/COMMON_CONTRACT_v3.md`.)

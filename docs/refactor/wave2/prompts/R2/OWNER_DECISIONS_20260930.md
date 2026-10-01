@@ -2,7 +2,7 @@
 
 **Hiệu lực:** có hiệu lực từ khi chủ dự án giao prompt R2 cho agent. File nằm trực tiếp trong thư mục dự án trên máy (không qua git/PR). Agent coi các mục dưới là quyết định có thẩm quyền và trích dẫn tự đủ theo `00_README.md` mục 0: `owner decision 2026-09-30 <ID>: <nội dung>`. Mục nào chủ dự án sửa trong file này thì theo bản sửa.
 
-Nguồn phân tích: `docs/refactor/wave2/DISPOSITION_R1.md` §3.
+Nguồn phân tích lịch sử đã được tiêu thụ; các quyết định dưới đây là authority tự đủ cho R2.
 
 | ID | Quyết định | WP thực hiện |
 |---|---|---|
