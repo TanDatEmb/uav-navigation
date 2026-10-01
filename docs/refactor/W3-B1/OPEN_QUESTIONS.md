@@ -12,7 +12,8 @@
 
 ## OQ-03 — build/CTest evidence
 
-- Trạng thái: build Release CONFIRMED; `make test` và `tools/gate.sh ros` chỉ đóng sau khi lock `/tmp/uavnav-build.lock` rảnh và lệnh trả exit 0.
+- Trạng thái: build Release và `make test` CONFIRMED; ROS gate đã chạy nhưng FAIL, không tự quy đổi thành PASS.
+- Bằng chứng ROS gate: `1483 tests, 0 errors, 5 failures, 0 skipped`, `GATE_V3_RESULT=FAIL`. 5 failure thuộc attachment-only dependency checks của `px4_ros2_cpp` (cpplint/uncrustify); các test XML của W3-B1 không có suite failure.
 - Quy tắc chạy: mọi ROS build/test dùng `flock /tmp/uavnav-build.lock` với `PARALLEL_WORKERS=2 MAKE_JOBS=2`.
 
 ## OQ-04 — legacy lineage
