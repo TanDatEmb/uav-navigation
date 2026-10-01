@@ -79,6 +79,46 @@ class DependencyDirectionTests(unittest.TestCase):
             [("navigation_certifier", "certifier", "rclcpp")],
         )
 
+    def test_diagnostics_subscription_is_allowlisted_with_adr021_owner(self) -> None:
+        root = self.write_fixture(
+            "px4_odometry_bridge",
+            "<package><name>px4_odometry_bridge</name></package>",
+        )
+        source = root / "src" / "px4_odometry_bridge" / "src" / "bridge.cpp"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            'auto sub = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(\n'
+            '  "/lio/diagnostics", qos, callback);\n',
+            encoding="utf-8",
+        )
+        violations = guard.find_violations(root)
+        self.assertEqual(
+            [(v.kind, v.package, v.dependency) for v in violations],
+            [("topic", "px4_odometry_bridge", "/lio/diagnostics")],
+        )
+        self.assertEqual(
+            guard.ALLOWED_VIOLATIONS[guard._key(violations[0])],
+            {"finding": "V5/O1-02", "wp": "P6"},
+        )
+
+    def test_navigation_evidence_subscription_is_rejected(self) -> None:
+        root = self.write_fixture(
+            "navigation_runtime",
+            "<package><name>navigation_runtime</name></package>",
+        )
+        source = root / "src" / "navigation_runtime" / "src" / "runtime.cpp"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            'auto sub = create_subscription<navigation_evidence::msg::Record>(\n'
+            '  "/navigation_evidence/record", qos, callback);\n',
+            encoding="utf-8",
+        )
+        violations = guard.find_violations(root)
+        self.assertEqual(
+            [(v.kind, v.package, v.dependency) for v in violations],
+            [("topic", "navigation_runtime", "/navigation_evidence/record")],
+        )
+
     def test_sitl_harness_is_only_allowed_from_runtime(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="dependency-guard-"))
         for package_name, dependency in (

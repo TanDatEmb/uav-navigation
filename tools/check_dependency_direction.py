@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Check the closed dependency-direction rules for the Wave 3 baseline.
 
-The guard reads package.xml and CMake text only; it does not require ROS.  A
-known B3 violation is still printed as a warning with its removal WP.  Any
-new violation fails closed.
+The guard reads package.xml, CMake, and product source text only; it does not
+require ROS. Known B3/ADR-021 violations are printed as warnings with their
+removal WP. Any new violation fails closed.
 """
 
 from __future__ import annotations
@@ -58,6 +58,10 @@ ALLOWED_VIOLATIONS: dict[tuple[str, str, str | None, str], dict[str, str]] = {
         "finding": "A1",
         "wp": "W3-B3",
     },
+    ("topic", "px4_odometry_bridge", None, "/lio/diagnostics"): {
+        "finding": "V5/O1-02",
+        "wp": "P6",
+    },
 }
 
 
@@ -77,6 +81,7 @@ class PackageInfo:
     path: Path
     manifest_dependencies: set[str] = field(default_factory=set)
     cmake_uses: list[DependencyUse] = field(default_factory=list)
+    topic_subscriptions: list[DependencyUse] = field(default_factory=list)
 
 
 def _line_number(text: str, offset: int) -> int:
@@ -176,6 +181,85 @@ def _cmake_calls(text: str):
                 )
 
 
+def _source_topic_subscriptions(text: str):
+    """Yield literal topics passed to product create_subscription calls."""
+    call_re = re.compile(r"\bcreate_subscription\s*<")
+    for match in call_re.finditer(text):
+        quote = False
+        comment = False
+        escaped = False
+        for character in text[:match.start()]:
+            if comment:
+                if character == "\n":
+                    comment = False
+                continue
+            if quote:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    quote = False
+                continue
+            if character == "#":
+                comment = True
+            elif character == '"':
+                quote = True
+        if comment or quote:
+            continue
+
+        open_index = text.find("(", match.end())
+        if open_index < 0:
+            continue
+        depth = 0
+        comment = False
+        escaped = False
+        index = open_index
+        while index < len(text):
+            character = text[index]
+            if comment:
+                if character == "\n":
+                    comment = False
+                index += 1
+                continue
+            if character == "#":
+                comment = True
+                index += 1
+                continue
+            if character == "(":
+                depth += 1
+                index += 1
+                continue
+            if character == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+                index += 1
+                continue
+            if character == '"':
+                start = index + 1
+                index += 1
+                escaped = False
+                while index < len(text):
+                    if escaped:
+                        escaped = False
+                    elif text[index] == "\\":
+                        escaped = True
+                    elif text[index] == '"':
+                        yield text[start:index], match.start()
+                        break
+                    index += 1
+                break
+            index += 1
+
+
+def _forbidden_topic(topic: str) -> bool:
+    normalized = topic.strip()
+    return normalized == "diagnostics" or normalized.endswith("/diagnostics") or re.search(
+        r"(?:^|/)navigation_evidence/", normalized
+    ) is not None
+
+
 def collect_packages(root: Path = ROOT) -> list[PackageInfo]:
     rows: list[PackageInfo] = []
     for manifest in sorted(root.glob("src/**/package.xml")):
@@ -208,6 +292,26 @@ def collect_packages(root: Path = ROOT) -> list[PackageInfo]:
                         kind=match.group("kind"),
                     )
                 )
+        for source in sorted(row.path.rglob("*")):
+            if (
+                not source.is_file()
+                or source.suffix not in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
+                or any(part in {"test", "tests"} for part in source.relative_to(row.path).parts)
+            ):
+                continue
+            source_text = source.read_text(encoding="utf-8")
+            for topic, offset in _source_topic_subscriptions(source_text):
+                if _forbidden_topic(topic):
+                    row.topic_subscriptions.append(
+                        DependencyUse(
+                            package=row.name,
+                            target=None,
+                            dependency=topic,
+                            source=source,
+                            line=_line_number(source_text, offset),
+                            kind="topic",
+                        )
+                    )
     return rows
 
 
@@ -249,11 +353,12 @@ def find_violations(root: Path = ROOT) -> list[DependencyUse]:
                 and use.dependency == "navigation_sitl_harness"
             ):
                 violations.append(use)
+        violations.extend(row.topic_subscriptions)
     return violations
 
 
 def _key(use: DependencyUse) -> tuple[str, str, str | None, str]:
-    source_kind = "package" if use.target is None else "cmake"
+    source_kind = use.kind if use.kind == "topic" else ("package" if use.target is None else "cmake")
     return source_kind, use.package, use.target, use.dependency
 
 
@@ -268,8 +373,8 @@ def main() -> int:
         if exception:
             allowed += 1
             print(
-                "DEPENDENCY_DIRECTION: WARNING "
-                f"allowed B3 violation {use.package} -> {use.dependency} "
+                "DEPENDENCY_DIRECTION: WARNING allowed exception "
+                f"{use.package} -> {use.dependency} "
                 f"({location}, target={use.target or 'manifest'}; "
                 f"finding={exception['finding']}, remove_in={exception['wp']})"
             )
