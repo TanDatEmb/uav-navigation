@@ -1,3 +1,5 @@
+> Historical design note. Authority: `docs/refactor/kb/` + ADR-017/018. Không dùng làm spec.
+
 # Px4TrackingAdapter — thiết kế Level A cho PX4 1.17
 
 Ngày: 2026-09-09. Trạng thái: DESIGN REVIEW, chưa triển khai adapter,

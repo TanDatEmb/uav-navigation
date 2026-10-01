@@ -122,7 +122,15 @@ def source_fingerprint(root: Path) -> dict[str, Any]:
         if len(fields) < 2:
             continue
         relative = fields[1]
-        subroot = root / relative
+        subroot = (root / relative).resolve()
+        try:
+            submodule_root = Path(
+                _git(subroot, "rev-parse", "--show-toplevel")
+            ).resolve()
+        except RuntimeError as error:
+            raise RuntimeError(f"submodule {relative} not initialized") from error
+        if submodule_root != subroot:
+            raise RuntimeError(f"submodule {relative} not initialized")
         sub_source = source_fingerprint(subroot)
         record = {
             "path": relative,

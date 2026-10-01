@@ -85,7 +85,7 @@ Cách áp dụng:
 | D1 | Một tài liệu kiến trúc hiện hành duy nhất (KB này và `design/`). Báo cáo lịch sử chuyển sang `docs/history/`. Tài liệu contract phải có test đối chiếu với code (tên symbol, topic) | doc-lint script | D-02, D-04 |
 | D2 | Mỗi thay đổi kiến trúc có ADR; mỗi thay đổi behavior có ledger entry và evidence | PR template | AGENTS.md |
 | Q1 | Refactor và behavior change nằm ở commit riêng; không tune từ một run SITL | PR review | AGENTS.md |
-| Q2 | Merge khi `make ci-local` pass trên đúng head SHA (trong lúc CI hosted bị khoá) | PR checklist | D9 |
+| Q2 | Merge khi `tools/gate.sh all` PASS trên đúng head SHA (ADR-018 E3) | PR checklist | D9 |
 
 ## J. Chống over-engineering
 | ID | Quy tắc |

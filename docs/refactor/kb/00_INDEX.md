@@ -43,5 +43,5 @@ Bộ tài liệu này gom toàn bộ tri thức về hệ thống hiện tại. 
 
 ## Liên kết với các tài liệu trước
 - `ARCHITECTURE_REVIEW.md` (RC1–RC6, V1–V7), `risk_register_20260928.md` (R-01..R-11).
-- `design/A1`–`A5`, `adr/ADR-013`..`ADR-017`.
+- `design/A1`–`A5`, `adr/ADR-013`..`ADR-021`.
 - Review này bổ sung **RC7** (đại lượng lệch thời điểm hoặc lệch frame) và **RC8** (latch không có đường thoát). Hai root cause này được ghi trong `01` §5.

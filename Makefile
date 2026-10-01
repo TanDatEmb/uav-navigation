@@ -36,7 +36,7 @@ MANUAL_TAKEOFF_ARG = $(if $(filter 1 true yes,$(MANUAL_TAKEOFF)),--manual-takeof
 SPEED_CAP_MPS_ARG = $(if $(strip $(SPEED_CAP_MPS)),--speed-cap-mps $(SPEED_CAP_MPS),)
 TRACKING_EXPERIMENT_MODE_ARG = --tracking-experiment-mode $(TRACKING_EXPERIMENT_MODE)
 
-.PHONY: help setup build test replay dataset-check sim-check run run-gui external-mode-check external-mode-gui external-mode sim status stop clean
+.PHONY: help setup build test gate replay dataset-check sim-check run run-gui external-mode-check external-mode-gui external-mode sim status stop clean
 
 help:
 	@echo "uav-navigation runtime commands"
@@ -44,6 +44,7 @@ help:
 	@echo "  make build                                 static ROS build; no runtime data required"
 	@echo "  BUILD_PX4_ROS2_EXAMPLES=1 make build       include upstream PX4 ROS 2 examples (default: off)"
 	@echo "  make test                                  unit/integration tests; not a runtime verdict"
+	@echo "  make gate                                  Wave 3 static/python/ROS gate (gate.sh all)"
 	@echo "  make replay DATASET=<name> RATE=1.0       dataset replay alias; always launches RViz"
 	@echo "  make dataset-check DATASET=<name> RATE=1.0 full dataset + bounded shadow planning; PX4 not required"
 	@echo "  DATASET_SHADOW_GOAL_M=0 make dataset-check ...  mapping-only replay without a synthetic goal"
@@ -79,6 +80,9 @@ test:
 	@$(ROS_ENV) $(BUILD_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/build.py check
 	@$(CANONICAL_PYTHON_ENV) $(PYTHON) -m unittest discover -s tools/tests -p 'test_*.py' -v
 	@$(CANONICAL_PYTHON_ENV) $(PYTHON) -m unittest discover -s tools/runtime/tests -p 'test_*.py' -v
+
+gate:
+	@$(CANONICAL_PYTHON_ENV) tools/gate.sh all
 
 replay:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
