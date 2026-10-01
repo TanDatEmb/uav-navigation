@@ -61,7 +61,8 @@ legacy sessions remain evidence-limited and do not establish qualification.
   docs/benchmark/rejudge CSV hunks were not copied or committed.
 - J1b.2 and J1b.4 were not changed; both are assigned to W3-F1/ADR-019.
 - No threshold, frame conversion, C++ waypoint mirror, `src/`, `config/`,
-  `Makefile`, push, or merge was performed.
+  `Makefile`, or merge was performed. Branch `refactor/W3-A4` is pushed for
+  architecture review; no merge was performed.
 
 ## Findings
 
@@ -85,5 +86,4 @@ this report.
 | `506222c` | `fix(runtime-tools): scope tracking stats to evaluation window` |
 | `78bde4e` | `fix(runtime-tools): mark tracking metrics diagnostic` |
 
-Branch is intentionally not pushed and no PR/merge was created, per task
-instruction.
+Branch is pushed as `refactor/W3-A4`; no merge was created.
