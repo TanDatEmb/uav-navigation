@@ -2347,7 +2347,7 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
         metrics[name]["coverage_reason"] = coverage_reason
         metrics[name]["status"] = "AVAILABLE" if matched else "NOT_EVALUABLE"
         metrics[name]["matched_sample_ratio"] = (
-            matched / len(reference) if reference else None
+            matched / len(evaluation_reference) if evaluation_reference else None
         )
         metrics[name]["qualification_checks"] = {
             "source_time_valid": source_time_valid,
