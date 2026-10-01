@@ -23,6 +23,7 @@ from planner_trace import (
     planner_trace_summary,
 )
 from stats import percentile as _percentile
+from tracking_diagnostics import annotate_tracking_metrics
 
 
 def _load(path: Path, default: Any) -> Any:
@@ -1340,6 +1341,7 @@ def _analyze(session: Path) -> dict[str, Any]:
         len(waypoints),
         metrics["tracking"]["cross_track_error_m"].get("p95"),
     )
+    annotate_tracking_metrics(metrics)
     return {
         "metrics": metrics,
         "waypoints": waypoints,

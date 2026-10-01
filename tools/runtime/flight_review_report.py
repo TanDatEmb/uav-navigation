@@ -1065,9 +1065,6 @@ def _evaluation(
         and any("unavailable" in str(reason).lower() for reason in waypoint_reasons)
     ):
         waypoint_condition = None
-    cross_condition = (
-        None if cross_p95 is None or cross_limit is None else cross_p95 <= cross_limit
-    )
     collision_condition = None if collision_count is None else collision_count == 0.0
 
     lio_state = lio.get("state")
@@ -1088,7 +1085,7 @@ def _evaluation(
         "runtime_contract": _gate_status(runtime_contract_condition),
         "mission": _gate_status(mission_condition),
         "waypoint": _gate_status(waypoint_condition),
-        "cross_track": _gate_status(cross_condition),
+        "cross_track": "INFO",
         "collision": _gate_status(collision_condition),
         "lio": _gate_status(lio_condition),
         "px4": _gate_status(px4_condition),
@@ -1099,7 +1096,7 @@ def _evaluation(
     bypasses = report.get("experimental_bypasses")
     bypass_active = bypasses not in (None, {})
     gates["temporary_bypass"] = _gate_status(False if bypass_active else True)
-    required = list(gates.values())
+    required = [value for name, value in gates.items() if name != "cross_track"]
     overall = "FAIL" if "FAIL" in required else "PASS" if all(item == "PASS" for item in required) else "INCOMPLETE"
     telemetry_verdict = telemetry_verdict or "N/A"
     return {
@@ -2298,6 +2295,12 @@ def render(session: Path, output: Path) -> Path:
     )
     mission = metrics["mission"]
     tracking = metrics["tracking"]
+    tracking_authority = tracking.get("authority", "diagnostic")
+    tracking_frame_status = tracking.get("frame_status", "diagnostic_frame_unverified")
+    tracking_diagnostic_note = (
+        "Tracking and cross-track metrics are diagnostic only: "
+        f"authority={tracking_authority}; frame_status={tracking_frame_status}."
+    )
     planning = metrics["planning"]
     safety = metrics["safety"]
     smoothness = metrics["smoothness"]
@@ -2997,7 +3000,7 @@ def render(session: Path, output: Path) -> Path:
 
   <section><h2>Flight overview</h2><p class="small">Both 2D maps show recorded geometry in the same ENU frame. The interactive replay draws configured LiDAR/planner envelopes around the cursor UAV, while waypoint acceptance circles, observed LiDAR points and planner paths remain on the flight map.</p><div class="charts">{plot_html}</div></section>
 
-  <section><h2>Position, velocity and setpoint traces</h2><p class="small">These traces are the system-level supervision view: ground truth, LIO propagated/corrected odometry, PX4 odometry/local position and recorded PVA commands. If a stream is absent, the corresponding chart explicitly reports no samples.</p><p class="small state-note"><span class="state-key normal"></span>normal/main <span class="state-key safety"></span>safety/backup · {esc(state_observation_note)}</p><div class="charts">{position_plot_html}{velocity_plot_html}</div></section>
+  <section><h2>Position, velocity and setpoint traces</h2><p class="small">These traces are the system-level supervision view: ground truth, LIO propagated/corrected odometry, PX4 odometry/local position and recorded PVA commands. If a stream is absent, the corresponding chart explicitly reports no samples.</p><p class="small">{esc(tracking_diagnostic_note)}</p><p class="small state-note"><span class="state-key normal"></span>normal/main <span class="state-key safety"></span>safety/backup · {esc(state_observation_note)}</p><div class="charts">{position_plot_html}{velocity_plot_html}</div></section>
 
   <section><h2>Acceptance gates</h2><table class="evidence"><thead><tr><th>Gate</th><th>Observed</th><th>Criterion / context</th><th>Status</th></tr></thead><tbody>{table_rows}</tbody></table></section>
 

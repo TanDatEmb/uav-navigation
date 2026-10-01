@@ -26,10 +26,16 @@ from planner_trace import (
 )
 from evaluation import evaluate_session, load_evaluation_inputs
 from stats import percentile as _p
+from tracking_diagnostics import annotate_tracking_report
 from waypoint_acceptance import parse_waypoint_acceptance
 
 
 VERDICTS = {"PASS", "FAIL", "BLOCKED", "NOT_RUN", "OBSERVATION_COMPLETE"}
+
+
+def _annotate_tracking_diagnostics(report: dict[str, Any]) -> dict[str, Any]:
+    """Keep the report-owned name stable for runtime contract tests."""
+    return annotate_tracking_report(report)
 _REQUIRED_EVALUATION_DIMENSIONS = (
     "mission", "safety", "tracking", "motion_quality", "evidence",
 )
@@ -3717,6 +3723,7 @@ def _build_complete_report(session: Path, workflow: str, config_path: Path, work
         report["map"] = descriptor
     evaluation_inputs = load_evaluation_inputs(session, config)
     report["evaluation"] = evaluate_session(evaluation_inputs)
+    annotate_tracking_report(report)
     evaluation_guard_reasons = _versioned_evaluation_guard(report["evaluation"])
     evaluator = report["evaluation"] if isinstance(report["evaluation"], dict) else {}
     # Runtime outcome, C0-SW eligibility, and C0-IFP eligibility are separate

@@ -183,22 +183,10 @@ These labeled summaries are the only retained record of the legacy decisions.
 | DEC-20260916-010 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | DIAGNOSTIC_ONLY | Preserve the first fully certified accepted MINCO iterate for replay/evidence. |
 | DEC-20260916-009 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | DIAGNOSTIC_ONLY | Resolve command-bundle ownership from export evidence; do not infer it from later telemetry. |
 | DEC-20260916-001 | ACTIVE | IMPLEMENTED | INTEGRATION_PARTIAL | PRODUCT | Bound frontier terminal speed by the final guide turn; current SITL evidence remains conditional. |
+| W3-A4-J1b.1 | ACTIVE | IMPLEMENTED | UNIT_VERIFIED | DIAGNOSTIC_ONLY | Owner runtime judge. `evaluation_window` selects position/velocity statistics and coverage; no frame/threshold/authority change. RED exposed 100 m / 100 m/s out-of-window sample; focused GREEN passed; SITL/rejudge `NOT_EVALUABLE`. Revisit only for distinct windows/typed evidence; verify focused Python, ledger, diff. Authority: owner decision 2026-09-30 R7-27: `evaluation_window` áp cho cả error statistics và coverage. |
+| W3-A4-J1b.3 | ACTIVE | IMPLEMENTED | UNIT_VERIFIED | DIAGNOSTIC_ONLY | Owner runtime judge/report. Tracking/cross-track carries `authority=diagnostic`, `frame_status=diagnostic_frame_unverified`; cross-track is not a verdict gate; thresholds/safety gates unchanged. RED extreme changed legacy display verdict; focused verdict/metadata/HTML GREEN; SITL/rejudge `NOT_EVALUABLE`. Revisit after typed world-frame evidence; verify Python, ledger, diff. Authority: owner decision 2026-09-30 Q-XTRK: cross-track là report-only, không là verdict gate; R7-25/26 giữ OPEN. |
 
 ## Baseline notes / unresolved inconsistencies
-
-## W3-A4 J1b.1: shared judge evaluation window
-
-- Owner/status: runtime judge tooling; IMPLEMENTED, UNIT_VERIFIED, DIAGNOSTIC_ONLY.
-- Scope: `evaluation_window` selects reference samples for position/velocity
-  statistics and tracking coverage; no frame conversion, threshold, or product
-  command authority changes.
-- Safety impact: out-of-window samples cannot change diagnostic summaries or
-  coverage; missing/invalid windows remain `NOT_EVALUABLE` without a PASS default.
-- Evidence: RED exposed an out-of-window 100 m / 100 m/s sample; GREEN targeted
-  tests passed. No SITL or rejudge session was available: runtime `NOT_EVALUABLE`.
-- Removal/verify: revisit only for distinct metric windows or a typed evidence
-  producer; run focused tests, Python gate, ledger validator, and `git diff --check`.
-- Authority: owner decision 2026-09-30 R7-27: `evaluation_window` áp cho cả error statistics và coverage.
 
 - The legacy gate table recorded `HG-004` as 12/12/30, while current source and
   recent evidence distinguish MAIN 5/5/8 from physical/BACKUP 12/12/30. The
