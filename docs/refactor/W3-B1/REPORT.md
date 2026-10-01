@@ -107,6 +107,7 @@ fe39ee4 refactor(planning): move polynomial contract into navigation_planning
 efbe539 docs(planning): report W3-B1 move evidence
 aca3347 docs(wave3): record B1 remote handoff
 f6ce417 fix(planning): restore direct type includes
+1360bc6 docs(wave3): record B1 review fix
 ```
 
 Branch `refactor/W3-B1` được push để review; không merge. A1/A2 dependency và Release/CTest gate vẫn là điều kiện mở.
