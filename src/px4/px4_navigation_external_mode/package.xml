@@ -10,7 +10,6 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>navigation_common</depend>
-  <depend>navigation_mission</depend>
   <depend>eigen3_cmake_module</depend>
   <depend>geometry_msgs</depend>
   <depend>diagnostic_msgs</depend>

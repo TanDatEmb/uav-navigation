@@ -3507,7 +3507,7 @@ double mainGuideSupport(
         // of the executable route. Extend the guide through the next route
         // segment when the current solve has enough certified map horizon.
         // This gives MINCO geometric room to turn or continue and lets
-        // MissionController advance the checkpoint while the same command is live.
+        // MissionProgress advances the checkpoint while the same command is live.
         bool route_lookahead_active = false;
         bool route_lookahead_is_corner = false;
         bool preserve_incoming_route_tangent = false;

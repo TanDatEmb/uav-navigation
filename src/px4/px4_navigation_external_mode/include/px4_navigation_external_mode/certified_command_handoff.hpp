@@ -12,7 +12,7 @@ inline bool commandMayBeRetainedAcrossWaypointHandoff(
     const navigation_contracts::msg::NavigationCommand& command,
     const bool terminal_successor = false) noexcept {
   // A completed command is no longer the physical owner of the vehicle. This
-  // includes a completed BACKUP: retaining it after MissionController
+  // includes a completed BACKUP: retaining it after MissionProgress
   // advances would replay an old endpoint under the new waypoint and can
   // trigger a false stale-command handover. The sole exception is a completed
   // MAIN terminal endpoint when the next route identity is the coincident STOP

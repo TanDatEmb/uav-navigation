@@ -40,6 +40,8 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_mission_contract test/test_mission_contract.cpp)
   target_link_libraries(test_mission_contract ${PROJECT_NAME})
+  ament_add_gtest(test_mission_loader test/test_mission_loader.cpp)
+  target_link_libraries(test_mission_loader ${PROJECT_NAME})
 endif()
 
 ament_package()

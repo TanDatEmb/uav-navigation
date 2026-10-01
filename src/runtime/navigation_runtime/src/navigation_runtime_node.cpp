@@ -5327,7 +5327,7 @@ void NavigationRuntimeNode::runCycle(
       transition_role, transition_anchor_error_m,
       retained_tracking_limit_m);
   if ((planning_transition == PlanningIntentTransition::kNewIntent)) {
-    // MissionController has invalidated the previous waypoint already. Do
+    // MissionProgress has invalidated the previous waypoint already. Do
     // not publish that waypoint while PlanFromRest runs.
     std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
     std::lock_guard<std::mutex> input_lock(input_mutex_);
