@@ -876,6 +876,7 @@ class EvaluationTest(unittest.TestCase):
         velocity = metrics["tracking.navigation_reference_vs_truth.velocity"]
         self.assertEqual(position["maximum"], 0.0)
         self.assertEqual(position["p95"], 0.0)
+        self.assertEqual(position["matched_sample_ratio"], 1.0)
         self.assertEqual(velocity["maximum"], 0.0)
         self.assertEqual(velocity["p95"], 0.0)
 

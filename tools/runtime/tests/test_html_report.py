@@ -667,9 +667,19 @@ rog_map:
             "tracking": {"reference_vs_ground_truth": {"p95": 0.1}},
             "acceptance": {"cross_track_error_p95_m": 0.1},
             "evaluation": {
-                "metrics": {"tracking.navigation_reference_vs_truth": {"p95": 0.1}}
+                "metrics": {
+                    "cross_track_error_m": {"p95": 0.1},
+                    "tracking.navigation_reference_vs_truth": {
+                        "p95": 0.1,
+                        "maximum": 0.2,
+                        "qualification_checks": {"source_time_valid": True},
+                    },
+                }
             },
         }
+        truth_metric_before = json.loads(json.dumps(
+            document["evaluation"]["metrics"]["tracking.navigation_reference_vs_truth"]
+        ))
         report._annotate_tracking_diagnostics(document)
         self.assertEqual(document["tracking"]["authority"], "diagnostic")
         self.assertEqual(
@@ -681,8 +691,31 @@ rog_map:
             "diagnostic",
         )
         self.assertEqual(
-            document["evaluation"]["metrics"]["tracking.navigation_reference_vs_truth"]["frame_status"],
+            document["evaluation"]["metrics"]["cross_track_error_m"]["frame_status"],
             "diagnostic_frame_unverified",
+        )
+        self.assertEqual(
+            document["evaluation"]["metrics"]["tracking.navigation_reference_vs_truth"],
+            truth_metric_before,
+        )
+
+    def test_extreme_cross_track_does_not_change_report_verdict_or_assessment_status(self) -> None:
+        base = {
+            "verdict": "PASS",
+            "evaluation": {"assessment_status": "NOT_EVALUABLE"},
+            "acceptance": {"cross_track_error_p95_m": 0.1},
+        }
+        nominal = json.loads(json.dumps(base))
+        extreme = json.loads(json.dumps(base))
+        nominal["acceptance"]["cross_track_error_p95_m"] = 0.1
+        extreme["acceptance"]["cross_track_error_p95_m"] = 9999.0
+
+        report._annotate_tracking_diagnostics(nominal)
+        report._annotate_tracking_diagnostics(extreme)
+
+        self.assertEqual(
+            (nominal["verdict"], nominal["evaluation"]["assessment_status"]),
+            (extreme["verdict"], extreme["evaluation"]["assessment_status"]),
         )
 
     def test_temporary_bypass_can_never_render_as_certification_pass(self) -> None:
