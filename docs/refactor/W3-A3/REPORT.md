@@ -42,6 +42,7 @@ Source: `git log --format='%h %s' origin/main..HEAD` immediately before push.
 | SHA | Message |
 |---|---|
 | `5374f6e` | `docs(wave3): record A3 replay blocker` |
+| `15da64a` | `docs(wave3): record A3 checkpoint evidence` |
 
 ## Handoff
 
