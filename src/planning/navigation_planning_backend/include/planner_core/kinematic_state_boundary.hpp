@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <optional>
 
 #include <Eigen/Core>
 #include <Eigen/LU>
 
 #include <navigation_planning/polynomial/piece.hpp>
+#include <navigation_math/type_utils.hpp>
 
 namespace navigation_planning_backend {
 

@@ -6,7 +6,10 @@
 
 #pragma once
 
+#include <iostream>
+
 #include <navigation_planning/polynomial/trajectory.hpp>
+#include <navigation_math/type_utils.hpp>
 #include <utils/optimization/lbfgs.h>
 
 
