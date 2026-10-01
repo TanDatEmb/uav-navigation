@@ -204,6 +204,7 @@ namespace geometry_utils {
                 Polytope check_cand = sfcs_new[0], last_overlapped = sfcs_new[1];
                 PolytopeVec sfcs_final;
                 sfcs_final.push_back(sfcs_new[0]);
+                bool retrying_current_transition = false;
                 for (std::size_t i = 2; i < sfcs_new.size(); ++i) {
                     Polytope cross_poly = check_cand.CrossWith(sfcs_new[i]);
                     Eigen::Vector3d interior_pt;
@@ -214,6 +215,7 @@ namespace geometry_utils {
                             cross_poly.GetPlanes(), interior_pt,
                             transition_vertices, overlap_depth_m);
                     if (is_overlapped) {
+                        retrying_current_transition = false;
                         last_overlapped = sfcs_new[i];
                         if (last_overlapped.PointIsInside(path.back())) {
                             sfcs_final.push_back(last_overlapped);
@@ -221,9 +223,13 @@ namespace geometry_utils {
                         }
                     }
                     else {
+                        if (retrying_current_transition) {
+                            return false;
+                        }
                         sfcs_final.push_back(last_overlapped);
                         check_cand = last_overlapped;
-                            --i;
+                        retrying_current_transition = true;
+                        --i;
                     }
                 }
                 sfcs = sfcs_final;

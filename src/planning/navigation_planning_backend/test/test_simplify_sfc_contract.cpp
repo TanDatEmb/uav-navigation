@@ -116,6 +116,18 @@ TEST(SimplifySfcConsumerContract,
 }
 
 TEST(SimplifySfcConsumerContract,
+     NonRepresentableAdjacentTransitionReturnsFalse) {
+  geometry_utils::PolytopeVec corridors{
+      makeBox(0.0, 2.0), makeBox(1.0, 3.0), makeBox(3.0, 5.0)};
+  ASSERT_TRUE(consumerTransitionRepresentable(corridors[0], corridors[1]));
+  ASSERT_FALSE(consumerTransitionRepresentable(corridors[1], corridors[2]));
+
+  EXPECT_FALSE(geometry_utils::SimplifySFC(
+      navigation_math::Vec3f{0.5, 0.5, 0.5},
+      navigation_math::Vec3f{4.5, 0.5, 0.5}, corridors));
+}
+
+TEST(SimplifySfcConsumerContract,
      ReconstructedHistoricalTopologyStaysInConsumerDomain) {
   expectFaceOnlyInputIsRetained({
       makeRedundantVerticalBox(18.200000762939453, 24.0,

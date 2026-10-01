@@ -494,3 +494,7 @@ These labeled summaries are the only retained record of the legacy decisions.
 - Lifecycle/implementation/evidence/authority: `ACTIVE/IMPLEMENTED/UNIT_VERIFIED/PRODUCT`; owner: `FastLioPipeline::processInternal`; scope: commit `state_time_` only after successful prediction and count pre-tracking prediction failures against existing `maximum_initial_map_registration_failures`.
 - Safety/evidence/removal: failed prediction cannot advance the trusted epoch or retry unboundedly; no threshold changed; RED showed epoch advance/no lifecycle count and targeted GREEN passes; remove only under an owner-approved transaction redesign preserving fail-closed epoch ownership.
 - Verify: `test_fast_lio_pipeline`, `python3 tools/validate_runtime_safety_ledger.py`, `git diff --check`.
+
+### H3.3 / R2-24: non-representable adjacent corridor must terminate
+
+- Lifecycle/implementation/evidence/authority: `ACTIVE/IMPLEMENTED/UNIT_VERIFIED/PRODUCT`; owner: `SimplifySFC`; scope: bound the retry and return false when the adjacent transition remains non-representable; safety: no infinite loop or unsafe corridor rewrite, no threshold change; RED timed out before the guard and targeted GREEN preserves the existing safe-adjacency cases; removal only by owner-approved bounded consumer redesign; verify `test_simplify_sfc_contract`, ledger validator and `git diff --check`.
