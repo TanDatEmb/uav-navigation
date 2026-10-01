@@ -1,6 +1,6 @@
 # W3-A2 report
 
-Gate v3 tooling and documentation drift cleanup are implemented on baseline `432dc94` in branch `refactor/W3-A2`. No merge or push was performed.
+Gate v3 tooling and documentation drift cleanup are implemented on baseline `432dc94` in branch `refactor/W3-A2`. Branch is pushed for architecture review; no merge was performed.
 
 ## Deliverable
 
