@@ -51,6 +51,8 @@ struct Mission {
     if (schema_version != 1 || id.empty() || id.size() > kMaximumMissionIdLength ||
         frame.empty() || frame.size() > kMaximumMissionFrameLength ||
         waypoints.empty() || waypoints.size() > kMaximumMissionWaypoints ||
+        (!waypoints.empty() &&
+         waypoints.back().behavior != MissionWaypoint::Behavior::Stop) ||
         !std::isfinite(planning.requested_cruise_speed_mps) ||
         planning.requested_cruise_speed_mps <= 0.0 ||
         (planning.unknown_policy != navigation_world_model::UnknownPolicy::kAllowUnknown &&
