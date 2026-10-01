@@ -2,7 +2,7 @@
 
 ## Verdict
 
-Six finding reviews were completed on branch `refactor/W3-H3` from `origin/main` at `432dc94630fbc76ca670138228f2f616f6840bb0`. Five findings are fixed and one is intentionally not fixed because its required authoritative parameter is absent. Changes are committed locally; nothing was pushed or merged. This is component/test evidence only, not qualification evidence.
+Six finding reviews were completed on branch `refactor/W3-H3` from `origin/main` at `432dc94630fbc76ca670138228f2f616f6840bb0`. Five findings are fixed and one is intentionally not fixed because its required authoritative parameter is absent. Branch is pushed for architecture review; nothing was merged. This is component/test evidence only, not qualification evidence.
 
 ## Finding status
 
@@ -39,3 +39,15 @@ Six finding reviews were completed on branch `refactor/W3-H3` from `origin/main`
 `origin/main` is `432dc94630fbc76ca670138228f2f616f6840bb0`; W3-A2 is not merged, so the Wave 3 `all` gate is not available. The contract lineage command using `7e0b850` could not run because that object is absent in this clone (`fatal: Not a valid object name 7e0b850`); this is recorded rather than guessed around. No B1/B2/B3/B6 product files or prompt coordination documents were edited.
 
 No qualification, flight readiness, SITL acceptance, or threshold claim is made. H3.1 needs an owner decision before implementation.
+
+## Commit table
+
+| SHA | Message |
+|---|---|
+| `761b95e` | `fix(mission): require stop terminal waypoint` |
+| `b0fd5cf` | `fix(fast-lio): commit state time after prediction` |
+| `e1a0905` | `fix(planning): bound nonrepresentable corridor retry` |
+| `dff3477` | `fix(execution): preserve failure latch across equal admission` |
+| `235d3ad` | `refactor(execution): remove legacy commit entry points` |
+| `6557652` | `docs(h3.1): record missing imu horizon authority` |
+| `852c2d5` | `docs(h3): record early-fix evidence` |
