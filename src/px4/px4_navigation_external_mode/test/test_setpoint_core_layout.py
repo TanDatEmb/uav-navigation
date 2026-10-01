@@ -54,6 +54,8 @@ def main() -> int:
         for forbidden in ("rclcpp", "px4_ros2_cpp"):
             if forbidden in core_block:
                 errors.append(f"forbidden ROS/PX4 dependency in core block: {forbidden}")
+        if "${navigation_contracts_INCLUDE_DIRS}" not in core_block:
+            errors.append("core target is missing navigation_contracts include root")
     for target in PURE_TEST_TARGETS:
         marker = f"target_link_libraries({target}"
         if marker not in cmake:

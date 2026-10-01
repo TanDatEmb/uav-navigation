@@ -56,7 +56,8 @@ add_library(px4_setpoint_core STATIC
   "${CMAKE_CURRENT_BINARY_DIR}/px4_setpoint_core_anchor.cpp"
   ${PX4_SETPOINT_CORE_HEADERS})
 target_include_directories(px4_setpoint_core PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  ${navigation_contracts_INCLUDE_DIRS})
 target_link_libraries(px4_setpoint_core PUBLIC Eigen3::Eigen)
 ament_target_dependencies(px4_setpoint_core PUBLIC navigation_common navigation_contracts)
 target_compile_options(px4_setpoint_core PRIVATE -Wall -Wextra -Wpedantic)
