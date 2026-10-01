@@ -17,7 +17,7 @@ Gate v3 tooling and documentation drift cleanup are implemented on baseline `432
 | `./tools/check_dependency_direction.py` | PASS (21 package/CMake units checked) |
 | `tools/gate.sh static` | PASS; ledger PASS, mission authority PASS, citations `989 checked out_of_range=0`, dependency PASS |
 | `/usr/bin/python3 -m unittest tools.tests.test_gate -v` | PASS (2/2) |
-| `tools/gate.sh python` | NOT_MEASURED |
+| `tools/gate.sh python` | PASS; Python 3.12.3, tools/tests 9/9, runtime/tests 420/420, 2 skips |
 | `tools/gate.sh ros` | NOT_MEASURED |
 
 ## Findings
