@@ -151,6 +151,69 @@ class GateScriptTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("GATE_V3_RESULT=FAIL", result.stdout)
 
+    def _run_ros_gate_with_result_stub(self, selected_package_fails: bool) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            self._init_fixture_repo(repo)
+            subprocess.run(
+                ["git", "update-ref", "refs/remotes/origin/main", "HEAD"],
+                cwd=repo,
+                check=True,
+            )
+            gate_copy = repo / "tools" / "gate.sh"
+            gate_copy.parent.mkdir()
+            gate_copy.write_bytes(GATE.read_bytes())
+            gate_copy.chmod(0o755)
+            bin_dir = repo / "bin"
+            bin_dir.mkdir()
+            colcon = bin_dir / "colcon"
+            # Unbounded `test-result` sees px4_ros2_cpp attachment failures
+            # (G1); a result-base limited to the selected package is clean
+            # unless that package has a real failure.
+            colcon.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$1\" in\n"
+                "  list) echo 'demo src/demo'; echo 'px4_ros2_cpp src/px4_ros2_cpp' ;;\n"
+                "  test) mkdir -p build/demo/test_results; exit 0 ;;\n"
+                "  test-result)\n"
+                "    base=''\n"
+                "    while (($#)); do\n"
+                "      [[ \"$1\" == --test-result-base ]] && base=\"$2\"\n"
+                "      shift\n"
+                "    done\n"
+                "    [[ -n \"$base\" ]] || { echo 'Summary: 5 errors, 5 failures (px4_ros2_cpp)'; exit 1; }\n"
+                "    [[ \"$base\" == build/demo/test_results ]] || exit 3\n"
+                f"    {'echo Summary: 1 failure; exit 1' if selected_package_fails else 'exit 0'}\n"
+                "    ;;\n"
+                "  *) exit 0 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            colcon.chmod(0o755)
+            return subprocess.run(
+                [str(gate_copy), "ros"],
+                cwd=repo,
+                env={
+                    **os.environ,
+                    "PACKAGES": "demo px4_ros2_cpp",
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+    def test_ros_gate_ignores_attachment_only_px4_ros2_cpp_failures(self) -> None:
+        result = self._run_ros_gate_with_result_stub(selected_package_fails=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("GATE_V3_RESULT=PASS", result.stdout)
+
+    def test_ros_gate_fails_on_selected_package_test_failure(self) -> None:
+        result = self._run_ros_gate_with_result_stub(selected_package_fails=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("GATE_V3_RESULT=FAIL", result.stdout)
+        self.assertNotIn("GATE_V3_RESULT=PASS", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
