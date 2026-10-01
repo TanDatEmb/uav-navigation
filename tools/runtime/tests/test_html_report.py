@@ -24,6 +24,7 @@ from flight_review_report import (
     _timing_overview_cards,
     _timing_timeline_chart,
     _timing_rows,
+    render as render_flight_review,
     line_chart,
     map_svg,
 )
@@ -216,6 +217,35 @@ class HtmlReportSmoothnessTest(unittest.TestCase):
 
 
 class HtmlReportEvaluationTest(unittest.TestCase):
+    def test_report_html_renders_json_verdict_and_reasons_without_overall_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            (session / "report.json").write_text(json.dumps({
+                "verdict": "BLOCKED",
+                "reasons": ["R7 fixture reason"],
+            }), encoding="utf-8")
+            output = render_flight_review(session, session / "REPORT.html")
+            rendered = output.read_text(encoding="utf-8")
+        self.assertIn("BLOCKED", rendered)
+        self.assertIn("R7 fixture reason", rendered)
+        self.assertNotIn("Overall acceptance verdict", rendered)
+
+    def test_display_verdict_and_reasons_are_taken_from_report_json(self) -> None:
+        reasons = ["RECORDED_REASON_1", "RECORDED_REASON_2"]
+        result = _evaluation(
+            {
+                "verdict": "OBSERVATION_COMPLETE",
+                "reasons": reasons,
+                "evaluation": {
+                    "qualification_eligible": False,
+                    "dimensions": {"safety": {"status": "FAIL"}},
+                },
+            },
+            {}, {}, {}, {}, None, None, None,
+        )
+        self.assertEqual(result["display_verdict"], "OBSERVATION_COMPLETE")
+        self.assertEqual(result["reasons"], reasons)
+
     def test_canonical_json_fields_are_invariant_to_display_decimation(self) -> None:
         base = {
             "evaluation": {

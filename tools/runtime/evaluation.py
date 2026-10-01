@@ -17,10 +17,12 @@ import math
 from pathlib import Path
 import statistics
 from typing import Any, Iterable
+from stats import percentile as _percentile
 
 from evidence_contract import build_evidence_contract
 from command_diagnostics import join_execution_diagnostics
 from planner_trace import collect_planner_trace_records, planner_trace_summary
+from waypoint_acceptance import parse_waypoint_acceptance
 
 
 EVALUATION_SCHEMA_VERSION = 2
@@ -93,14 +95,6 @@ def _vector(value: Any, size: int = 3) -> tuple[float, ...] | None:
 
 def _norm(value: Iterable[float]) -> float:
     return math.sqrt(sum(float(item) * float(item) for item in value))
-
-
-def _percentile(values: list[float], fraction: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * fraction)))
-    return ordered[index]
 
 
 def _summary(values: list[float], *, unit: str | None = None) -> dict[str, Any]:
@@ -1839,9 +1833,18 @@ def build_execution_segments(inputs: dict[str, Any], max_gap_s: float = DEFAULT_
     }
 
 
-def _bracket(samples: list[dict[str, Any]], target_ns: int, max_gap_s: float) -> tuple[dict[str, Any], dict[str, Any], float] | None:
+def _prepare_bracketing_stream(
+    samples: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[int]]:
     ordered = sorted(samples, key=lambda item: int(item["source_stamp_ns"]))
-    stamps = [int(item["source_stamp_ns"]) for item in ordered]
+    return ordered, [int(item["source_stamp_ns"]) for item in ordered]
+
+
+def _bracket(
+    samples: list[dict[str, Any]], target_ns: int, max_gap_s: float,
+    prepared: tuple[list[dict[str, Any]], list[int]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], float] | None:
+    ordered, stamps = prepared if prepared is not None else _prepare_bracketing_stream(samples)
     index = bisect.bisect_left(stamps, target_ns)
     if index < len(ordered) and stamps[index] == target_ns:
         return ordered[index], ordered[index], 0.0
@@ -1907,8 +1910,9 @@ def _tracking_pair(
     gaps: list[float] = []
     matched_stamps: list[int] = []
     matched = 0
+    prepared_measured = _prepare_bracketing_stream(measured)
     for command in reference:
-        bracket = _bracket(measured, int(command["source_stamp_ns"]), max_gap_s)
+        bracket = _bracket(measured, int(command["source_stamp_ns"]), max_gap_s, prepared_measured)
         if bracket is None:
             continue
         measured_position = _interpolate_vector(bracket, "position")
@@ -2724,11 +2728,15 @@ def _px4_state_use_timing(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _ate_rpe(estimate: list[dict[str, Any]], truth: list[dict[str, Any]], max_gap_s: float) -> dict[str, Any]:
+def _ate_rpe(
+    estimate: list[dict[str, Any]], truth: list[dict[str, Any]], max_gap_s: float,
+    prepared_truth: tuple[list[dict[str, Any]], list[int]] | None = None,
+) -> dict[str, Any]:
+    prepared = prepared_truth if prepared_truth is not None else _prepare_bracketing_stream(truth)
     errors: list[float] = []
     pairs: list[tuple[int, tuple[float, float, float], tuple[float, float, float]]] = []
     for item in estimate:
-        bracket = _bracket(truth, int(item["source_stamp_ns"]), max_gap_s)
+        bracket = _bracket(truth, int(item["source_stamp_ns"]), max_gap_s, prepared)
         if bracket is None:
             continue
         expected = _interpolate_vector(bracket, "position")
@@ -2746,18 +2754,19 @@ def _ate_rpe(estimate: list[dict[str, Any]], truth: list[dict[str, Any]], max_ga
 def evaluate_localization(inputs: dict[str, Any]) -> dict[str, Any]:
     truth = inputs.get("streams", {}).get("ground_truth_odometry", [])
     outputs: dict[str, Any] = {}
+    prepared_truth = _prepare_bracketing_stream(truth)
     for name in ("corrected_odometry", "propagated_odometry"):
         estimate = inputs.get("streams", {}).get(name, [])
         rows: list[dict[str, Any]] = []
         for item in estimate:
-            bracket = _bracket(truth, int(item["source_stamp_ns"]), DEFAULT_MAX_MATCH_GAP_S)
+            bracket = _bracket(truth, int(item["source_stamp_ns"]), DEFAULT_MAX_MATCH_GAP_S, prepared_truth)
             if bracket is None:
                 continue
             truth_position = _interpolate_vector(bracket, "position")
             estimate_position = _vector(item.get("position"))
             if truth_position is not None and estimate_position is not None:
                 rows.append(dict(item, estimate_position=list(estimate_position)))
-        outputs[name] = _ate_rpe(rows, truth, DEFAULT_MAX_MATCH_GAP_S)
+        outputs[name] = _ate_rpe(rows, truth, DEFAULT_MAX_MATCH_GAP_S, prepared_truth)
         outputs[name]["source"] = name
     return {
         "streams": outputs,
@@ -3064,9 +3073,9 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
     outcome = scenario.get("outcome")
     expected_indices = list(range(len(inputs.get("waypoints", []))))
     accepted_indices = [
-        _integer(item.get("accepted_waypoint_index"))
-        for item in scenario.get("waypoint_acceptance_events", [])
-        if isinstance(item, dict) and item.get("waypoint_accepted") is True
+        index for event in scenario.get("waypoint_acceptance_events", [])
+        for status, index in [parse_waypoint_acceptance(event)]
+        if status == "ACCEPTED" and index is not None
     ]
     if (scenario.get("mission_complete_observed") is True and
             outcome == "COMPLETE" and expected_indices and
@@ -3274,7 +3283,11 @@ def evaluate_session(inputs: dict[str, Any]) -> dict[str, Any]:
         mission_reasons.append("WAYPOINT_ACCEPTANCE_EVIDENCE_MISSING")
     if scenario.get("waypoint_acceptance_events") is not None:
         expected = list(range(int(_number(scenario.get("mission_waypoint_count")) or 0)))
-        accepted = [int(item.get("accepted_waypoint_index")) for item in scenario.get("waypoint_acceptance_events", []) if isinstance(item, dict) and item.get("waypoint_accepted", True) and _integer(item.get("accepted_waypoint_index")) is not None]
+        accepted = [
+            index for event in scenario.get("waypoint_acceptance_events", [])
+            for status, index in [parse_waypoint_acceptance(event)]
+            if status == "ACCEPTED" and index is not None
+        ]
         if expected and accepted != expected:
             mission_reasons.append("WAYPOINT_ACCEPTANCE_INCOMPLETE")
     mission_status = "PASS" if mission_complete and not mission_reasons else "NOT_EVALUABLE" if not mission_complete else "FAIL"

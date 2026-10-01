@@ -25,6 +25,9 @@ from typing import Any
 import yaml
 
 from evidence_writer import EvidenceWriter
+from stats import percentile as _percentile
+from collision_geometry import box_signed_distance, cylinder_signed_distance, segment_min_signed_distance
+from waypoint_acceptance import parse_waypoint_acceptance
 
 def _time_ns(value: Any) -> int:
     return int(value.sec) * 1_000_000_000 + int(value.nanosec)
@@ -224,14 +227,6 @@ def _interpolate_pose_history(
             (1.0 - alpha) * int(receive_stamps[0]) +
             alpha * int(receive_stamps[1])))
     return result
-
-
-def _percentile(values: list[float], fraction: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, round((len(ordered) - 1) * fraction))
-    return ordered[index]
 
 
 def _speed_contract_failures(
@@ -1112,6 +1107,7 @@ class ExternalModeScenario:
         self.latest_ground_truth_receive_ns = self._receive_time_ns()
         self.latest_ground_truth["source_stamp_ns"] = self.latest_ground_truth_stamp_ns
         self.latest_ground_truth["receive_stamp_ns"] = self.latest_ground_truth_receive_ns
+        previous_ground_truth = self.ground_truth_pose_history[-1] if self.ground_truth_pose_history else None
         self.ground_truth_pose_history.append(dict(self.latest_ground_truth))
         if len(self.ground_truth_pose_history) > 8:
             del self.ground_truth_pose_history[:-8]
@@ -1129,24 +1125,27 @@ class ExternalModeScenario:
             if not _finite_vector(center):
                 continue
             point = (values[0], values[1], values[2])
+            start = point
+            if previous_ground_truth is not None:
+                start = tuple(float(previous_ground_truth[axis]) for axis in ("x", "y", "z"))
             obstacle_type = str(obstacle.get("type", "box"))
             if obstacle_type == "box":
                 half_extents = obstacle.get("half_extents", [])
                 if not _finite_vector(half_extents) or any(float(value) <= 0.0 for value in half_extents):
                     continue
-                q = [abs(point[index] - float(center[index])) - float(half_extents[index]) for index in range(3)]
-                outside = math.sqrt(sum(max(value, 0.0) ** 2 for value in q))
-                signed_distance = outside + min(max(q), 0.0)
+                rpy = obstacle.get("rpy", [0.0, 0.0, 0.0])
+                if not _finite_vector(rpy):
+                    continue
+                sdf = lambda sample: box_signed_distance(sample, center, half_extents, rpy)
             elif obstacle_type == "cylinder":
                 radius = float(obstacle.get("radius_m", 0.0))
                 half_height = float(obstacle.get("half_height_m", 0.0))
                 if not math.isfinite(radius) or not math.isfinite(half_height) or radius <= 0.0 or half_height <= 0.0:
                     continue
-                radial_gap = math.hypot(point[0] - float(center[0]), point[1] - float(center[1])) - radius
-                vertical_gap = abs(point[2] - float(center[2])) - half_height
-                signed_distance = math.hypot(max(radial_gap, 0.0), max(vertical_gap, 0.0)) + min(max(radial_gap, vertical_gap), 0.0)
+                sdf = lambda sample: cylinder_signed_distance(sample, center, radius, half_height)
             else:
                 continue
+            signed_distance = segment_min_signed_distance(start, point, sdf)
             obstacle_clearance = signed_distance - vehicle_radius
             if obstacle_clearance < clearance:
                 clearance = obstacle_clearance
@@ -2929,9 +2928,9 @@ class ExternalModeScenario:
             expected_count = int(self.config.get("mission_waypoint_count", 0))
             expected_indices = list(range(max(0, expected_count)))
             accepted_indices = [
-                int(item["accepted_waypoint_index"])
-                for item in self.waypoint_acceptance_events
-                if bool(item.get("waypoint_accepted", False))
+                index for event in self.waypoint_acceptance_events
+                for status, index in [parse_waypoint_acceptance(event)]
+                if status == "ACCEPTED" and index is not None
             ]
             allow_initial_skip = bool(self.config.get("allow_initial_pass_through_skip", False))
             valid_acceptance = accepted_indices == expected_indices or (
@@ -3182,18 +3181,23 @@ def run(output: Path, config_path: Path) -> int:
     rclpy.init(args=[])
     scenario = ExternalModeScenario(output, config)
 
-    def stop(_signum: int, _frame: Any) -> None:
-        # Interactive runs intentionally wait after handover. Preserve that
-        # terminal outcome when the user ends the GUI session with Ctrl-C.
-        if not scenario.handover_waiting:
-            scenario.failure = "scenario interrupted"
-        scenario.finish(scenario.terminal_outcome or "INTERRUPTED")
+    signal_received: dict[str, int | None] = {"signum": None}
+
+    def stop(signum: int, _frame: Any) -> None:
+        # Defer recorder writes and scenario finalization to the main loop.
+        signal_received["signum"] = signum
 
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
     try:
         while rclpy.ok() and not scenario.finished:
             rclpy.spin_once(scenario.node, timeout_sec=0.1)
+            if signal_received["signum"] is not None:
+                # Interactive runs intentionally wait after handover. Preserve
+                # that terminal outcome when ending the GUI session.
+                if not scenario.handover_waiting:
+                    scenario.failure = "scenario interrupted"
+                scenario.finish(scenario.terminal_outcome or "INTERRUPTED")
     finally:
         if not scenario.finished:
             scenario.finish("INTERRUPTED")

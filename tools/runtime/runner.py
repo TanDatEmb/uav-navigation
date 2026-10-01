@@ -18,6 +18,7 @@ import socket
 import subprocess
 from shutil import copy2, which
 import sys
+import tempfile
 import time
 from functools import wraps
 from typing import Any, Callable
@@ -592,7 +593,22 @@ def _write_runtime(session: Session, **values: Any) -> None:
         except (OSError, ValueError):
             current = {}
     current.update(values)
-    path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    text = json.dumps(current, indent=2, sort_keys=True) + "\n"
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def _tracking_experiment_payload(
@@ -1152,6 +1168,7 @@ def _write_runtime_evidence_metadata(
     identity["configuration_sha256"] = hashlib.sha256(
         identity_material.encode("utf-8")
     ).hexdigest()
+    tracking_metadata = tracking_experiment or _tracking_experiment_payload()
     metadata = {
         "schema_version": 1,
         "experiment_id": experiment_id,
@@ -1210,7 +1227,10 @@ def _write_runtime_evidence_metadata(
         "speed_contract": speed_contract,
         "sitl_profile": sitl_profile or _sitl_profile_contract("default"),
         "sitl_dynamics_profile": sitl_dynamics_profile or _sitl_dynamics_profile_contract("off"),
-        "tracking_experiment": tracking_experiment or _tracking_experiment_payload(),
+        "tracking_experiment": tracking_metadata,
+        "tracking_experiment_warning": _tracking_experiment_warning(
+            str(tracking_metadata.get("mode", "off"))
+        ),
         "environment": {
             "map_profile": map_profile,
             "ros_domain_id": ros_domain_id,
@@ -1408,6 +1428,12 @@ def _mission_planning(source: Path | None) -> dict[str, Any]:
     return result
 
 
+def _tracking_experiment_warning(mode: str) -> str | None:
+    if mode == "off":
+        return None
+    return "Tracking experiment mode is not off; results are diagnostic and are not qualification evidence."
+
+
 def _planner_speed_contract(
     planner_source: Path,
     requested_cruise_speed_mps: float | None,
@@ -1555,6 +1581,7 @@ def _collision_obstacles(map_profile: str) -> list[dict[str, Any]]:
                 name = model.get("name", "")
                 pose = (model.findtext("pose") or "0 0 0").split()
                 center = [float(value) for value in pose[:3]]
+                rpy = [float(value) for value in pose[3:6]] if len(pose) >= 6 else [0.0, 0.0, 0.0]
                 collision = model.find("./link/collision/geometry")
                 if collision is None or len(center) != 3:
                     continue
@@ -1564,7 +1591,7 @@ def _collision_obstacles(map_profile: str) -> list[dict[str, Any]]:
                     size = [float(value) for value in box_node.text.split()]
                     if len(size) == 3:
                         parsed.append({"name": name, "type": "box", "center": center,
-                                       "half_extents": [value / 2.0 for value in size]})
+                                       "half_extents": [value / 2.0 for value in size], "rpy": rpy})
                 elif cylinder_node is not None:
                     radius = float(cylinder_node.findtext("radius", "0"))
                     length = float(cylinder_node.findtext("length", "0"))

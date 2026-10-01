@@ -8,6 +8,8 @@ RUNTIME = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME))
 
 from evaluation import (
+    _bracket,
+    _prepare_bracketing_stream,
     SourceTimestampPolicy,
     _source_time_status,
     build_execution_segments,
@@ -41,6 +43,17 @@ def pva(stamp_ns, position, velocity, *, generation=1, role=0, frame="world"):
         "sample_id": stamp_ns,
         "executable": True,
     }
+
+
+class EvaluationBracketTests(unittest.TestCase):
+    def test_prepared_bisect_matches_legacy_sorting_for_all_bracket_cases(self):
+        samples = [pva(stamp, (stamp, 0, 0), (1, 0, 0)) for stamp in (2_000_000_000, 1_000_000_000, 3_000_000_000)]
+        prepared = _prepare_bracketing_stream(samples)
+        for target in (500_000_000, 1_000_000_000, 1_500_000_000, 4_000_000_000):
+            self.assertEqual(
+                _bracket(samples, target, 2.0),
+                _bracket(samples, target, 2.0, prepared),
+            )
 
 
 def truth(stamp_ns, position, velocity, *, frame="world", epoch=1):

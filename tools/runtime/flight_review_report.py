@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from html_report import _analyze, _finite_number, _load, _point
+from stats import percentile as _series_percentile
 
 try:
     import yaml
@@ -340,14 +341,6 @@ def _parameter_updates_recorded(session: Path) -> bool:
 
 def _series_values(points: list[tuple[float, float]]) -> list[float]:
     return [value for _, value in points if finite(value) is not None]
-
-
-def _series_percentile(values: list[float], fraction: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, round((len(ordered) - 1) * fraction))
-    return ordered[index]
 
 
 def _series_stats(values: list[float]) -> dict[str, Any]:
@@ -1010,26 +1003,19 @@ def _evaluation(
         assessment_status = consistency["assessment_status"]
         evidence_status_value = consistency["evidence_status"]
         if (
-            telemetry_verdict == "FAIL"
-            or assessment_status == "FAIL"
+            telemetry_verdict == "FAIL" or assessment_status == "FAIL"
             or "FAIL" in dimension_values
         ):
             overall = "FAIL"
         elif (
-            consistency["valid"]
-            and assessment_status == "PASS"
-            and evidence_status_value == "COMPLETE"
-            and qualification_eligible
+            consistency["valid"] and assessment_status == "PASS"
+            and evidence_status_value == "COMPLETE" and qualification_eligible
             and all(item == "PASS" for item in dimension_values)
         ):
             overall = "PASS"
-        elif assessment_status in {"NOT_EVALUABLE", "INCOMPLETE"}:
-            overall = "INCOMPLETE"
-        elif not consistency["valid"]:
+        elif assessment_status in {"NOT_EVALUABLE", "INCOMPLETE"} or not consistency["valid"]:
             overall = "INCOMPLETE"
         else:
-            # Compatibility for pre-versioned fixtures: the dimension block
-            # remains authoritative when the explicit aggregate is absent.
             overall = (
                 "FAIL" if telemetry_verdict == "FAIL" or "FAIL" in dimension_values
                 else "PASS" if telemetry_verdict == "PASS" and all(item == "PASS" for item in dimension_values) and qualification_eligible
@@ -1042,7 +1028,9 @@ def _evaluation(
         ) if isinstance(qualification_reasons, list) else False
         return {
             "overall": overall,
+            "display_verdict": telemetry_verdict,
             "telemetry_verdict": telemetry_verdict,
+            "reasons": list(report.get("reasons", [])) if isinstance(report.get("reasons"), list) else [],
             "gates": {
                 "runtime_contract": _gate_status(telemetry_verdict == "PASS") if telemetry_verdict in {"PASS", "FAIL"} else "N/A",
                 "mission": mission_status,
@@ -1114,7 +1102,11 @@ def _evaluation(
     required = list(gates.values())
     overall = "FAIL" if "FAIL" in required else "PASS" if all(item == "PASS" for item in required) else "INCOMPLETE"
     telemetry_verdict = telemetry_verdict or "N/A"
-    return {"overall": overall, "telemetry_verdict": telemetry_verdict, "gates": gates}
+    return {
+        "overall": overall, "display_verdict": telemetry_verdict, "telemetry_verdict": telemetry_verdict,
+        "reasons": list(report.get("reasons", [])) if isinstance(report.get("reasons"), list) else [],
+        "gates": gates,
+    }
 
 
 def _canonical_evaluation_snapshot(report: dict[str, Any]) -> dict[str, Any] | None:
@@ -2406,11 +2398,6 @@ def render(session: Path, output: Path) -> Path:
                     str(dimension.get("status", "NOT_EVALUABLE")),
                     f"{label}: {str(dimension.get('status', 'NOT_EVALUABLE')).upper()}.",
                 ))
-    if gates["mission"] == "PASS" and evaluation["overall"] != "PASS":
-        findings.append((
-            "OBSERVE",
-            f"Mission outcome is PASS, but acceptance is {evaluation['overall']}; check quality gates below.",
-        ))
     if failure_reasons:
         findings.append(("OBSERVE", "Failure context: " + "; ".join(failure_reasons[:2]) + ("; ..." if len(failure_reasons) > 2 else "")))
     if zero_trace_fields:
@@ -2843,7 +2830,7 @@ def render(session: Path, output: Path) -> Path:
         + (f"The following fields are constant zero across all records: {', '.join(zero_trace_fields)}." if zero_trace_fields else "No constant-zero trace fields were found.")
     )
     interpretation = (
-        f"Overall acceptance verdict: {evaluation['overall']}. "
+        f"Report verdict: {report.get('verdict') or 'N/A'}. "
         f"The estimator and PX4 validity signals are {gates['lio']} and {gates['px4']}. "
         f"The longest route leg is {fmt(mission.get('longest_leg_m'), 1, ' m')}; the maximum measured known-free horizon is {fmt(known_free.get('maximum'), 1, ' m')}. "
         "Unavailable planner measurements are shown as N/A and are not treated as zero. "
@@ -2909,6 +2896,12 @@ def render(session: Path, output: Path) -> Path:
             f'<td>{"yes" if item.get("oscillation_evidence") else "no"}</td></tr>'
         )
     oscillation_html = "".join(oscillation_rows) or '<tr><td colspan="9">No goal interval with usable ground-truth samples was recorded.</td></tr>'
+    report_reasons = report.get("reasons", [])
+    report_reasons_html = "".join(
+        f"<li>{esc(reason)}</li>" for reason in report_reasons
+    ) if isinstance(report_reasons, list) else ""
+    if not report_reasons_html:
+        report_reasons_html = "<li>No reasons recorded.</li>"
     html_text = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -2980,12 +2973,13 @@ def render(session: Path, output: Path) -> Path:
 <main>
   <header class="hero">
     <div><div class="eyebrow">PX4 / SITL flight review</div><h1>External Mode · {esc(metrics.get('mission', {}).get('waypoint_count', 0))}-waypoint mission</h1><p class="session">Session: {esc(session_name)} · {fmt(mission.get('duration_sim_s'), 1, ' s')} simulated · generated from recorded artifacts</p></div>
-    <div class="hero-right">{status_chip(evaluation["overall"], evaluation["overall"])}</div>
+    <div class="hero-right">{status_chip(report.get('verdict') or 'N/A', report.get('verdict') or 'N/A')}</div>
   </header>
 
   <div class="run-log" aria-label="Simulation runtime and experiment context"><span><strong>Experiment time</strong> {esc(experiment_time)}</span><span><strong>SITL profile</strong> {esc(profile_name)}</span><span><strong>Qualification eligible</strong> {esc(qualification_eligible)}</span><span><strong>Requested speed</strong> {fmt(target_speed_mps, 2, ' m/s')}</span><span><strong>Governed speed</strong> {fmt(governed_speed_mps, 2, ' m/s')}</span><span><strong>Physical ceiling</strong> {fmt(physical_speed_mps, 2, ' m/s')}</span><span><strong>Measured peak</strong> {fmt(measured_peak_speed_mps, 2, ' m/s')}</span><span><strong>Simulation runtime</strong> {fmt(sim_duration_s, 3, ' s')}</span><span><strong>Recorded telemetry window</strong> {esc(sim_window)}</span><span><strong>Wall elapsed</strong> {fmt(wall_elapsed_s, 3, ' s')}</span></div>
 
-  <p class="lede">The versioned evaluator separates mission, safety, tracking, motion-quality and evidence dimensions. Guidance deviation is descriptive geometry only; it is not a tracking or mission gate. Telemetry verdict: {esc(evaluation["telemetry_verdict"])}.</p>
+  <p class="lede">Telemetry verdict from report.json: {esc(report.get('verdict') or 'N/A')}.</p>
+  <section><h2>Verdict reasons from report.json</h2><ul>{report_reasons_html}</ul></section>
 
   <div class="kpis">
     <div class="card kpi {status_class(gates['mission'])}"><div class="kpi-label">Mission outcome</div><div class="kpi-value">{esc(outcome or 'N/A')}</div><div class="kpi-sub">{status_chip(gates['mission'])} expected {esc(acceptance.get('expected_outcome') or 'complete')}</div></div>

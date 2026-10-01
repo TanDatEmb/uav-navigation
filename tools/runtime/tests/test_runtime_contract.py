@@ -1,9 +1,11 @@
 import importlib.util
+import ast
 import hashlib
 import io
 import json
 import math
 import os
+import signal
 from pathlib import Path
 import re
 import shutil
@@ -13,6 +15,7 @@ import sys
 import tempfile
 import time
 from types import SimpleNamespace
+from typing import Any
 import unittest
 from unittest import mock
 from contextlib import redirect_stderr
@@ -1864,6 +1867,56 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(mission_value["mission"]["planning"]["unknown_policy"], "allow_unknown")
             planning = runner._mission_planning(mission)
             self.assertEqual(planning["requested_cruise_speed_mps"], expected_velocity)
+
+    def test_navigation_command_publisher_guard_is_ast_based(self) -> None:
+        from tools.check_world_evidence_non_authority import publisher_types
+
+        for source in (
+            "self.create_publisher(NavigationCommand, topic, qos)",
+            "self.create_publisher(\n NavigationCommand, topic, qos)",
+        ):
+            self.assertEqual(publisher_types(source), ["NavigationCommand"])
+
+    def test_runtime_json_write_is_atomic_when_sigterm_interrupts_replace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary))
+            runtime_path = session.directory / "runtime.json"
+            runtime_path.write_text('{"old": true}\n', encoding="utf-8")
+            previous = signal.getsignal(signal.SIGTERM)
+
+            def interrupt(_signum, _frame):
+                raise KeyboardInterrupt("simulated SIGTERM during atomic replace")
+
+            signal.signal(signal.SIGTERM, interrupt)
+            try:
+                def signal_before_replace(*_args):
+                    os.kill(os.getpid(), signal.SIGTERM)
+
+                with mock.patch.object(runner.os, "replace", side_effect=signal_before_replace):
+                    with self.assertRaises(KeyboardInterrupt):
+                        runner._write_runtime(session, new=True)
+            finally:
+                signal.signal(signal.SIGTERM, previous)
+            self.assertEqual(json.loads(runtime_path.read_text(encoding="utf-8")), {"old": True})
+            self.assertEqual(list(Path(temporary).glob(".runtime.json.*.tmp")), [])
+
+    def test_scenario_signal_handler_defers_finish_to_main_loop(self) -> None:
+        source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "run")
+        stop = next(node for node in ast.walk(main) if isinstance(node, ast.FunctionDef) and node.name == "stop")
+        self.assertFalse(any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "finish"
+            for node in ast.walk(stop)
+        ))
+        self.assertTrue(any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "finish"
+            for node in ast.walk(main)
+        ))
+
+    def test_tracking_experiment_metadata_warning_preserves_off_vs_relaxed(self) -> None:
+        self.assertIsNone(runner._tracking_experiment_warning("off"))
+        self.assertIn("diagnostic", runner._tracking_experiment_warning("relaxed"))
 
     def test_stress_profiles_have_ground_truth_collision_geometry(self) -> None:
         for profile in (
@@ -4473,6 +4526,19 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertAlmostEqual(snapshot["maximum_observed_arrival_gap_ms"], 480.0)
         self.assertEqual(snapshot["diagnostic_gap_events"][0]["source_stamp_ns"],
                          1_004_000_000)
+
+    def test_stream_staleness_uses_sim_clock_and_keeps_wall_arrival_diagnostic(self) -> None:
+        stats = StreamStats("imu", "/imu", stale_after_s=0.5)
+        stats.update(1_000_000_000, 10_000_000_000)
+        stats.update(1_300_000_000, 10_600_000_000)
+        stats.check_stale(10_600_000_000, 1_300_000_000)
+        snapshot = stats.as_dict()
+        self.assertEqual(snapshot["source_stale_event_count"], 0)
+        self.assertEqual(snapshot["arrival_gap_event_count"], 1)
+        stats.check_stale(11_620_000_000, 1_810_000_000)
+        snapshot = stats.as_dict()
+        self.assertEqual(snapshot["source_stale_event_count"], 1)
+        self.assertEqual(snapshot["source_stale_event_times_ns"], [1_800_000_000])
 
     def test_clock_gap_snapshot_is_authoritative_without_raw_samples(self) -> None:
         row = {
