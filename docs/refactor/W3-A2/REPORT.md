@@ -1,11 +1,11 @@
 # W3-A2 report
 
-Gate v3 tooling and documentation drift cleanup are implemented on baseline `432dc94` in branch `refactor/W3-A2`. Branch is pushed for architecture review; no merge was performed.
+Gate v3 tooling and documentation cleanup are implemented on baseline `432dc94` in branch `refactor/W3-A2`. Branch is pushed for architecture review; no merge was performed.
 
 ## Deliverable
 
 - `tools/gate.sh {static|python|ros|all}` records HEAD/dirty count and fails closed on a failed stage.
-- `tools/check_dependency_direction.py` checks package and CMake dependency rules without ROS runtime.
+- `tools/check_dependency_direction.py` checks package, CMake, and forbidden product subscriptions without ROS runtime.
 - Provenance now fails clearly when a git submodule is present in the index but not initialized.
 - `Makefile` exposes `make gate`; gate tests cover a passing current tree and a whitespace-error fixture.
 - Architecture drift notes carry the historical banner; KB-08 Q2 points to `tools/gate.sh all`; the missing build skill is restored.
@@ -15,10 +15,11 @@ Gate v3 tooling and documentation drift cleanup are implemented on baseline `432
 | Command | Result |
 |---|---|
 | `git diff --check` | PASS |
-| `./tools/check_dependency_direction.py` | PASS; 3 baseline B3 violations allow-listed with finding/WP, no new violation |
+| `./tools/check_dependency_direction.py` | PASS; 4 baseline exceptions allow-listed with finding/WP, including ADR-021 Q3 `/lio/diagnostics` |
 | `tools/gate.sh static` | PASS; ledger PASS, mission authority PASS, citations `989 checked out_of_range=0`, dependency PASS, `GATE_V3_RESULT=PASS` |
-| `tools/gate.sh python` | PASS; Python 3.12.3, tools/tests 15/15, runtime/tests 421/421, 2 skips |
-| targeted gate/dependency/provenance tests | PASS (9/9) |
+| targeted gate/dependency tests | PASS (12/12) |
+| B-1 failure-injection tests | PASS; each static validator and `colcon build` fails non-zero with `GATE_V3_RESULT=FAIL` |
+| `tools/gate.sh python` | NOT_MEASURED after current B-1/B-2 changes |
 | `tools/gate.sh ros` | NOT_MEASURED |
 
 ## Findings
@@ -33,6 +34,9 @@ Gate v3 tooling and documentation drift cleanup are implemented on baseline `432
 | Review §3 F5: fresh selected-package test results and separate `px4_ros2_cpp` attachment | FIXED | `9aaf7ff` |
 | Review §3 F6: certifier `rclcpp` rule and stale allow-list warning | FIXED | `9aaf7ff` |
 | Review §4d: uninitialized-submodule provenance recursion | FIXED | `d43e4b0` |
+| Review B-1: `if main` disabled fail-closed gate semantics | FIXED | `7afc5ad` |
+| Review B-2: ADR-021 Q3 forbidden subscription guard | FIXED | `a9acba9` |
+| Contract v3 §6 cleanup: consumed wave-1/wave-2/architecture docs and links | FIXED | final `docs(cleanup)` commit |
 
 ## Open questions / deviations
 
@@ -40,6 +44,7 @@ Gate v3 tooling and documentation drift cleanup are implemented on baseline `432
 - ROS gate remains `NOT_MEASURED` because this W3-A2 write-set does not change a ROS package and no sourced ROS build was required for this branch. Status: `CONDITIONAL`.
 - `navigation_execution -> navigation_world_model` remains an explicit baseline B3 allow-list entry (`V1/W3-B3`) and is still reported as a warning; this A2 change does not widen that exception. It must be removed when B3 resolves the dependency.
 - The build parallelism default was not changed in A2. B3 evidence used the bounded override `PARALLEL_WORKERS=2 MAKE_JOBS=2`; this avoids reintroducing the prior high-parallelism crash risk while leaving build-policy ownership with the build/tooling workstream.
+- The cleanup commit removes only the paths listed in `W3-A2_gate.md` and the corresponding stale links; the five-file architecture deletion list contained no tracked `px4_tracking_adapter_design20260909.md` in this baseline, so no untracked or unrelated file was removed.
 
 ## Commit table before transfer
 
@@ -54,3 +59,5 @@ Gate v3 tooling and documentation drift cleanup are implemented on baseline `432
 | `d6a2d81` | `docs(wave3): record A2 remote handoff` |
 | `9aaf7ff` | `fix(gate): harden wave3 gate and dependency guard` |
 | `d43e4b0` | `fix(tools): reject uninitialized provenance submodules` |
+| `7afc5ad` | `fix(gate): preserve fail-closed stage errors` |
+| `a9acba9` | `fix(gate): guard forbidden evidence subscriptions` |
