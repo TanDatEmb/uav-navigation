@@ -42,3 +42,5 @@ Gate v3 tooling and documentation drift cleanup are implemented on baseline `432
 | `91c1f51` | `docs(wave3): finalize A2 gate report` |
 | `2ba95d0` | `docs(wave3): record A2 Python gate evidence` |
 | `47beb3d` | `fix(gate): enforce wave3 dependency and package scopes` |
+| `06f2b8c` | `docs(wave3): align A2 report with final gate` |
+| `d6a2d81` | `docs(wave3): record A2 remote handoff` |
