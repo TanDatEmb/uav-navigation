@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import shutil
 import shlex
 import subprocess
 import sys
@@ -964,6 +965,47 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertNotEqual(
                 first["submodules"][0]["sha256"], second["submodules"][0]["sha256"]
             )
+
+    def test_source_fingerprint_rejects_uninitialized_submodule(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            child = base / "child"
+            root = base / "root"
+            child.mkdir()
+            root.mkdir()
+            for repository in (child, root):
+                subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+                subprocess.run(
+                    ["git", "config", "user.email", "test@example.com"],
+                    cwd=repository,
+                    check=True,
+                )
+                subprocess.run(
+                    ["git", "config", "user.name", "Test"],
+                    cwd=repository,
+                    check=True,
+                )
+            (child / "value.txt").write_text("one\n", encoding="utf-8")
+            subprocess.run(["git", "add", "value.txt"], cwd=child, check=True)
+            subprocess.run(["git", "commit", "-qm", "child"], cwd=child, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "add",
+                    "-q",
+                    str(child),
+                    "vendor",
+                ],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(["git", "commit", "-qam", "root"], cwd=root, check=True)
+            shutil.rmtree(root / "vendor")
+            with self.assertRaisesRegex(RuntimeError, "submodule vendor not initialized"):
+                build_provenance.source_fingerprint(root)
 
     def test_source_fingerprint_covers_untracked_nested_repository_content(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
