@@ -1,114 +1,77 @@
 # W3-B1 — Piece/Trajectory polynomial contract
 
-## 1. Tóm tắt
+## Tóm tắt
 
-CONFIRMED: W3-B1 chạy trên branch `refactor/W3-B1`, baseline `origin/main=432dc94630fbc76ca670138228f2f616f6840bb0`.
-CONFIRMED: `Piece`, `Trajectory`, `RootFinder` và implementation đã chuyển sang `navigation_planning/polynomial`.
-CONFIRMED: backend không còn include path cũ; namespace lớp vẫn `geometry_utils`, root finder vẫn `math_utils`.
-CONFIRMED: `navigation_planning::polynomial` là static target mới, backend link target này; package.xml không thêm dependency.
-CONFIRMED: alias Eigen thuần nằm trong `types.hpp`; `trajectory.hpp` bỏ include `color_msg_utils.hpp` không dùng.
-CONFIRMED: syntax compile các TU/header thuần, `git diff --check`, safety ledger và citation check đã PASS.
-CONDITIONAL: graph command không báo cycle; dependency guard chưa có trên baseline A2 chưa merge.
-NOT_MEASURED: build Release/CTest/gate all do canonical build lock của worktree R2.
-Branch `refactor/W3-B1` sẽ được push để kiến trúc sư review; không merge.
+CONFIRMED: branch `refactor/W3-B1` đã rebase sạch lên `origin/main=24ec0fc8718bb8606e4e9e4a7eaa84773d384854`; không merge cây chính.
+CONFIRMED: W3-B1 vẫn là `refactor(move)` duy nhất; `Piece`, `Trajectory`, `RootFinder` và implementation ở `navigation_planning/polynomial`, giữ `geometry_utils`/`math_utils`.
+CONFIRMED: REVIEW_R1 §3 #3 đã xử lý: `color_text` là bản chép nguyên văn định nghĩa gốc `static const std::string`; target `polynomial` bật `POSITION_INDEPENDENT_CODE ON`.
+CONFIRMED: không thêm dependency ROS/`rog_map_vendor`; không còn include path cũ trong source backend.
+CONDITIONAL: static/python gate PASS; Release build PASS; CTest/gate ROS ghi theo kết quả mới nhất bên dưới.
+NOT_APPLICABLE: SITL/replay không chạy vì đây là MOVE-only, không đổi runtime behavior, threshold, authority hoặc safety policy.
 
-## 2. Deliverables và changed paths
+## Deliverables và write-set
 
 - Contract headers: `src/planning/navigation_planning/include/navigation_planning/polynomial/{piece,trajectory,root_finder,types}.hpp`.
 - Implementations: `src/planning/navigation_planning/src/polynomial/{piece,trajectory,root_finder}.cpp`.
-- CMake: `src/planning/navigation_planning/CMakeLists.txt`,
-  `src/planning/navigation_planning_backend/CMakeLists.txt`.
-- Backend callers: 25 include sites trong `data_structure`, `planner_core`,
-  `planner_runtime_context`, `traj_opt`, `utils` và 2 test translation units.
-- `src/planning/navigation_planning_backend/include/utils/header/type_utils.hpp`
-  include `types.hpp` là include ngược duy nhất được giữ theo prompt.
-- Không chuyển test `test_trajectory.cpp`: test này dùng backend/corridor/planner,
-  không phải test thuần Piece/Trajectory/RootFinder.
+- CMake: `src/planning/navigation_planning/CMakeLists.txt`, `src/planning/navigation_planning_backend/CMakeLists.txt`.
+- Backend callers: include path mới cho các caller/test; header cũ không còn shim.
+- `type_utils.hpp` giữ include ngược duy nhất tới `polynomial/types.hpp` theo prompt; `trajectory.hpp` bỏ `color_msg_utils.hpp` không dùng.
+- Test `test_trajectory.cpp` giữ ở backend vì dùng backend/corridor/planner, không phải test thuần của contract.
 
-## 3. Move diff/hunk table
+## Rebase / MOVE evidence
 
-Lệnh: `git diff origin/main..HEAD -M --color-moved=zebra --color-moved-ws=allow-indentation-change --stat`
-
-```text
-36 files changed, 106 insertions(+), 52 deletions(-)
-Piece header R080; RootFinder header R100; Trajectory header R098
-piece.cpp R099; root_finder.cpp R099; trajectory.cpp R098
-```
-
-| File/hunk | Nội dung không-moved | Lý do contract |
-|---|---|---|
-| `piece.hpp:33-50` | include mới và qualifier alias từ `navigation_math` sang `navigation_planning::polynomial_types` | include, namespace |
-| `trajectory.hpp:34-37` | include `piece.hpp` mới; bỏ `color_msg_utils.hpp` | include, unused-include |
-| `piece.cpp:7`, `trajectory.cpp:7`, `root_finder.cpp:1` | include header public mới | include |
-| `trajectory.cpp:9-19` | include `<iostream>` và giữ `RESET/GREEN` bằng compatibility alias cục bộ, byte ANSI không đổi | include, alias |
-| `navigation_planning/CMakeLists.txt:28-40` | target `navigation_planning::polynomial`, source/install/export | cmake |
-| `navigation_planning_backend/CMakeLists.txt:21-43,60-66` | bỏ source đã move, link target mới | cmake |
-| backend include/test callers | đổi include path, không đổi symbol/body | include |
-| `type_utils.hpp:5` | thêm include `types.hpp`; giữ include ngược duy nhất | include |
-
-`PLANNER_BACKEND_PORT_SHA256.json` còn key path legacy để giữ provenance manifest;
-đây không phải source include hoặc shim và không được sửa trong WP này.
-
-## 4. Dependency/type guard
-
-- CONFIRMED: `navigation_planning/package.xml` vẫn chỉ có dependency cũ; `eigen`
-  đã tồn tại, không thêm `rog_map_vendor`, ROS msg hay `rclcpp`.
-- CONFIRMED: source/header mới không include `navigation_math/type_utils.hpp`,
-  `color_msg_utils.hpp`, `std_msgs`, `rclcpp`, `rog_map_vendor` hoặc
-  `navigation_planning_backend`.
-- CONFIRMED: `types.hpp` chỉ chứa Eigen/vector aliases cần cho public contract.
-- NOT_MEASURED: `python3 tools/check_dependency_direction.py` — file chưa tồn tại
-  trên baseline `origin/main`; xem `OPEN_QUESTIONS.md` OQ-01.
-
-## 5. Verification — output thật
-
-| Kiểm tra | Kết quả |
+| Hạng mục | Kết quả |
 |---|---|
-| `g++ -std=c++20 -Isrc/planning/navigation_planning/include -I/usr/include/eigen3 -fsyntax-only` trên 3 TU mới | PASS; cả `piece.cpp`, `root_finder.cpp`, `trajectory.cpp` exit 0 |
-| Header compile `piece.hpp`/`trajectory.hpp`/`root_finder.hpp` | PASS; exit 0 |
-| Direct syntax compile of `optimization_utils.h` and `kinematic_state_boundary.hpp` with navigation-math closure | PASS after review fix |
-| Old include guard trên `src` (loại trừ provenance JSON) | PASS; không còn match |
-| Forbidden dependency grep trong package mới | PASS; không có match |
-| `git diff --check` | PASS |
-| `python3 tools/validate_runtime_safety_ledger.py` | `runtime safety ledger validation: PASS (current=482 lines, gates=34, bypasses=1)` |
-| `python3 tools/refactor/check_citations.py . docs/refactor` | `checked=989 out_of_range=0 ambiguous_basenames=[...]` |
-| `colcon graph --base-paths src --packages-select navigation_planning navigation_planning_backend navigation_runtime navigation_execution` | exit 0; liệt kê 4 package, không báo cycle |
-| `python3 tools/check_dependency_direction.py` | NOT_MEASURED: `No such file or directory` |
-| `make build` | NOT_MEASURED: canonical lock pid 17616 thuộc worktree R2 |
-| CTest `navigation_planning navigation_planning_backend navigation_runtime navigation_execution` | NOT_MEASURED; chờ build Release |
-| `tools/gate.sh all` | NOT_MEASURED; script chưa có trên baseline A2 |
-| `git log --first-parent 7e0b850..432dc946 -- src config` | NOT_MEASURED: `fatal: bad revision` |
+| Base yêu cầu | `24ec0fc8718bb8606e4e9e4a7eaa84773d384854` |
+| `git merge-base HEAD origin/main` | `24ec0fc8718bb8606e4e9e4a7eaa84773d384854` |
+| Rebase | PASS, không conflict |
+| Diff move | `git diff -M --color-moved=zebra --color-moved-ws=allow-indentation-change --stat origin/main..HEAD` giữ các file polynomial ở mức `R*`; logic thân hàm không đổi |
+| Hunk không-moved | include path/`<string>`: include; qualifier Eigen: namespace; target/install/link: cmake; local `color_text` copy thay alias: alias; bỏ `color_msg_utils.hpp`: unused-include |
+| Dependency | `navigation_planning` không link `rog_map_vendor`; không có cycle trong graph |
 
-## 6. Lệch prompt / rủi ro còn lại
+## Gate và kiểm chứng
 
-- A2 chưa merge trên baseline nên guard/gate v3 chưa thể chạy; không tự copy/sửa A2.
-- Build/CTest chưa hoàn tất do lock ngoài worktree; không gọi đây là PASS.
-- Compatibility alias màu diagnostic cần xác nhận kiến trúc sư; không đổi threshold,
-  deadline, lease, budget, UNKNOWN policy, tolerance hay runtime authority.
+- `tools/gate.sh static`: PASS — ledger `current=483 lines, gates=34, bypasses=1`; mission authority PASS; citations `checked=927 out_of_range=0`; dependency direction PASS với 4 baseline exceptions.
+- `tools/gate.sh python`: PASS — Python 3.12.3; `tools/tests` 19/19; runtime `422 tests`, `OK (skipped=2)`.
+- `flock /tmp/uavnav-build.lock env PARALLEL_WORKERS=2 MAKE_JOBS=2 make build`: PASS — 23 packages, 18m43s; authoritative build manifest được ghi trong `install/`.
+- `flock /tmp/uavnav-build.lock env PARALLEL_WORKERS=2 MAKE_JOBS=2 make test`: PENDING/NOT_MEASURED — chờ lock dùng chung được worktree C1 giữ cho build; không gọi là PASS nếu chưa có output exit 0.
+- `tools/gate.sh ros` và CTest bắt buộc: PENDING/NOT_MEASURED — sẽ chạy dưới `flock` trên đúng HEAD cuối.
+- SITL/replay: NOT_APPLICABLE cho `refactor(move)`; không dùng thiếu SITL để claim qualification runtime.
 
-## 7. Finding → trạng thái → commit
+## REVIEW_R1 finding → status → commit
 
-| Finding | Trạng thái | Commit |
+| Finding | Status | Commit |
 |---|---|---|
-| Piece/Trajectory/RootFinder còn nằm trong backend contract | FIXED | `fe39ee4` |
-| Backend còn dùng include path cũ | FIXED | `fe39ee4` |
-| Piece kéo `rog_map_vendor`/ROS qua type_utils | FIXED trong contract mới; old backend `type_utils.hpp` giữ nguyên closure cho caller cũ | `fe39ee4` |
-| `trajectory.hpp` include `color_msg_utils.hpp` không dùng | FIXED | `fe39ee4` |
-| Backend include/type closure after removing the old trajectory transitive include | FIXED | `f6ce417` |
-| Dependency guard/gate v3 | NOT_FIXED trên baseline hiện tại; chờ A2 merge | — |
-| Release build + affected/reverse CTest | NOT_MEASURED do build lock | — |
+| Piece/Trajectory/RootFinder còn ở backend contract | FIXED | `1866788` |
+| Backend còn include path cũ | FIXED | `1866788` |
+| `trajectory.hpp` kéo `color_msg_utils.hpp` không dùng | FIXED | `1866788` |
+| Closure type thuần không được kéo `rog_map_vendor` vào target mới | FIXED | `1866788`, `a1a8d68` |
+| REVIEW_R1 §3 #3: copy nguyên văn `color_text` gốc | FIXED | `50e008f` |
+| REVIEW_R1 §3 #3: `POSITION_INDEPENDENT_CODE ON` cho `polynomial` | FIXED | `50e008f` |
+| Release build / affected + reverse CTest | PARTIAL — build PASS; test/gate ROS chờ lock | `50e008f` |
+| SITL qualification | NOT_APPLICABLE — MOVE-only | — |
 
-## 8. Commit
+## Open questions / deviations
 
-`git log --format='%h %s' origin/main..HEAD` ngay trước remote handoff:
+- OQ-01/OQ-02/OQ-03 cũ đã được cập nhật theo baseline v3; OQ-02 đóng bằng `50e008f`.
+- Legacy lineage SHA không truy hồi theo COMMON_CONTRACT_v3; không dùng làm bằng chứng.
+- Prompt W3-B1 không liệt kê path ở mục “Dọn dẹp và đóng”; vì vậy không tự `git rm` file nào và không tạo cleanup commit giả. Nếu kiến trúc sư chỉ định path cụ thể, ghi vào OPEN_QUESTIONS và xử lý ở commit `docs(cleanup)` riêng.
 
-```text
-fe39ee4 refactor(planning): move polynomial contract into navigation_planning
-efbe539 docs(planning): report W3-B1 move evidence
-aca3347 docs(wave3): record B1 remote handoff
-f6ce417 fix(planning): restore direct type includes
-1360bc6 docs(wave3): record B1 review fix
-fc00517 docs(wave3): complete B1 commit inventory
-```
+## Commit inventory
 
-Branch `refactor/W3-B1` được push để review; không merge. A1/A2 dependency và Release/CTest gate vẫn là điều kiện mở.
+Bảng này lấy từ `git log --format='%h %s' origin/main..HEAD` sau commit code và trước commit report carrier; report carrier/final HEAD được xác nhận lại trong REVIEW REQUEST trước push.
+
+| SHA | Message |
+|---|---|
+| `50e008f` | `refactor(planning): preserve moved color contract and enable PIC` |
+| `9a05722` | `docs(wave3): complete B1 commit inventory` |
+| `0f489e4` | `docs(wave3): complete B1 commit inventory` |
+| `25b2702` | `docs(wave3): record B1 review fix` |
+| `a1a8d68` | `fix(planning): restore direct type includes` |
+| `55e7671` | `docs(wave3): record B1 remote handoff` |
+| `b9d87d5` | `docs(planning): report W3-B1 move evidence` |
+| `1866788` | `refactor(planning): move polynomial contract into navigation_planning` |
+
+## Handoff
+
+Branch sẽ được push bằng `--force-with-lease` sau khi test/gate/report hoàn tất; không merge. REVIEW REQUEST cuối phải ghi head/base/rebase/range-diff, gate, SITL, OQ, finding status, cleanup và deviation.
