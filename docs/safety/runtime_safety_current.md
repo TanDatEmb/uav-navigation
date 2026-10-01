@@ -186,6 +186,20 @@ These labeled summaries are the only retained record of the legacy decisions.
 
 ## Baseline notes / unresolved inconsistencies
 
+## W3-A4 J1b.1: shared judge evaluation window
+
+- Owner/status: runtime judge tooling; IMPLEMENTED, UNIT_VERIFIED, DIAGNOSTIC_ONLY.
+- Scope: `evaluation_window` selects reference samples for position/velocity
+  statistics and tracking coverage; no frame conversion, threshold, or product
+  command authority changes.
+- Safety impact: out-of-window samples cannot change diagnostic summaries or
+  coverage; missing/invalid windows remain `NOT_EVALUABLE` without a PASS default.
+- Evidence: RED exposed an out-of-window 100 m / 100 m/s sample; GREEN targeted
+  tests passed. No SITL or rejudge session was available: runtime `NOT_EVALUABLE`.
+- Removal/verify: revisit only for distinct metric windows or a typed evidence
+  producer; run focused tests, Python gate, ledger validator, and `git diff --check`.
+- Authority: owner decision 2026-09-30 R7-27: `evaluation_window` áp cho cả error statistics và coverage.
+
 - The legacy gate table recorded `HG-004` as 12/12/30, while current source and
   recent evidence distinguish MAIN 5/5/8 from physical/BACKUP 12/12/30. The
   split is recorded in this contract; no runtime value was changed by the

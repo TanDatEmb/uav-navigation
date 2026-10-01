@@ -856,6 +856,29 @@ class EvaluationTest(unittest.TestCase):
         self.assertAlmostEqual(metric["coverage_ratio"], 0.5)
         self.assertEqual(metric["qualification_checks"]["coverage_sufficient"], False)
 
+    def test_evaluation_window_limits_position_and_velocity_error_statistics(self):
+        commands = [
+            pva(1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            pva(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            pva(3_000_000_000, (2.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        ]
+        data = inputs(commands, [
+            truth(1_000_000_000, (100.0, 0.0, 0.0), (100.0, 0.0, 0.0)),
+            truth(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            truth(3_000_000_000, (2.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        ])
+        data["evaluation_window"] = {
+            "start_ns": 2_000_000_000,
+            "end_ns": 3_000_000_000,
+        }
+        metrics = evaluate_session(data)["metrics"]
+        position = metrics["tracking.navigation_reference_vs_truth"]
+        velocity = metrics["tracking.navigation_reference_vs_truth.velocity"]
+        self.assertEqual(position["maximum"], 0.0)
+        self.assertEqual(position["p95"], 0.0)
+        self.assertEqual(velocity["maximum"], 0.0)
+        self.assertEqual(velocity["p95"], 0.0)
+
     def test_zero_minimum_coverage_policy_is_invalid(self):
         data = inputs(
             [pva(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),

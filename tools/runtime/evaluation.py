@@ -2100,10 +2100,32 @@ def _frame_witness(
     }
 
 
+def _select_evaluation_window(
+    samples: list[dict[str, Any]], inputs: dict[str, Any]
+) -> tuple[list[dict[str, Any]], tuple[int, int] | None, str | None]:
+    window = inputs.get("evaluation_window")
+    if not isinstance(window, dict):
+        return list(samples), None, "COVERAGE_WINDOW_UNAVAILABLE"
+    start = _integer(window.get("start_ns", window.get("source_start_ns")))
+    end = _integer(window.get("end_ns", window.get("source_end_ns")))
+    if start is None or end is None or end <= start:
+        return list(samples), None, "COVERAGE_WINDOW_INVALID"
+    selected = [
+        item for item in samples
+        if (
+            (stamp := _integer(item.get("source_stamp_ns"))) is not None
+            and start <= stamp <= end
+        )
+    ]
+    return selected, (start, end), None
+
+
 def _tracking_coverage(
     reference: list[dict[str, Any]],
     matched_stamps: list[int],
     inputs: dict[str, Any],
+    evaluation_window: tuple[int, int] | None,
+    window_error: str | None,
 ) -> tuple[dict[str, Any], list[str]]:
     policy = inputs.get("tracking_coverage_policy")
     required = ("min_coverage_ratio", "max_uncovered_interval_s", "max_pairing_gap_s")
@@ -2142,23 +2164,14 @@ def _tracking_coverage(
             "uncovered_intervals": [], "status": "NOT_EVALUABLE",
             "reason": "TRACKING_COVERAGE_POLICY_INVALID",
         }, ["TRACKING_COVERAGE_POLICY_INVALID"]
-    window = inputs.get("evaluation_window")
-    if not isinstance(window, dict):
+    if evaluation_window is None:
         return {
             "required_duration_s": None, "valid_duration_s": None,
             "coverage_ratio": None, "longest_uncovered_interval_s": None,
             "uncovered_intervals": [], "status": "NOT_EVALUABLE",
-            "reason": "COVERAGE_WINDOW_UNAVAILABLE",
-        }, ["COVERAGE_WINDOW_UNAVAILABLE"]
-    start = _integer(window.get("start_ns", window.get("source_start_ns")))
-    end = _integer(window.get("end_ns", window.get("source_end_ns")))
-    if start is None or end is None or end <= start:
-        return {
-            "required_duration_s": None, "valid_duration_s": None,
-            "coverage_ratio": None, "longest_uncovered_interval_s": None,
-            "uncovered_intervals": [], "status": "NOT_EVALUABLE",
-            "reason": "COVERAGE_WINDOW_INVALID",
-        }, ["COVERAGE_WINDOW_INVALID"]
+            "reason": window_error or "COVERAGE_WINDOW_UNAVAILABLE",
+        }, [window_error or "COVERAGE_WINDOW_UNAVAILABLE"]
+    start, end = evaluation_window
     pairing_gap = maximum_pairing_gap * 1e9
     valid = sorted({
         stamp for stamp in matched_stamps if start <= stamp <= end
@@ -2243,6 +2256,9 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
         reference, policy=SourceTimestampPolicy.STRICTLY_INCREASING)
     reference_time_reasons = sorted(set(reference_time_reasons + heartbeat_reasons))
     reference_time_valid = reference_time_valid and not heartbeat_reasons
+    evaluation_reference, evaluation_window, window_error = _select_evaluation_window(
+        reference, inputs
+    )
     lineage_valid, lineage_reasons = _reference_lineage_status(inputs, raw_reference)
     policy = inputs.get("tracking_coverage_policy")
     pairing_gap = (
@@ -2298,9 +2314,15 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
             reasons.extend(metric_reasons)
             continue
         position_errors, velocity_errors, matched, gaps, matched_stamps = _tracking_pair(
-            reference, measured, diagnostic_gap, frame_transform
+            evaluation_reference, measured, diagnostic_gap, frame_transform
         )
-        coverage, coverage_reasons = _tracking_coverage(reference, matched_stamps, inputs)
+        coverage, coverage_reasons = _tracking_coverage(
+            evaluation_reference,
+            matched_stamps,
+            inputs,
+            evaluation_window,
+            window_error,
+        )
         source_time_valid = (
             reference_time_valid and measured_time_valid and clock_relation_valid
         )
@@ -2316,7 +2338,7 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
         metrics[name] = _metric_from_errors(
             position_errors, unit="m", source="published_navigation_command",
             time_basis="command_source_stamp", frame=frame, matched=matched,
-            total=len(reference), max_gap_s=max(gaps, default=None),
+            total=len(evaluation_reference), max_gap_s=max(gaps, default=None),
         )
         coverage_status = coverage.get("status")
         coverage_reason = coverage.get("reason")
@@ -2341,7 +2363,7 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
         metrics[name + ".velocity"] = _metric_from_errors(
             velocity_errors, unit="m/s", source="published_navigation_command",
             time_basis="command_source_stamp", frame=frame, matched=matched,
-            total=len(reference), max_gap_s=max(gaps, default=None),
+            total=len(evaluation_reference), max_gap_s=max(gaps, default=None),
         )
         metrics[name + ".velocity"].update(coverage)
         metrics[name + ".velocity"]["coverage_status"] = coverage_status
