@@ -5,7 +5,7 @@
 - Baseline: `origin/main @ 432dc94630fbc76ca670138228f2f616f6840bb0`; branch `refactor/W3-B6`.
 - Deliverable: target STATIC `px4_setpoint_core`, không ROS/PX4 runtime dependency; adapter và test thuần link target này.
 - `navigation_mode_node.cpp` giữ nguyên 2 703 dòng; không tách `updateSetpoint`, không chạm `flight_profile`.
-- Trạng thái: **CONDITIONALLY VERIFIED** ở package scope; full workspace `make build` chưa chạy do shared build lock của WP-P0.3.
+- Trạng thái: **CONDITIONALLY VERIFIED** ở package scope; full workspace `make build` chưa chạy do shared build lock của WP-P0.3. Branch được push để review; không merge.
 
 ## Verification
 
@@ -55,6 +55,7 @@ Không giết hoặc chạy song song build dùng chung.
 | SHA | Message |
 |---|---|
 | `c08d832` | `refactor(px4): isolate pure setpoint core` |
+| `42b4c18` | `docs: report W3-B6 package gate` |
 
 ## Open questions
 
