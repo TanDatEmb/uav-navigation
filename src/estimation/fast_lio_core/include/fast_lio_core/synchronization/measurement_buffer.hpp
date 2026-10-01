@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -16,6 +17,9 @@ namespace uav::nav::lio {
 struct MeasurementBufferConfig {
   std::size_t maximum_lidar_scans{32};
   std::size_t maximum_imu_samples{8192};
+  // Shared with ImuStatePropagatorConfig::imu_history_duration_ns through the
+  // existing propagated-odometry parameter; this bounds pre-scan retention.
+  std::int64_t imu_history_duration_ns{1'000'000'000};
   bool reject_timestamp_regression{true};
 };
 

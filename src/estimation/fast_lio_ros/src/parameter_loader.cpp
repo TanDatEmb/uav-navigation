@@ -359,6 +359,9 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
   profile.timestamp_policy =
       parseTimestampPolicy(parameters.livox_timestamp_policy);
   auto& config = profile.estimator;
+  config.measurement_buffer.imu_history_duration_ns =
+      ParameterLoader::durationNanosecondsFromSeconds(
+          parameters.propagated_odometry_imu_history_duration_s);
   config.synchronization.maximum_imu_gap_ns =
       ParameterLoader::durationNanosecondsFromSeconds(parameters.maximum_imu_gap_s);
   config.tracking.maximum_recoverable_imu_gap_ns =

@@ -2420,6 +2420,8 @@ class ExternalModeScenario:
                         "acceptance_radius_m": radius,
                         "behavior": behavior,
                     })
+                if route_waypoints[-1]["behavior"] != "stop":
+                    raise ValueError("mission final waypoint must be stop")
             except (OSError, TypeError, ValueError, yaml.YAMLError) as error:
                 self.failure = f"planner mission route is invalid: {error}"
                 self.finish("INVALID_GOAL_CONFIGURATION")
