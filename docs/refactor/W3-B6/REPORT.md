@@ -60,12 +60,23 @@ MOVE thuần.
 | Structural test trước MOVE helper | RED: 6 lỗi đúng cho ba helper thiếu/đang còn ở node |
 | Structural test sau MOVE helper và sau include-root regression assertion | `PASS: px4_setpoint_core target and pure test links are structurally present` |
 | `tools/gate.sh static` | `GATE_V3_RESULT=PASS`; safety ledger `PASS`, mission authority `PASS`, dependency direction `PASS` với warning baseline đã cho phép |
-| `tools/gate.sh python` | tools `19/19`; runtime `422` tests OK, `skipped=2`; `GATE_V3_RESULT=PASS` |
+| `tools/gate.sh python` (lần chạy sớm) | tools `19/19`; runtime `422` tests OK, `skipped=2`; `GATE_V3_RESULT=PASS` |
 | Initial `make build` reproduction | FAIL at generated anchor: missing `navigation_contracts/navigation_command_contract.hpp`; root cause was missing `${navigation_contracts_INCLUDE_DIRS}` on core, fixed in `af471cc` |
 | `git diff --check` | PASS tại code checkpoint; chạy lại sau khi chốt REPORT |
 | `make build` dưới `flock /tmp/uavnav-build.lock` với `PARALLEL_WORKERS=2 MAKE_JOBS=2` | PASS, exit `0`; `23 packages finished [6min 1s]`; build manifest được ghi |
-| `make test` dưới cùng lock | exit `0`; Python runtime `Ran 422 tests ... OK (skipped=1)`; recipe còn ghi `STOPPED` và `Runtime report: FAIL (cleanup succeeded)` cho fixture runtime, không phải qualification evidence |
-| Targeted CTest dưới cùng lock | `100% tests passed, 0 tests failed out of 6`; tổng thời gian `0.30 sec` |
+| `make test` dưới cùng lock | exit `0`; Python runtime `Ran 422 tests ... OK (skipped=1)` |
+| Targeted CTest dưới cùng lock | `100% tests passed, 0 tests failed out of 6`; `0.30 sec` |
+| **Final `tools/gate.sh all` @ `c1d1ff9`** (`flock`, `PARALLEL_WORKERS=2 MAKE_JOBS=2`, log `/tmp/gate-b6-final.log`, `dirty_paths=0`) | static PASS (ledger `current=483 lines, gates=34, bypasses=1`; mission authority PASS; dependency direction PASS, 4 baseline warnings đã cho phép); python tools `19/19`, runtime `422` tests `OK (skipped=1)`; ros packages `navigation_bringup px4_navigation_external_mode`, CTest `100% passed, 0 failed out of 9`, tổng `1476 tests, 0 errors, 0 failures, 0 skipped`; px4_ros2_cpp attachment rc=0; **`GATE_V3_RESULT=PASS`**. Không cần dời `build/px4_ros2_cpp/{Testing,test_results}`. |
+
+### Giải thích dòng gây nhầm
+
+- `skipped=2` (lần `gate.sh python` sớm) so với `skipped=1` (`make test` và final gate): final gate chỉ có đúng một skip,
+  `test_tracking_experiment_report_preserves_velocity_only_from_real_artifact_shape` ("the reviewed GUI artifact is not present").
+  Không tái hiện `skipped=2` ở lần chạy này; nguyên nhân skip thứ hai của lần chạy sớm không được xác minh (khả năng do môi trường
+  lúc đó), và không liên quan tới diff B6 (không đụng test Python runtime).
+- `STOPPED` / `Runtime report: FAIL (cleanup succeeded)`: tái hiện trong final gate (log dòng ~472-473), nằm trong output của
+  unit test Python về cleanup runtime-artifact (tạo thư mục `tmp*/runtime/sim-*` giả rồi dọn; "removed tmp..." ngay phía trên). Đây là
+  chuỗi in ra của fixture test chứ không phải gate thất bại: kết quả cuối vẫn `OK`, `GATE_V3_RESULT=PASS`. Không phải bằng chứng qualification.
 
 `tools/gate.sh static` cũng đã chạy `python3 tools/validate_runtime_safety_ledger.py`;
 không có safety-document change trong B6. Không dùng single SITL run để suy ra
@@ -105,27 +116,25 @@ Không xoá file hay dọn `WP-A5`; prompt yêu cầu giữ oracle cho follow-up
    phù hợp mục tiêu W3-MOVE; B6 không thêm product `.cpp` ngoài write-set.
 2. N15 (unrepresentable input follow-up) vẫn là work riêng; B6 chỉ MOVE helper,
    không đổi gate hoặc hành vi.
-3. Full workspace build, `make test` và targeted CTest đã có kết quả thật ở trên;
-   full gate cuối vẫn phải chạy sau REPORT commit dưới shared lock.
+3. Full workspace build, `make test`, targeted CTest và `tools/gate.sh all` cuối (PASS @ `c1d1ff9`) đã có kết quả thật ở trên.
+   Commit chỉ-docs của REPORT này đến sau lần chạy gate; không đổi `src/`/`config/`/`tools/`.
 4. Không có claim runtime/SITL qualification trong báo cáo này.
 
 ## Commit inventory
 
-Bảng cuối phải được regenerate ngay trước push từ:
-
-```text
-git log --format='%h %s' origin/main..HEAD
-```
-
-Kết quả tại code checkpoint trước commit REPORT:
+Sinh từ `git log --format='%h %s' origin/main..HEAD` tại `c1d1ff9` (code + docs đã gate); commit chỉ-docs chứa chính bản REPORT này
+nằm trên đỉnh và không tự liệt kê được (xem `git log`). Rebased: yes, lên `origin/main @ 24ec0fc`; commit 1 (`722db27`) bị viết lại
+nên cần force-with-lease khi push (lease `7f35bf2`); chưa push. Conflicts: chỉ `src/px4/px4_navigation_external_mode/CMakeLists.txt`
+(xử lý như mục "Rebase và phạm vi").
 
 | SHA | Message |
 |---|---|
+| `c1d1ff9` | `docs(wave3): refresh B6 report` |
+| `af471cc` | `fix(px4): expose contract includes to setpoint core` |
+| `1ff734a` | `refactor(px4): move setpoint validation helpers` |
 | `9f0317c` | `docs(wave3): complete B6 commit inventory` |
 | `427e624` | `docs(wave3): complete B6 commit inventory` |
 | `22d2a73` | `docs(wave3): qualify B6 gate evidence` |
 | `9d39095` | `docs(wave3): record B6 remote handoff` |
 | `6a907be` | `docs(px4): record W3-B6 evidence` |
 | `722db27` | `refactor(px4): isolate pure setpoint core` |
-| `1ff734a` | `refactor(px4): move setpoint validation helpers` |
-| `af471cc` | `fix(px4): expose contract includes to setpoint core` |
