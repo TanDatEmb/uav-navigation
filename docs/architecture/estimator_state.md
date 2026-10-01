@@ -1,3 +1,5 @@
+> Historical design note. Authority: `docs/refactor/kb/` + ADR-017/018. Không dùng làm spec.
+
 # IKFoM estimator state
 
 The production estimator owns the upstream IKFoM manifold declared in

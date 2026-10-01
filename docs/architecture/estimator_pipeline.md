@@ -1,3 +1,5 @@
+> Historical design note. Authority: `docs/refactor/kb/` + ADR-017/018. Không dùng làm spec.
+
 # Estimator pipeline
 
 `RosLidarAdapter` and `RosImuAdapter` validate message layouts, units, frames,

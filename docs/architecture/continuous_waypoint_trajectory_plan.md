@@ -1,3 +1,5 @@
+> Historical design note. Authority: `docs/refactor/kb/` + ADR-017/018. Không dùng làm spec.
+
 # Continuous waypoint trajectory architecture plan
 
 **Status:** architecture reset after the 2026-08-28 multi-waypoint failure.

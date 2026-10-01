@@ -1,3 +1,5 @@
+> Historical design note. Authority: `docs/refactor/kb/` + ADR-017/018. Không dùng làm spec.
+
 # Unknown-space and backup planning status
 
 This document records the current planner backend configuration. It is not a proposal

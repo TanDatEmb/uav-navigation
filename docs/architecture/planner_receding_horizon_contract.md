@@ -1,3 +1,5 @@
+> Historical design note. Authority: `docs/refactor/kb/` + ADR-017/018. Không dùng làm spec.
+
 # planner backend receding-horizon contract
 
 The current runtime uses planner backend's in-process committed trajectory state. The

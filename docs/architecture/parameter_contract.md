@@ -1,3 +1,5 @@
+> Historical design note. Authority: `docs/refactor/kb/` + ADR-017/018. Không dùng làm spec.
+
 # Hợp đồng tham số sản phẩm
 
 Tài liệu này là sổ kiểm kê tham số đang được khai báo, load và sử dụng trong

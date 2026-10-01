@@ -1,3 +1,5 @@
+> Historical design note. Authority: `docs/refactor/kb/` + ADR-017/018. Không dùng làm spec.
+
 # Path-relative tracking implementation
 
 Status: `IN_PROGRESS` — development characterization only.
