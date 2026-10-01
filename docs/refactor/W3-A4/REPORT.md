@@ -85,5 +85,7 @@ this report.
 | `c09010c` | `test(runtime-tools): remove retired publisher guard` |
 | `506222c` | `fix(runtime-tools): scope tracking stats to evaluation window` |
 | `78bde4e` | `fix(runtime-tools): mark tracking metrics diagnostic` |
+| `950c0b7` | `docs(runtime-tools): report W3-A4 salvage` |
+| `03f6ccc` | `docs(wave3): record A4 remote handoff` |
 
 Branch is pushed as `refactor/W3-A4`; no merge was created.
