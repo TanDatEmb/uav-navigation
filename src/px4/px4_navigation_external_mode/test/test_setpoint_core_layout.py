@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -28,6 +29,12 @@ PURE_TEST_TARGETS = (
     "test_px4_tracking_adapter",
     "test_velocity_only_continuity",
 )
+
+HELPER_DESTINATIONS = {
+    "floatRepresentable": "navigation_input_validation.hpp",
+    "checkedEnuToNed": "local_frame_alignment.hpp",
+    "checkedTimestampAdd": "planner_recovery.hpp",
+}
 
 
 def main() -> int:
@@ -55,6 +62,22 @@ def main() -> int:
             link_block = cmake.split(marker, 1)[1].split(")", 1)[0]
             if "px4_setpoint_core" not in link_block:
                 errors.append(f"{target} does not link px4_setpoint_core")
+
+    for header in PURE_HEADERS:
+        include = f'#include "px4_navigation_external_mode/{header}"'
+        if include not in cmake:
+            errors.append(f"anchor does not include pure header: {header}")
+    for helper, header in HELPER_DESTINATIONS.items():
+        header_path = Path(sys.argv[1]).parent / "include" / "px4_navigation_external_mode" / header
+        if helper not in header_path.read_text(encoding="utf-8"):
+            errors.append(f"{helper} is not moved to {header}")
+        node_path = Path(sys.argv[1]).parent / "src" / "navigation_mode_node.cpp"
+        node_text = node_path.read_text(encoding="utf-8")
+        if re.search(rf"(?m)^(?:bool|std::optional<[^>]+>)\s+{re.escape(helper)}\(", node_text):
+            errors.append(f"{helper} remains locally defined in navigation_mode_node.cpp")
+
+    if "install(EXPORT" in cmake or "ament_export_targets" in cmake:
+        errors.append("px4_setpoint_core must remain package-private; do not export a target")
 
     if errors:
         for error in errors:

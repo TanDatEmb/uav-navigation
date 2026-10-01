@@ -43,31 +43,6 @@ namespace {
 constexpr char kModeName[] = "Avoidance Mission";
 constexpr char kTrajectoryFailureReason[] = "navigation trajectory unavailable or stale";
 
-bool floatRepresentable(const double value) {
-  return std::isfinite(value) &&
-         std::abs(value) <= static_cast<double>(std::numeric_limits<float>::max());
-}
-
-std::optional<Eigen::Vector3f> checkedEnuToNed(const Eigen::Vector3d& value_enu) {
-  if (!value_enu.allFinite()) return std::nullopt;
-  const Eigen::Vector3d value_ned = navigation_common::enuToNed(value_enu);
-  if (!value_ned.allFinite() ||
-      (value_ned.cwiseAbs().array() > static_cast<double>(std::numeric_limits<float>::max()))
-          .any()) {
-    return std::nullopt;
-  }
-  return value_ned.cast<float>();
-}
-
-std::optional<std::int64_t> checkedTimestampAdd(const std::int64_t base_ns,
-                                                 const std::int64_t delta_ns) {
-  if ((delta_ns > 0 && base_ns > std::numeric_limits<std::int64_t>::max() - delta_ns) ||
-      (delta_ns < 0 && base_ns < std::numeric_limits<std::int64_t>::min() - delta_ns)) {
-    return std::nullopt;
-  }
-  return base_ns + delta_ns;
-}
-
 void logTrackingRejection(
     const rclcpp::Logger& logger,
     const navigation_contracts::msg::NavigationCommand& command,
