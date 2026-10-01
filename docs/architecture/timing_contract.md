@@ -5,6 +5,9 @@ must never be represented as `float` or `double`; a local duration may be
 converted to seconds only at the calculation boundary. `ClockDomain` values may
 not be mixed without an explicit synchronization model.
 
+Known violations: N3 (double seconds in bundle/trajectory); handling is
+deferred to P3/P5.
+
 Only `RosTimeConverter` converts a ROS header timestamp to the core type. A
 LiDAR adapter documents whether its header is scan start, end, or another event;
 it must not assume. `LidarScan` has explicit start/end times and each point's
