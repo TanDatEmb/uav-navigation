@@ -16,7 +16,7 @@
 | `cmake --build /tmp/uav-navigation-w3b6-cmake --target px4_setpoint_core --parallel 1` | `Built target px4_setpoint_core` |
 | `cmake --build /tmp/uav-navigation-w3b6-tests --target test_navigation_command test_tracking_envelope test_local_frame_alignment test_px4_tracking_adapter test_velocity_only_continuity px4_navigation_external_mode_adapter --parallel 1` | tất cả target compile/link PASS |
 | `ctest ... -R '^(test_setpoint_core_layout\|test_navigation_command\|test_tracking_envelope\|test_local_frame_alignment\|test_px4_tracking_adapter\|test_velocity_only_continuity)$'` với ROS Jazzy environment | `100% tests passed, 0 tests failed out of 6` |
-| W3 dependency guard từ A2 chạy trên worktree này | `DEPENDENCY_DIRECTION: PASS (packages=21, allowed_baseline_violations=3)` |
+| W3 dependency guard | `NOT_MEASURED` on this HEAD; A2 implementation is on separate branch `refactor/W3-A2` and must be rerun after integration |
 | `python3 tools/check_mission_authority_cut.py` | `MISSION_AUTHORITY_STATIC_CHECK: PASS` |
 | `python3 tools/validate_runtime_safety_ledger.py` | `PASS (current=482 lines, gates=34, bypasses=1)` |
 | `python3 tools/refactor/check_citations.py . docs/refactor` | `checked=989 out_of_range=0` |
@@ -61,3 +61,4 @@ Không giết hoặc chạy song song build dùng chung.
 
 1. **CONDITIONAL:** Full workspace `make build` và Make-driven CTest cần chạy lại sau khi lock P0.3 được giải phóng; targeted package build/CTest đã PASS.
 2. **CONDITIONAL:** `px4_setpoint_core` là target STATIC với generated anchor vì write-set cấm thêm product `.cpp`; nếu kiến trúc sư yêu cầu archive có translation unit thật, cần quyết định mở rộng write-set ở wave sau.
+3. **CONDITIONAL:** Target core hiện là carrier cho header-only implementation; owner cần xác nhận mô hình này phù hợp với mục tiêu MOVE trước khi merge. Không tự chuyển inline logic sang `.cpp` trong WP này.
