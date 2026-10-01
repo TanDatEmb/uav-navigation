@@ -62,6 +62,7 @@ Bảng này lấy ngay trước khi cập nhật REPORT bằng `git log --format
 | `cbb1ef0` | `refactor(p0.3/i4): remove recovery state shim` |
 | `14c40d1` | `refactor(p0.3/i3): remove unused QoS profiles` |
 | `c9bbd90` | `refactor(p0.3/i1): remove legacy mission controller` |
+| `cb2ff6e` | `docs(wave3): finalize A1 gate report` |
 
 ## Remote handoff
 
