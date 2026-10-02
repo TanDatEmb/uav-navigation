@@ -4359,7 +4359,11 @@ def main() -> int:
         default=5.0,
         help="bounded dataset shadow-planning goal distance; 0 disables planning",
     )
-    sub.add_parser("sim-check")
+    sim_check = sub.add_parser("sim-check")
+    sim_check.add_argument(
+        "--gazebo-native-diagnostic", action="store_true",
+        help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
+    )
     characterization = sub.add_parser(
         "characterization-check",
         help="run the test-only closed-loop PX4 characterization harness",
@@ -4633,7 +4637,7 @@ def main() -> int:
             ros_domain_id=args.ros_domain_id,
         )
     if args.command == "sim-check":
-        return run_sim(True)
+        return run_sim(True, gazebo_native_diagnostic=args.gazebo_native_diagnostic)
     if args.command == "characterization-check":
         return run_sim(
             True,
