@@ -16,6 +16,8 @@ from pathlib import Path
 import re
 from typing import Any, Iterable
 
+from tools.refactor import triage_sessions
+
 
 NOT_MEASURED = "NOT_MEASURED"
 POLICY_NAMES = {
@@ -198,8 +200,28 @@ def distribution(values: list[float]) -> dict[str, Any] | str:
     }
 
 
-def _status(policy: str, report: dict[str, Any], required: list[Path]) -> str:
-    if policy == "UNCLASSIFIED" or any(not path.is_file() for path in required):
+def _manifest_source(sources: list[Any]) -> dict[str, Any]:
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in ("build_provenance", "provenance", "captured_provenance"):
+            value = source.get(key)
+            if not isinstance(value, dict):
+                continue
+            candidates = [value]
+            if isinstance(value.get("manifest"), dict):
+                candidates.append(value["manifest"])
+            if isinstance(value.get("source"), dict):
+                candidates.append(value)
+            for candidate in candidates:
+                manifest_source = candidate.get("source")
+                if isinstance(manifest_source, dict) and "git_head" in manifest_source:
+                    return manifest_source
+    return {}
+
+
+def _status(policy: str, report: dict[str, Any], required: list[Path], provenance_dirty: bool) -> str:
+    if provenance_dirty or policy == "UNCLASSIFIED" or any(not path.is_file() for path in required):
         return "NOT_EVALUABLE"
     assessment = report.get("evaluation")
     if isinstance(assessment, dict):
@@ -240,13 +262,21 @@ def summarize_session(session: Path, *, matrix: str = "UNKNOWN", run_idx: int | 
         matrix, run_idx = match.group(1), int(match.group(2))
     sources = [metadata, scenario, monitor, runtime, report]
     values = _metric_values(session, sources)
-    provenance = _first(sources, ("provenance", "build_provenance", "captured_provenance"))
-    nav_sha = _first(sources, ("nav_build_sha", "repo_commit", "navigation_commit", "git_head")) or NOT_MEASURED
+    manifest_source = _manifest_source(sources)
+    provenance = manifest_source or None
+    nav_sha = manifest_source.get("git_head", NOT_MEASURED)
     px4_sha = _px4_binary_sha(sources) or NOT_MEASURED
     infra = _first(sources, ("infrastructure_invalid",))
     infra_value = _bool(infra)
+    provenance_dirty = manifest_source.get("git_dirty") is True or _first(
+        sources, ("provenance_dirty",)
+    ) is True
     required = [session / name for name in ("metadata.json", "scenario.json", "monitor.json", "runtime.json", "report.json")]
-    status = _status(policy, report, required)
+    status = _status(policy, report, required, provenance_dirty)
+    try:
+        cause = str(triage_sessions.triage_session(session).get("initiator", NOT_MEASURED))
+    except (OSError, ValueError, TypeError, KeyError):
+        cause = NOT_MEASURED
     row: dict[str, Any] = {
         "session": str(session), "experiment_id": str(experiment_id), "matrix": matrix,
         "scene": scene, "speed_mps": speed if speed is not None else NOT_MEASURED,
@@ -255,9 +285,11 @@ def summarize_session(session: Path, *, matrix: str = "UNKNOWN", run_idx: int | 
         "classification_status": status,
         "outcome": _first((report, scenario, metadata), ("outcome", "terminal_outcome")) or NOT_MEASURED,
         "infrastructure_invalid": infra_value if infra_value is not None else NOT_MEASURED,
+        "cause": cause,
         "artifact_status": "COMPLETE" if all(path.is_file() for path in required) else "INCOMPLETE",
         "provenance_status": "AVAILABLE" if provenance is not None else NOT_MEASURED,
         "nav_build_sha": nav_sha, "px4_binary_sha256": px4_sha,
+        "provenance_dirty": provenance_dirty,
         "metrics_json": json.dumps({name: distribution(items) for name, items in values.items()}, sort_keys=True),
     }
     for metric, items in values.items():

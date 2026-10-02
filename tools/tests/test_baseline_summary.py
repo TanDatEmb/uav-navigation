@@ -96,6 +96,37 @@ class BaselineSummaryTests(unittest.TestCase):
 
         self.assertEqual(len(output), len(baseline_summary.METRIC_ALIASES))
 
+    def test_nav_sha_comes_from_manifest_source_and_cause_from_triage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = self.write_session(
+                Path(directory),
+                policy={"name": "raycasting_on_backup_strict", "backup_allow_unknown": False},
+                metadata={
+                    "build_provenance": {
+                        "manifest": {"source": {"git_head": "manifest-sha", "git_dirty": False}}
+                    }
+                },
+            )
+            row = baseline_summary.summarize_session(session, matrix="M1", run_idx=1)
+        self.assertEqual(row["nav_build_sha"], "manifest-sha")
+        self.assertEqual(row["cause"], "NO_SOLVE_FAILURE")
+        self.assertFalse(row["provenance_dirty"])
+
+    def test_dirty_provenance_is_not_evaluable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = self.write_session(
+                Path(directory),
+                policy={"name": "raycasting_on_backup_strict", "backup_allow_unknown": False},
+                metadata={
+                    "build_provenance": {
+                        "manifest": {"source": {"git_head": "dirty-sha", "git_dirty": True}}
+                    }
+                },
+            )
+            row = baseline_summary.summarize_session(session, matrix="M1", run_idx=1)
+        self.assertEqual(row["classification_status"], "NOT_EVALUABLE")
+        self.assertTrue(row["provenance_dirty"])
+
 
 if __name__ == "__main__":
     unittest.main()
