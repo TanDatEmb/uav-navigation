@@ -15,7 +15,7 @@ Reviewed at `main @ 7e0b850`. Finding IDs refer to `findings.csv` (R5-01..R5-39)
 | Class / file | Responsibility |
 |---|---|
 | `NavigationMode` (navigation_mode.hpp / navigation_mode_node.cpp) | px4_ros2 `ModeBase`: command admission, state/health/PX4 ingestion, LIO→PX4 alignment, `updateSetpoint` (PVA, velocity-only, holds), status, traces |
-| `NavigationModeExecutor` (navigation_mode_node.cpp:2584-2701) | px4_ros2 `ModeExecutorBase`: schedules owned mode, retries PX4 Hold (AUTO_LOITER) every 250 ms until confirmed |
+| `NavigationModeExecutor` (navigation_mode_node.cpp:2559-2676) | px4_ros2 `ModeExecutorBase`: schedules owned mode, retries PX4 Hold (AUTO_LOITER) every 250 ms until confirmed |
 | `tracking_adapter::adapt` (px4_tracking_adapter.hpp) | Velocity-only experiment: relative-heading LIO-ENU→PX4-NED rotation, yaw/yaw-rate mapping, timing witness validation |
 | `velocity_only::limit` (velocity_only_continuity.hpp) | Dykstra projection onto accel/jerk/velocity/viability balls |
 | `evaluateTrackingEnvelope` (tracking_envelope.hpp) | Outer longitudinal/reverse/lateral guard vs 0.75 m anchor limit (R5-16) |

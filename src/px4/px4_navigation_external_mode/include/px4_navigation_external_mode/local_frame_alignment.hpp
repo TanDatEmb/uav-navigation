@@ -1,5 +1,6 @@
 #pragma once
 
+#include <limits>
 #include <optional>
 
 #include <Eigen/Core>
@@ -7,6 +8,17 @@
 #include <navigation_common/frame_conventions.hpp>
 
 namespace px4_navigation_external_mode {
+
+inline std::optional<Eigen::Vector3f> checkedEnuToNed(const Eigen::Vector3d& value_enu) {
+  if (!value_enu.allFinite()) return std::nullopt;
+  const Eigen::Vector3d value_ned = navigation_common::enuToNed(value_enu);
+  if (!value_ned.allFinite() ||
+      (value_ned.cwiseAbs().array() > static_cast<double>(std::numeric_limits<float>::max()))
+          .any()) {
+    return std::nullopt;
+  }
+  return value_ned.cast<float>();
+}
 
 // Planner positions live in the LIO local ENU frame while PX4 trajectory
 // setpoints live in PX4's local NED frame. The basis conversion is fixed, but

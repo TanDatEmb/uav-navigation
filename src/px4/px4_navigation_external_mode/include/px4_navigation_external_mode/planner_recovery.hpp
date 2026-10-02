@@ -2,8 +2,19 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <optional>
 
 namespace px4_navigation_external_mode {
+
+inline std::optional<std::int64_t> checkedTimestampAdd(const std::int64_t base_ns,
+                                                        const std::int64_t delta_ns) {
+  if ((delta_ns > 0 && base_ns > std::numeric_limits<std::int64_t>::max() - delta_ns) ||
+      (delta_ns < 0 && base_ns < std::numeric_limits<std::int64_t>::min() - delta_ns)) {
+    return std::nullopt;
+  }
+  return base_ns + delta_ns;
+}
 
 // A completed backup suffix is allowed one bounded scheduling window for the
 // runtime planner to publish a replacement PVA command. This is a hold-only
