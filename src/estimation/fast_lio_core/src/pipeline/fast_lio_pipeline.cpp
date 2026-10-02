@@ -15,7 +15,6 @@
 namespace uav::nav::lio {
 namespace {
 
-constexpr std::int64_t kPriorImuHistoryDurationNs = 1'000'000'000;
 // Repeated recovery events must not exponentially grow weakly observed state
 // blocks until the IKFoM normal equations overflow. This is a numerical guard,
 // not a claim that uncertainty above the cap has become smaller or trustworthy;
@@ -1091,7 +1090,10 @@ void FastLioPipeline::retainPriorImuSample(const ImuSample& sample) {
     const auto history_span = checkedDifference(
         sample.time, prior_imu_history_.front().time);
     if (!history_span.ok()) return;
-    if (history_span.value().nanoseconds() <= kPriorImuHistoryDurationNs) break;
+    if (history_span.value().nanoseconds() <=
+        config_.measurement_buffer.imu_history_duration_ns) {
+      break;
+    }
     prior_imu_history_.pop_front();
   }
 }

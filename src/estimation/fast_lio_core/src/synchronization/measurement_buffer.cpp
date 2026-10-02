@@ -22,6 +22,31 @@ void accountTimestampError(const Status& status, MeasurementBufferStats& stats) 
   }
 }
 
+void pruneImuHistoryForWindow(
+    std::deque<ImuSample>& samples,
+    const std::deque<LidarScan>& scans,
+    const MeasurementBufferConfig& config) {
+  if (samples.size() < 2U) return;
+  if (!scans.empty()) {
+    const Timestamp scan_start = scans.front().start_time;
+    while (samples.size() >= 2U &&
+           samples[1].time.sameClockDomain(scan_start) &&
+           samples[1].time.nanoseconds() < scan_start.nanoseconds()) {
+      samples.pop_front();
+    }
+    return;
+  }
+
+  const Timestamp latest = samples.back().time;
+  while (samples.size() >= 2U) {
+    const auto span = checkedDifference(latest, samples.front().time);
+    if (!span.ok() || span.value().nanoseconds() <= config.imu_history_duration_ns) {
+      break;
+    }
+    samples.pop_front();
+  }
+}
+
 }  // namespace
 
 MeasurementBuffer::MeasurementBuffer(MeasurementBufferConfig config)
@@ -29,7 +54,8 @@ MeasurementBuffer::MeasurementBuffer(MeasurementBufferConfig config)
       lidar_start_validator_(validatorConfig(config)),
       lidar_end_validator_(validatorConfig(config)),
       imu_validator_(validatorConfig(config)) {
-  if (config_.maximum_lidar_scans == 0U || config_.maximum_imu_samples == 0U) {
+  if (config_.maximum_lidar_scans == 0U || config_.maximum_imu_samples == 0U ||
+      config_.imu_history_duration_ns <= 0) {
     throw std::invalid_argument("measurement buffer capacities must be positive");
   }
 }
@@ -94,11 +120,6 @@ Status MeasurementBuffer::pushImu(ImuSample sample) {
   }
 
   std::scoped_lock lock(mutex_);
-  if (imu_samples_.size() >= config_.maximum_imu_samples) {
-    ++stats_.rejected_imu_samples;
-    ++stats_.buffer_full_rejections;
-    return Status(StatusCode::kBufferFull, "IMU sample buffer is full");
-  }
   const std::size_t prior_regressions = imu_validator_.regressionCount();
   const Status time_status = imu_validator_.validate(sample.time);
   if (!time_status.ok()) {
@@ -107,6 +128,15 @@ Status MeasurementBuffer::pushImu(ImuSample sample) {
     return time_status;
   }
   stats_.timestamp_regressions += imu_validator_.regressionCount() - prior_regressions;
+  pruneImuHistoryForWindow(imu_samples_, lidar_scans_, config_);
+  if (!lidar_scans_.empty() && imu_samples_.size() >= config_.maximum_imu_samples) {
+    ++stats_.rejected_imu_samples;
+    ++stats_.buffer_full_rejections;
+    return Status(StatusCode::kBufferFull, "IMU sample buffer is full");
+  }
+  if (lidar_scans_.empty() && imu_samples_.size() >= config_.maximum_imu_samples) {
+    imu_samples_.pop_front();
+  }
   if (config_.reject_timestamp_regression || imu_samples_.empty() ||
       imu_samples_.back().time.nanoseconds() < sample.time.nanoseconds()) {
     imu_samples_.push_back(std::move(sample));
@@ -118,6 +148,7 @@ Status MeasurementBuffer::pushImu(ImuSample sample) {
                          });
     imu_samples_.insert(insertion, std::move(sample));
   }
+  pruneImuHistoryForWindow(imu_samples_, lidar_scans_, config_);
   ++stats_.accepted_imu_samples;
   return Status::Ok();
 }
