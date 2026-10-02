@@ -311,14 +311,25 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
     observer_loop_state = _StreamState("observer_loop")
     gap_budget_ns = int(args.gap_budget_s * 1e9)
     node = transport.Node()
+    rtf_path = args.session / "gazebo_native_rtf.json"
+    last_rtf_publish_ns = 0
 
     def on_stats(message: Any) -> None:
+        nonlocal last_rtf_publish_ns
         factor = float(getattr(message, "real_time_factor", 0.0) or 0.0)
-        stats_state.record(arrival_ns=time.time_ns(), steady_ns=time.monotonic_ns(),
+        arrival_ns = time.time_ns()
+        stats_state.record(arrival_ns=arrival_ns, steady_ns=time.monotonic_ns(),
                            source_ns=_message_time_ns(message, "sim_time"),
                            iterations=int(getattr(message, "iterations", 0) or 0),
                            real_time_factor=factor if math.isfinite(factor) else None,
                            gap_budget_ns=gap_budget_ns)
+        if math.isfinite(factor) and arrival_ns - last_rtf_publish_ns >= 500_000_000:
+            _atomic_json(rtf_path, {
+                "captured_wall_ns": arrival_ns,
+                "real_time_factor": factor,
+                "source": "gazebo_native/world_stats",
+            })
+            last_rtf_publish_ns = arrival_ns
 
     def on_clock(message: Any) -> None:
         clock_state.record(arrival_ns=time.time_ns(), steady_ns=time.monotonic_ns(),
