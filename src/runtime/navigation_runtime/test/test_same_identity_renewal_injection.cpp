@@ -11,6 +11,8 @@
 #include <navigation_execution/execution_lifecycle.hpp>
 #include <navigation_execution/execution_recovery_state.hpp>
 
+#include "execution_authority_test_helpers.hpp"
+
 namespace navigation_runtime {
 using navigation_execution::ExecutionPhase;
 using navigation_execution::ExecutionRecoveryState;
@@ -118,7 +120,7 @@ TEST(WorldRevocationDelivery, FinalizesLifecycleBeforePublicationReturns) {
   ASSERT_TRUE(store.setAdmissionGoalEpoch(7));
   const auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
       candidateFor(7, 1));
-  ASSERT_EQ(store.tryCommit({world, 7, 1}, goalFor(candidate), candidate),
+  ASSERT_EQ(test::commitProductForTest(store, {world, 7, 1}, goalFor(candidate), candidate),
             navigation_execution::CommitDecision::kCommitted);
   const auto before = store.snapshot();
   const navigation_world_model::WorldSnapshotIdentity next_world{3, 4, 2, 2};
@@ -146,7 +148,7 @@ class WorldRevocationFixture : public testing::Test {
     ASSERT_TRUE(store.setAdmissionGoalEpoch(7));
     predecessor = std::make_shared<const navigation_planning::CandidateBundle>(
         candidateFor(7, 1));
-    ASSERT_EQ(store.tryCommit({world, 7, 1}, goalFor(predecessor), predecessor),
+    ASSERT_EQ(test::commitProductForTest(store, {world, 7, 1}, goalFor(predecessor), predecessor),
               navigation_execution::CommitDecision::kCommitted);
   }
 
@@ -161,7 +163,7 @@ TEST_F(WorldRevocationFixture, SupersededRevocationPreservesNewerExecution) {
   auto replacement = candidateFor(7, 1);
   ++replacement.bundle_generation;
   const auto newer = std::make_shared<const navigation_planning::CandidateBundle>(replacement);
-  ASSERT_EQ(store.tryCommit({world, 7, 2}, goalFor(newer), newer),
+  ASSERT_EQ(test::commitProductForTest(store, {world, 7, 2}, goalFor(newer), newer),
             navigation_execution::CommitDecision::kCommitted);
   unsigned int finalized = 0;
   EXPECT_EQ(store.publishWorldIdentityIfCurrentAndFinalizeRevocation(
@@ -251,7 +253,8 @@ TEST_F(WorldRevocationFixture, ConcurrentCommitCannotSplitRevocationAndLifecycle
   finalizer_entered.wait();
   auto commit = std::async(std::launch::async, [&] {
     commit_attempted.count_down();
-    const auto result = store.tryCommit({next_world, 7, 2}, goalFor(newer), newer);
+    const auto result = test::commitProductForTest(
+        store, {next_world, 7, 2}, goalFor(newer), newer);
     committed.store(true);
     const bool finalized_before_commit = finalized.load();
       return std::make_pair(result, finalized_before_commit);
@@ -376,7 +379,8 @@ TEST(SameIdentityRenewalInjection,
   ASSERT_TRUE(execution_authority.setAdmissionGoalEpoch(7U));
   const auto predecessor =
       std::make_shared<const navigation_planning::CandidateBundle>(candidateFor(7U, 1U));
-  ASSERT_EQ(execution_authority.tryCommit({world, 7U, 1U}, goalFor(predecessor), predecessor),
+  ASSERT_EQ(test::commitProductForTest(
+                execution_authority, {world, 7U, 1U}, goalFor(predecessor), predecessor),
             navigation_execution::CommitDecision::kCommitted);
 
 

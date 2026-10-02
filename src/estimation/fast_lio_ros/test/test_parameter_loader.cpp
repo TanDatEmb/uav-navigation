@@ -217,6 +217,8 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
   EXPECT_DOUBLE_EQ(parameters.propagated_odometry_publish_rate_hz, 50.0);
   EXPECT_EQ(parameters.propagated_odometry_imu_ingress_capacity, 4096);
   EXPECT_DOUBLE_EQ(parameters.propagated_odometry_imu_history_duration_s, 1.0);
+  EXPECT_EQ(profile.estimator.measurement_buffer.imu_history_duration_ns,
+            1'000'000'000);
   EXPECT_DOUBLE_EQ(parameters.propagated_odometry_maximum_correction_age_s, 0.50);
 }
 

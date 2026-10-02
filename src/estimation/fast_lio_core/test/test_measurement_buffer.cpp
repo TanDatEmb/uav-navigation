@@ -46,6 +46,11 @@ TEST(MeasurementBufferTest, RejectsInvalidCapacityAndEpoch) {
   EXPECT_THROW(
       { MeasurementBuffer buffer(config); }, std::invalid_argument);
 
+  config = {};
+  config.imu_history_duration_ns = 0;
+  EXPECT_THROW(
+      { MeasurementBuffer buffer(config); }, std::invalid_argument);
+
   MeasurementBuffer buffer;
   EXPECT_EQ(buffer.pushImu(makeImu(0)).code(), StatusCode::kInvalidArgument);
   EXPECT_EQ(buffer.pushLidar(makeScan(0, 20)).code(), StatusCode::kInvalidArgument);
@@ -76,6 +81,24 @@ TEST(MeasurementBufferTest, RejectsWhenCapacityIsReached) {
   const Status status = buffer.pushLidar(makeScan(30, 40));
   EXPECT_EQ(status.code(), StatusCode::kBufferFull);
   EXPECT_EQ(buffer.stats().buffer_full_rejections, 1U);
+}
+
+TEST(MeasurementBufferTest, SlidesImuWindowBeforeFirstScanArrives) {
+  MeasurementBufferConfig config;
+  config.maximum_imu_samples = 3U;
+  MeasurementBuffer buffer(config);
+
+  for (const auto time_ns : {1LL, 11LL, 21LL, 31LL, 41LL}) {
+    EXPECT_TRUE(buffer.pushImu(makeImu(time_ns)).ok()) << time_ns;
+  }
+  EXPECT_LE(buffer.imuSize(), config.maximum_imu_samples);
+
+  ASSERT_TRUE(buffer.pushLidar(makeScan(31, 41)).ok());
+  MeasurementSynchronizer synchronizer;
+  const auto synchronized = synchronizer.synchronizeNext(buffer);
+  ASSERT_TRUE(synchronized.ok()) << synchronized.status().message();
+  ASSERT_TRUE(synchronized.value().has_value());
+  EXPECT_EQ(synchronized.value()->scan.end_time.nanoseconds(), 41);
 }
 
 TEST(MeasurementBufferTest, PermittedRegressionKeepsQueueOrderedForSync) {

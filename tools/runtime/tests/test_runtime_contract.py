@@ -4202,6 +4202,52 @@ class RuntimeContractTest(unittest.TestCase):
                 {"id": "m", "unexpected": True}, {"id"}, "mission"
             )
 
+    def test_external_mode_scenario_rejects_pass_through_terminal_waypoint(self) -> None:
+        mission = {
+            "mission": {
+                "version": 1,
+                "id": "terminal-contract",
+                "frame": "lio_odom",
+                "waypoints": [
+                    {"id": "start", "position": [0.0, 0.0, 1.0],
+                     "acceptance_radius_m": 0.5, "behavior": "pass_through"},
+                    {"id": "terminal", "position": [1.0, 0.0, 1.0],
+                     "acceptance_radius_m": 0.5, "behavior": "pass_through"},
+                ],
+                "planning": {},
+                "control": {},
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            mission_path = Path(directory) / "mission.yaml"
+            mission_path.write_text(yaml.safe_dump(mission), encoding="utf-8")
+            spec = importlib.util.spec_from_file_location(
+                "external_mode_scenario_terminal",
+                ROOT / "tools/runtime/external_mode_scenario.py",
+            )
+            self.assertIsNotNone(spec)
+            self.assertIsNotNone(spec.loader)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            scenario = object.__new__(module.ExternalModeScenario)
+            scenario.config = {
+                "mission_file": str(mission_path),
+                "planning_frame": "lio_odom",
+                "goal_offset_m": [0.0, 0.0, 0.0],
+            }
+            scenario.latest_odom = {"x": 0.0, "y": 0.0, "z": 1.0}
+            scenario.sim_now_ns = 2_500_000_000
+            scenario.goal_publish_count = 0
+            scenario.goal_request_id = 0
+            scenario.latest_goal = {}
+            scenario.last_goal_ns = -10**18
+            outcomes = []
+            scenario.finish = lambda outcome: outcomes.append(outcome)
+            scenario._record = lambda *args, **kwargs: None
+            scenario._publish_planner_goal()
+            self.assertEqual(outcomes, ["INVALID_GOAL_CONFIGURATION"])
+            self.assertEqual(scenario.goal_publish_count, 0)
+
     def test_external_mode_scenario_treats_executor_handover_as_exit(self) -> None:
         spec = importlib.util.spec_from_file_location(
             "external_mode_scenario",

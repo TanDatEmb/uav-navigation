@@ -2959,7 +2959,16 @@ navigation_mission::ImmutableRouteSnapshot makeStraightActiveRouteSnapshot(
       ? navigation_mission::MissionWaypoint::Behavior::Stop
       : navigation_mission::MissionWaypoint::Behavior::PassThrough;
   active.acceptance_radius_m = 0.5;
-  mission.waypoints = {start, active};
+  if (active_stop) {
+    mission.waypoints = {start, active};
+  } else {
+    navigation_mission::MissionWaypoint terminal;
+    terminal.id = "terminal";
+    terminal.position_enu = active_position + Eigen::Vector3d{1.0, 0.0, 0.0};
+    terminal.acceptance_radius_m = 0.5;
+    terminal.behavior = navigation_mission::MissionWaypoint::Behavior::Stop;
+    mission.waypoints = {start, active, terminal};
+  }
   navigation_mission::RouteProgress progress(mission);
   const auto measured = progress.update(measured_position);
   EXPECT_TRUE(measured.valid);
@@ -2980,6 +2989,7 @@ navigation_mission::ImmutableRouteSnapshot makeCornerActiveRouteSnapshot() {
   navigation_mission::MissionWaypoint outgoing;
   outgoing.id = "outgoing";
   outgoing.position_enu = Eigen::Vector3d{20.0, 10.0, 3.0};
+  outgoing.behavior = navigation_mission::MissionWaypoint::Behavior::Stop;
   mission.waypoints = {start, corner, outgoing};
   navigation_mission::RouteProgress progress(mission);
   const auto measured = progress.update(Eigen::Vector3d{5.0, 0.0, 3.0});

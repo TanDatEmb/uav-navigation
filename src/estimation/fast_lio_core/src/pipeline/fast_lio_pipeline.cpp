@@ -15,7 +15,6 @@
 namespace uav::nav::lio {
 namespace {
 
-constexpr std::int64_t kPriorImuHistoryDurationNs = 1'000'000'000;
 // Repeated recovery events must not exponentially grow weakly observed state
 // blocks until the IKFoM normal equations overflow. This is a numerical guard,
 // not a claim that uncertainty above the cap has become smaller or trustworthy;
@@ -412,6 +411,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   }
 
   Timestamp propagation_start = group.propagation_start_time;
+  bool propagation_start_rebased = false;
   if (!state_time_.has_value()) {
     const bool configured_prior_owns_epoch =
         config_.initial_prior.source != InitialStatePriorSource::kZero &&
@@ -439,7 +439,6 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     }
     // A prior owns its sample epoch. If it predates the scan, predict from
     // that exact epoch using the bracketed IMU history.
-    state_time_ = initial_epoch;
     propagation_start = initial_epoch;
   } else {
     if (!state_time_->sameClockDomain(group.propagation_start_time) ||
@@ -487,7 +486,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
         return finalizeResult(std::move(result));
       }
       estimator_.rebase(state_, covariance_);
-      state_time_ = group.propagation_start_time;
+      propagation_start_rebased = true;
       ++diagnostics_.propagation_discontinuity_count;
       diagnostics_.last_propagation_gap_ns =
           propagation_gap.value().nanoseconds();
@@ -495,11 +494,13 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       recordUncorrectedUpdate(
           LidarUpdateFailureClass::kPropagationDiscontinuity);
     }
-    propagation_start = *state_time_;
+    propagation_start = propagation_start_rebased
+                            ? group.propagation_start_time
+                            : *state_time_;
   }
-  if (!state_time_.has_value() ||
-      !state_time_->sameClockDomain(propagation_start) ||
-      state_time_->nanoseconds() != propagation_start.nanoseconds()) {
+  if (!propagation_start_rebased && state_time_.has_value() &&
+      (!state_time_->sameClockDomain(propagation_start) ||
+       state_time_->nanoseconds() != propagation_start.nanoseconds())) {
     result.rejection_reason = "PROPAGATION_START_DOES_NOT_MATCH_STATE_TIME";
     diagnostics_.reason = result.rejection_reason;
     recordUncorrectedUpdate(LidarUpdateFailureClass::kPrediction);
@@ -1092,7 +1093,10 @@ void FastLioPipeline::retainPriorImuSample(const ImuSample& sample) {
     const auto history_span = checkedDifference(
         sample.time, prior_imu_history_.front().time);
     if (!history_span.ok()) return;
-    if (history_span.value().nanoseconds() <= kPriorImuHistoryDurationNs) break;
+    if (history_span.value().nanoseconds() <=
+        config_.measurement_buffer.imu_history_duration_ns) {
+      break;
+    }
     prior_imu_history_.pop_front();
   }
 }
@@ -1650,6 +1654,15 @@ void FastLioPipeline::recordUncorrectedUpdate(
     LidarUpdateFailureClass failure_class) {
   diagnostics_.last_update_failure_class = failure_class;
   if (!tracking_ever_confirmed_) {
+    if (failure_class == LidarUpdateFailureClass::kPrediction &&
+        status_ == EstimatorStatus::kInitializingMap) {
+      ++initial_map_registration_failures_;
+      if (initial_map_registration_failures_ >=
+          config_.lifecycle.maximum_initial_map_registration_failures) {
+        transitionTo(EstimatorStatus::kLost,
+                     "INITIAL_MAP_PREDICTION_FAILURES_EXHAUSTED");
+      }
+    }
     return;
   }
   ++consecutive_uncorrected_lidar_updates_;

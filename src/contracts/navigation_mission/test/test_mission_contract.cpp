@@ -106,6 +106,30 @@ mission:
                std::invalid_argument);
 }
 
+TEST(MissionContract, RejectsPassThroughFinalWaypoint) {
+  auto mission = navigation_mission::Mission{};
+  mission.id = "pass-through-final";
+  mission.frame = "lio_odom";
+  mission.waypoints = {{
+      "finish", Eigen::Vector3d{1.0, 2.0, 3.0}, 0.5, 0.0,
+      navigation_mission::MissionWaypoint::Behavior::PassThrough}};
+  EXPECT_FALSE(mission.valid());
+
+  const TemporaryMission yaml(R"(
+mission:
+  version: 1
+  id: pass-through-final
+  frame: lio_odom
+  waypoints:
+    - id: finish
+      position: [1.0, 2.0, 3.0]
+      acceptance_radius_m: 0.5
+      behavior: pass_through
+)");
+  EXPECT_THROW(navigation_mission::loadMission(yaml.string(), "lio_odom"),
+               std::invalid_argument);
+}
+
 namespace {
 
 navigation_mission::Mission makeRouteMission() {

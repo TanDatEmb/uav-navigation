@@ -2,6 +2,8 @@
 #include "navigation_runtime/mission_goal.hpp"
 #include "navigation_runtime_policy/runtime_boundaries.hpp"
 
+#include "execution_authority_test_helpers.hpp"
+
 #include <navigation_contracts/navigation_command_contract.hpp>
 #include <navigation_execution/command_sampler.hpp>
 #include <navigation_execution/execution_anchor.hpp>
@@ -151,7 +153,7 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
   const auto predecessor = std::make_shared<const navigation_planning::CandidateBundle>(
       handoffCandidate(world, 9U, 2U, 4U, 100'000'000));
   ASSERT_TRUE(predecessor->valid());
-  ASSERT_EQ(execution_authority.tryCommit(
+  ASSERT_EQ(test::commitProductForTest(execution_authority,
                 {world, 9U, 1U},
                 std::make_shared<const navigation_contracts::msg::NavigationGoal>(
                     *predecessor_goal), predecessor),
@@ -228,7 +230,7 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
   const auto failed_successor =
       std::make_shared<const navigation_planning::CandidateBundle>(
           handoffCandidate(invalid_world, 10U, 3U, 5U, 400'000'000));
-  ASSERT_EQ(execution_authority.tryCommit(
+  ASSERT_EQ(test::commitProductForTest(execution_authority,
                 {invalid_world, 10U, 2U},
                 std::make_shared<const navigation_contracts::msg::NavigationGoal>(
                     *successor_goal), failed_successor),
@@ -270,7 +272,7 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
       continuous_successor);
   ASSERT_EQ(navigation_execution::candidateMatchesAnchor(*successor, *anchor),
             navigation_execution::AnchorMatchResult::kMatch);
-  ASSERT_EQ(execution_authority.tryCommit(
+  ASSERT_EQ(test::commitProductForTest(execution_authority,
                 {world, 10U, 3U},
                 std::make_shared<const navigation_contracts::msg::NavigationGoal>(
                     *successor_goal), successor),

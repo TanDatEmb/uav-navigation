@@ -6,6 +6,8 @@
 #include <navigation_execution/execution_lifecycle.hpp>
 #include <navigation_execution/execution_recovery_state.hpp>
 
+#include "execution_authority_test_helpers.hpp"
+
 namespace navigation_runtime {
 
 // Test fixture whose every transition reaches the product
@@ -38,7 +40,8 @@ class ExecutionLifecycleFixture final {
     auto goal = std::make_shared<navigation_contracts::msg::NavigationGoal>();
     goal->mission_id = "lifecycle_fixture";
     goal->request_id = candidate.request_id;
-    return authority_.tryCommit(
+    return test::commitProductForTest(
+        authority_,
         {candidate.world_identity, candidate.goal_epoch, ++transaction_id_},
         std::move(goal),
         std::make_shared<const navigation_planning::CandidateBundle>(
