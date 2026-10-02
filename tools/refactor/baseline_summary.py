@@ -9,6 +9,7 @@ uses ``NOT_MEASURED`` when a producer did not emit a requested measurement.
 from __future__ import annotations
 
 import argparse
+from collections import Counter, defaultdict
 import csv
 import json
 import math
@@ -240,6 +241,18 @@ def _status(policy: str, report: dict[str, Any], required: list[Path], provenanc
     return "NOT_EVALUABLE"
 
 
+def _terminal_outcome(scenario: dict[str, Any]) -> str:
+    direct = scenario.get("outcome") or scenario.get("terminal_outcome")
+    if direct:
+        return str(direct)
+    for event in scenario.get("events", []):
+        if isinstance(event, dict) and event.get("name") == "terminal_outcome_assigned":
+            outcome = event.get("outcome")
+            if outcome:
+                return str(outcome)
+    return NOT_MEASURED
+
+
 def summarize_session(session: Path, *, matrix: str = "UNKNOWN", run_idx: int | str = "UNKNOWN") -> dict[str, Any]:
     session = Path(session).resolve()
     metadata = _load(session / "metadata.json")
@@ -267,7 +280,16 @@ def summarize_session(session: Path, *, matrix: str = "UNKNOWN", run_idx: int | 
     nav_sha = manifest_source.get("git_head", NOT_MEASURED)
     px4_sha = _px4_binary_sha(sources) or NOT_MEASURED
     infra = _first(sources, ("infrastructure_invalid",))
-    infra_value = _bool(infra)
+    infrastructure = report.get("infrastructure")
+    if isinstance(infrastructure, dict) and isinstance(infrastructure.get("valid"), bool):
+        infra_value = not infrastructure["valid"]
+    else:
+        infra_value = _bool(infra)
+    infrastructure_classification = (
+        str(infrastructure.get("classification"))
+        if isinstance(infrastructure, dict) and infrastructure.get("classification")
+        else NOT_MEASURED
+    )
     provenance_dirty = manifest_source.get("git_dirty") is True or _first(
         sources, ("provenance_dirty",)
     ) is True
@@ -284,13 +306,16 @@ def summarize_session(session: Path, *, matrix: str = "UNKNOWN", run_idx: int | 
         "run_idx": run_idx, "runtime_verdict": report.get("runtime_verdict", report.get("verdict", NOT_MEASURED)),
         "classification_status": status,
         "outcome": _first((report, scenario, metadata), ("outcome", "terminal_outcome")) or NOT_MEASURED,
+        "terminal_outcome": _terminal_outcome(scenario),
         "infrastructure_invalid": infra_value if infra_value is not None else NOT_MEASURED,
+        "infrastructure_classification": infrastructure_classification,
         "cause": cause,
         "artifact_status": "COMPLETE" if all(path.is_file() for path in required) else "INCOMPLETE",
         "provenance_status": "AVAILABLE" if provenance is not None else NOT_MEASURED,
         "nav_build_sha": nav_sha, "px4_binary_sha256": px4_sha,
         "provenance_dirty": provenance_dirty,
         "metrics_json": json.dumps({name: distribution(items) for name, items in values.items()}, sort_keys=True),
+        "_metric_samples": values,
     }
     for metric, items in values.items():
         summary = distribution(items)
@@ -313,10 +338,10 @@ def _csv_value(value: Any) -> Any:
 
 def write_summary(rows: list[dict[str, Any]], output_dir: Path) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    run_fields = list(rows[0].keys()) if rows else ["session"]
+    run_fields = [key for key in rows[0] if not key.startswith("_")] if rows else ["session"]
     runs_path = output_dir / "baseline_runs.csv"
     with runs_path.open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=run_fields)
+        writer = csv.DictWriter(stream, fieldnames=run_fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows({key: _csv_value(row.get(key)) for key in run_fields} for row in rows)
 
@@ -337,7 +362,7 @@ def write_summary(rows: list[dict[str, Any]], output_dir: Path) -> tuple[Path, P
                 if isinstance(value, (int, float)):
                     groups.setdefault(key, []).append(float(value))
     with distribution_path.open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=distribution_fields)
+        writer = csv.DictWriter(stream, fieldnames=distribution_fields, lineterminator="\n")
         writer.writeheader()
         for key in sorted(group_keys):
             summary = distribution(groups[key]) if key in groups else NOT_MEASURED
@@ -347,6 +372,60 @@ def write_summary(rows: list[dict[str, Any]], output_dir: Path) -> tuple[Path, P
             else:
                 payload.update({"n": 0, "p50": NOT_MEASURED, "p95": NOT_MEASURED, "p99": NOT_MEASURED, "max": NOT_MEASURED, "status": NOT_MEASURED})
             writer.writerow(payload)
+
+    pooled_path = output_dir / "baseline_pooled_distribution.csv"
+    pooled_groups: dict[tuple[str, str, str, str, str], list[float]] = defaultdict(list)
+    pooled_keys: set[tuple[str, str, str, str, str]] = set()
+    for row in rows:
+        samples = row.get("_metric_samples", {})
+        for metric in metrics:
+            key = (str(row["matrix"]), str(row["scene"]), str(row["speed_mps"]), str(row["policy"]), metric)
+            pooled_keys.add(key)
+            for value in samples.get(metric, []):
+                pooled_groups[key].append(float(value))
+    with pooled_path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=distribution_fields, lineterminator="\n")
+        writer.writeheader()
+        for key in sorted(pooled_keys):
+            summary = distribution(pooled_groups[key]) if key in pooled_groups else NOT_MEASURED
+            payload = {"matrix": key[0], "scene": key[1], "speed_mps": key[2], "policy": key[3], "metric": key[4]}
+            if isinstance(summary, dict):
+                payload.update(summary, status="MEASURED")
+            else:
+                payload.update({"n": 0, "p50": NOT_MEASURED, "p95": NOT_MEASURED, "p99": NOT_MEASURED, "max": NOT_MEASURED, "status": NOT_MEASURED})
+            writer.writerow(payload)
+
+    cell_groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        cell_groups[(str(row["matrix"]), str(row["scene"]), str(row["speed_mps"]), str(row["policy"]))].append(row)
+    cell_fields = [
+        "matrix", "scene", "speed_mps", "policy", "n", "paused_safety_stop", "paused_rate_pct",
+        "terminal_outcomes", "runtime_verdicts", "triage_causes", "infrastructure_invalid",
+        "invalid_sessions", "classification_status", "nav_build_sha",
+    ]
+    cell_path = output_dir / "baseline_by_cell.csv"
+    with cell_path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=cell_fields, lineterminator="\n")
+        writer.writeheader()
+        for key in sorted(cell_groups):
+            group = cell_groups[key]
+            terminal = Counter(str(row.get("terminal_outcome", NOT_MEASURED)) for row in group)
+            runtime = Counter(str(row.get("runtime_verdict", NOT_MEASURED)) for row in group)
+            causes = Counter(str(row.get("cause", NOT_MEASURED)) for row in group)
+            invalid = [row for row in group if row.get("infrastructure_invalid") is True]
+            nav_shas = sorted({str(row.get("nav_build_sha", NOT_MEASURED)) for row in group})
+            paused = terminal.get("PAUSED_SAFETY_STOP", 0)
+            writer.writerow({
+                "matrix": key[0], "scene": key[1], "speed_mps": key[2], "policy": key[3], "n": len(group),
+                "paused_safety_stop": paused, "paused_rate_pct": round(100.0 * paused / len(group), 1),
+                "terminal_outcomes": json.dumps(dict(sorted(terminal.items())), sort_keys=True),
+                "runtime_verdicts": json.dumps(dict(sorted(runtime.items())), sort_keys=True),
+                "triage_causes": json.dumps(dict(sorted(causes.items())), sort_keys=True),
+                "infrastructure_invalid": len(invalid),
+                "invalid_sessions": ";".join(str(row.get("session", "")) for row in invalid) or NOT_MEASURED,
+                "classification_status": "NOT_EVALUABLE" if any(row.get("classification_status") == "NOT_EVALUABLE" for row in group) else "MEASURED",
+                "nav_build_sha": ";".join(nav_shas),
+            })
     return runs_path, distribution_path
 
 

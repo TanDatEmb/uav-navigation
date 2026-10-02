@@ -127,6 +127,75 @@ class BaselineSummaryTests(unittest.TestCase):
         self.assertEqual(row["classification_status"], "NOT_EVALUABLE")
         self.assertTrue(row["provenance_dirty"])
 
+    def test_exports_terminal_outcome_and_infrastructure_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = self.write_session(Path(directory))
+            (session / "scenario.json").write_text(
+                json.dumps({
+                    "outcome": "PAUSED_SAFETY_STOP",
+                    "events": [{"name": "terminal_outcome_assigned", "outcome": "PAUSED_SAFETY_STOP"}],
+                }),
+                encoding="utf-8",
+            )
+            (session / "report.json").write_text(
+                json.dumps({
+                    "runtime_verdict": "BLOCKED",
+                    "infrastructure": {
+                        "classification": "INFRASTRUCTURE_INVALID",
+                        "valid": False,
+                        "reasons": ["simulation clock lease gap"],
+                    },
+                }),
+                encoding="utf-8",
+            )
+            row = baseline_summary.summarize_session(session, matrix="M1", run_idx=1)
+
+        self.assertEqual(row["terminal_outcome"], "PAUSED_SAFETY_STOP")
+        self.assertEqual(row["infrastructure_classification"], "INFRASTRUCTURE_INVALID")
+        self.assertTrue(row["infrastructure_invalid"])
+
+    def test_writes_pooled_distribution_and_per_cell_table(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = self.write_session(
+                root,
+                policy={"name": "raycasting_on_backup_strict", "backup_allow_unknown": False},
+                metadata={"build_provenance": {"manifest": {"source": {"git_head": "sha", "git_dirty": False}}}},
+            )
+            (first / "samples.jsonl").write_text(
+                '{"mapping_total_update_us": 10}\n{"mapping_total_update_us": 30}\n',
+                encoding="utf-8",
+            )
+            second_root = root / "second"
+            second_root.mkdir()
+            second = self.write_session(
+                second_root,
+                policy={"name": "raycasting_on_backup_strict", "backup_allow_unknown": False},
+                metadata={"build_provenance": {"manifest": {"source": {"git_head": "sha", "git_dirty": False}}}},
+            )
+            (second / "samples.jsonl").write_text(
+                '{"mapping_total_update_us": 50}\n',
+                encoding="utf-8",
+            )
+            for session, outcome in ((first, "PAUSED_SAFETY_STOP"), (second, "COMPLETE")):
+                (session / "scenario.json").write_text(json.dumps({"outcome": outcome}), encoding="utf-8")
+            rows = [
+                baseline_summary.summarize_session(first, matrix="M1", run_idx=1),
+                baseline_summary.summarize_session(second, matrix="M1", run_idx=2),
+            ]
+            baseline_summary.write_summary(rows, root / "out")
+            with (root / "out" / "baseline_pooled_distribution.csv").open(newline="", encoding="utf-8") as stream:
+                pooled = list(csv.DictReader(stream))
+            with (root / "out" / "baseline_by_cell.csv").open(newline="", encoding="utf-8") as stream:
+                cells = list(csv.DictReader(stream))
+
+        mapping = next(row for row in pooled if row["metric"] == "adr_m3_mapping_update_us")
+        self.assertEqual(mapping["n"], "3")
+        self.assertEqual(mapping["p50"], "30.0")
+        self.assertEqual(len(cells), 1)
+        self.assertEqual(cells[0]["paused_safety_stop"], "1")
+        self.assertEqual(cells[0]["paused_rate_pct"], "50.0")
+
 
 if __name__ == "__main__":
     unittest.main()
