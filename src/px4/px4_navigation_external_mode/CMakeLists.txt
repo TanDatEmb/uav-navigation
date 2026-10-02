@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+find_package(nav_safety_profile REQUIRED)
 find_package(navigation_common REQUIRED)
 find_package(eigen3_cmake_module REQUIRED)
 find_package(Eigen3 REQUIRED)
@@ -74,7 +76,9 @@ target_link_libraries(${PROJECT_NAME}_adapter
   Eigen3::Eigen
   px4_ros2_cpp::px4_ros2_cpp
   rclcpp::rclcpp)
-ament_target_dependencies(${PROJECT_NAME}_adapter navigation_common diagnostic_msgs navigation_contracts nav_msgs px4_msgs px4_ros2_cpp rclcpp std_msgs)
+ament_target_dependencies(${PROJECT_NAME}_adapter ament_index_cpp navigation_common
+  diagnostic_msgs nav_safety_profile navigation_contracts
+  nav_msgs px4_msgs px4_ros2_cpp rclcpp std_msgs)
 target_compile_options(${PROJECT_NAME}_adapter PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(${PROJECT_NAME}_node src/main.cpp)

@@ -9,6 +9,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
+
 namespace uav::nav::lio {
 namespace {
 
@@ -306,6 +308,10 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   // unknown-parameter audit. It is consumed by the publisher, not the
   // estimator profile or any health/admission decision.
   node.declare_parameter<bool>("diagnostics.state_transport_trace_enabled", false);
+  node.declare_parameter<std::string>(
+      "safety_profile.path",
+      ament_index_cpp::get_package_share_directory("nav_safety_profile") +
+          "/config/sitl_current_as_is.yaml");
   const auto& overrides =
       node.get_node_parameters_interface()->get_parameter_overrides();
   for (const auto& [name, unused_value] : overrides) {

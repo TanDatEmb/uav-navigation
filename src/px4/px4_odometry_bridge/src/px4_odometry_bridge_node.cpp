@@ -7,16 +7,20 @@
 #include <cstdlib>
 #include <deque>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <navigation_common/time.hpp>
+#include <nav_safety_profile/generated/profile.hpp>
+#include <nav_safety_profile/witness.hpp>
 #include <px4_msgs/msg/timesync_status.hpp>
 #include <px4_msgs/msg/vehicle_attitude.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
@@ -37,6 +41,26 @@ namespace px4_odometry_bridge {
 
 namespace {
 constexpr char kOutputTopic[] = "/px4/estimator_odometry";
+
+void logSafetyProfileWitness(
+    rclcpp::Node& node,
+    const std::map<std::string, nav_safety_profile::Scalar>& effective_values) {
+  try {
+    const auto default_path = ament_index_cpp::get_package_share_directory(
+        "nav_safety_profile") + "/config/sitl_current_as_is.yaml";
+    const auto path = node.declare_parameter<std::string>("safety_profile.path", default_path);
+    const auto loaded = nav_safety_profile::load(path);
+    if (loaded) {
+      const auto line = nav_safety_profile::witness_line(
+          *loaded.value, "px4_odometry_bridge", effective_values);
+      RCLCPP_INFO(node.get_logger(), "%s", line.c_str());
+      return;
+    }
+  } catch (const std::exception&) {
+  }
+  RCLCPP_ERROR(node.get_logger(),
+      "SAFETY_PROFILE_LOAD_ERROR reason=unavailable");
+}
 // The message has already crossed the PX4 NED/FRD -> ROS ENU/FLU boundary.
 // The frame name identifies the PX4-originated local origin; it must not be
 // interpreted as raw PX4 NED coordinates by the initial-prior consumer.
@@ -81,6 +105,12 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     }
     maximum_metadata_age_ns_ = *maximum_metadata_age_ns;
     maximum_metadata_association_gap_ns_ = *maximum_metadata_association_gap_ns;
+    logSafetyProfileWitness(*this, {
+        {"freshness.reset_metadata_max_age_s", maximum_metadata_age_s},
+        {"freshness.odometry_association_gap_s", maximum_metadata_association_gap_s},
+        {"freshness.px4_time_validator_max_stale_age_s", 0.2},
+        {"freshness.px4_time_validator_max_future_age_s", 0.2},
+    });
     history_.setStableSamples(static_cast<std::size_t>(stable_samples_after_reset_));
     output_ = create_publisher<nav_msgs::msg::Odometry>(kOutputTopic, 10);
     diagnostics_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(

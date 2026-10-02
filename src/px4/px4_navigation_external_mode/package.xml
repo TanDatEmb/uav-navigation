@@ -9,6 +9,7 @@
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>ament_index_cpp</depend>
   <depend>navigation_common</depend>
   <depend>eigen3_cmake_module</depend>
   <depend>geometry_msgs</depend>
@@ -17,6 +18,7 @@
   <depend>nav_msgs</depend>
   <depend>px4_msgs</depend>
   <depend>px4_ros2_cpp</depend>
+  <depend>nav_safety_profile</depend>
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
 

@@ -1,0 +1,1533 @@
+schema_version: 1
+profile:
+  name: sitl_current_as_is
+  qualification_status: NOT_EVALUABLE
+  provenance:
+    baseline_commit: 2543b0b4bc469c709038b4db9e332b6b9d1de11f
+  open_questions: []
+timing:
+  planner_period_s:
+    value: 0.1
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:9
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:9
+    oracle_name: planner_period_s
+  solve_deadline_s:
+    value: 0.08
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - judge
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:44
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:11
+    oracle_name: solve_deadline_s
+    hg: HG-001
+  stitch_duration_s:
+    value: 0.4
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:42
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:12
+    oracle_name: stitch_duration_s
+  commit_guard_s:
+    value: 0.02
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:13
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:13
+    oracle_name: commit_guard_s
+  urgent_baseline_threshold_s:
+    value: 1.0
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:16
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:16
+    oracle_name: urgent_baseline_threshold_s
+  command_period_s:
+    value: 0.02
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:17
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:17
+    oracle_name: command_period_s
+  planner_watchdog_timeout_s:
+    value: 1.0
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - config/runtime/mapping.yaml:23
+    superseded_sources:
+    - src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:720
+    oracle_name: planner_watchdog_timeout_s
+    hg: HG-008
+  stationary_speed_mps:
+    value: 0.15
+    unit: m/s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:25
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:25
+    oracle_name: stationary_speed_mps
+  finalization_reserve_s:
+    value: 0.04
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:48
+    - config/runtime/planning_stability_qualification.yaml:17
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/planner_core/config.hpp:170
+    oracle_name: finalization_reserve_s
+  astar_attempt_s:
+    value: 0.03
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:199
+    superseded_sources: []
+    oracle_name: astar_attempt_s
+    hg: HG-001
+  astar_total_s:
+    value: 0.06
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:203
+    superseded_sources: []
+    oracle_name: astar_total_s
+    hg: HG-001
+  temporal_sample_min_s:
+    value: 0.002
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/planning/navigation_planning_backend/include/planner_core/trajectory_world_validator.hpp:701
+    superseded_sources: []
+    oracle_name: temporal_sample_min_s
+    hg: HG-010
+  temporal_sample_max_s:
+    value: 0.05
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/planning/navigation_planning_backend/include/planner_core/trajectory_world_validator.hpp:701
+    superseded_sources: []
+    oracle_name: temporal_sample_max_s
+    hg: HG-010
+  safety_stop_speed_mps:
+    value: 0.15
+    unit: m/s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_navigation_external_mode
+    overlay: forbidden
+    sources:
+    - src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission_controller.hpp:100
+    superseded_sources:
+    - src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission_controller.hpp:100
+    oracle_name: safety_stop_speed_mps
+  adapter_stationary_velocity_gate_mps:
+    value: 0.15
+    unit: m/s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_navigation_external_mode
+    overlay: forbidden
+    sources:
+    - src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1526
+    - src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1527
+    superseded_sources: []
+    oracle_name: adapter_stationary_velocity_gate_mps
+  runtime_stopped_recovery_speed_gate_mps:
+    value: 0.15
+    unit: m/s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:4499
+    - src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:4617
+    superseded_sources: []
+    oracle_name: runtime_stopped_recovery_speed_gate_mps
+  takeoff_stable_speed_mps:
+    value: 0.15
+    unit: m/s
+    qualification_status: PROVISIONAL
+    owners:
+    - judge
+    overlay: forbidden
+    sources:
+    - config/runtime/external_mode_scenario.yaml:13
+    superseded_sources:
+    - tools/runtime/external_mode_scenario.py:2689
+    oracle_name: takeoff_stable_speed_mps
+  trajectory_wait_timeout_s:
+    value: 5.0
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_navigation_external_mode
+    overlay: forbidden
+    sources:
+    - config/runtime/external_mode.yaml:18
+    superseded_sources:
+    - src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:187
+    oracle_name: trajectory_wait_timeout_s
+  planner_recovery_wait_timeout_s:
+    value: 5.0
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_navigation_external_mode
+    overlay: forbidden
+    sources:
+    - config/runtime/external_mode.yaml:22
+    superseded_sources:
+    - src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:189
+    oracle_name: planner_recovery_wait_timeout_s
+  minimum_main_reserve_s:
+    value: DERIVED
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    derived_from:
+      formula: solve_deadline_s + stitch_duration_s + planner_period_s + commit_guard_s
+      sources:
+      - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:14-15
+    sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:14-15
+    superseded_sources: []
+    oracle_name: minimum_main_reserve_s
+lease:
+  adapter_command_lease_s:
+    value: 0.1
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:19
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:19
+    oracle_name: adapter_command_lease_s
+freshness:
+  external_state_age_s:
+    value: 0.2
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_navigation_external_mode
+    overlay: forbidden
+    sources:
+    - config/runtime/external_mode.yaml:16
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:20
+    - src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:186
+    oracle_name: external_state_age_s
+    hg: HG-006
+  observation_max_age_s:
+    value: 0.5
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    - px4_external_odometry_bridge
+    overlay: forbidden
+    sources:
+    - config/runtime/mapping.yaml:22
+    - config/runtime/sim.yaml:83
+    superseded_sources:
+    - src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:718
+    - src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:49
+    - src/estimation/fast_lio_ros/src/parameter_loader.cpp:200
+    oracle_name: observation_max_age_s
+    hg: HG-006
+  odometry_diagnostics_max_age_s:
+    value: 2.0
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_external_odometry_bridge
+    overlay: forbidden
+    sources:
+    - src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:51
+    superseded_sources:
+    - src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:51
+    oracle_name: odometry_diagnostics_max_age_s
+  reset_metadata_max_age_s:
+    value: 0.1
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_odometry_bridge
+    overlay: forbidden
+    sources:
+    - src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:64
+    superseded_sources:
+    - src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:64
+    oracle_name: reset_metadata_max_age_s
+  odometry_association_gap_s:
+    value: 0.005
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_odometry_bridge
+    overlay: forbidden
+    sources:
+    - src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:66
+    superseded_sources:
+    - src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:66
+    oracle_name: odometry_association_gap_s
+  propagated_odometry_maximum_correction_age_s:
+    value: 0.5
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - fast_lio
+    overlay: forbidden
+    sources:
+    - config/runtime/sim.yaml:69
+    - config/runtime/dataset.yaml:70
+    superseded_sources:
+    - src/estimation/fast_lio_ros/src/parameter_loader.cpp:304
+    oracle_name: propagated_odometry_maximum_correction_age_s
+  initial_prior_maximum_topic_prior_age_s:
+    value: 0.5
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - fast_lio
+    overlay: forbidden
+    sources:
+    - src/estimation/fast_lio_ros/src/parameter_loader.cpp:200
+    superseded_sources:
+    - src/estimation/fast_lio_ros/src/parameter_loader.cpp:200
+    oracle_name: initial_prior_maximum_topic_prior_age_s
+  px4_time_validator_max_stale_age_s:
+    value: 0.2
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_odometry_bridge
+    overlay: forbidden
+    sources:
+    - src/px4/px4_odometry_bridge/include/px4_odometry_bridge/time_validator.hpp:15
+    superseded_sources:
+    - src/px4/px4_odometry_bridge/include/px4_odometry_bridge/time_validator.hpp:15
+    - src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp:607
+    oracle_name: px4_time_validator_max_stale_age_s
+  px4_time_validator_max_future_age_s:
+    value: 0.2
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_odometry_bridge
+    overlay: forbidden
+    sources:
+    - src/px4/px4_odometry_bridge/include/px4_odometry_bridge/time_validator.hpp:16
+    superseded_sources:
+    - src/px4/px4_odometry_bridge/include/px4_odometry_bridge/time_validator.hpp:16
+    oracle_name: px4_time_validator_max_future_age_s
+  judge_default_stale_after_s:
+    value: 1.0
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - judge
+    overlay: forbidden
+    sources:
+    - config/runtime/common.yaml:6
+    superseded_sources:
+    - tools/runtime/report.py:1111
+    - tools/runtime/report.py:1269
+    oracle_name: judge_default_stale_after_s
+  trajectory_stale_after_s:
+    value: 0.1
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_navigation_external_mode
+    overlay: forbidden
+    sources:
+    - config/runtime/external_mode.yaml:15
+    superseded_sources:
+    - src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:184
+    oracle_name: trajectory_stale_after_s
+    hg: HG-006
+  state_stale_after_s:
+    value: 0.2
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_navigation_external_mode
+    overlay: forbidden
+    sources:
+    - config/runtime/external_mode.yaml:16
+    superseded_sources:
+    - src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:186
+    oracle_name: state_stale_after_s
+    hg: HG-006
+envelope:
+  main_max_velocity_mps:
+    value: 5.0
+    unit: m/s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:88
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/planner_core/config.hpp:110
+    oracle_name: main_max_velocity_mps
+    hg: HG-004
+  main_max_acceleration_mps2:
+    value: 5.0
+    unit: m/s^2
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:89
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/planner_core/config.hpp:112
+    oracle_name: main_max_acceleration_mps2
+    hg: HG-004
+  main_max_jerk_mps3:
+    value: 8.0
+    unit: m/s^3
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:90
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/planner_core/config.hpp:114
+    oracle_name: main_max_jerk_mps3
+    hg: HG-004
+  physical_max_velocity_mps:
+    value: 12.0
+    unit: m/s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:99
+    superseded_sources: []
+    oracle_name: physical_max_velocity_mps
+    hg: HG-004
+  physical_max_acceleration_mps2:
+    value: 12.0
+    unit: m/s^2
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:100
+    superseded_sources: []
+    oracle_name: physical_max_acceleration_mps2
+    hg: HG-004
+  physical_max_jerk_mps3:
+    value: 30.0
+    unit: m/s^3
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:101
+    superseded_sources: []
+    oracle_name: physical_max_jerk_mps3
+    hg: HG-004
+  bridge_maximum_expected_speed_mps:
+    value: 10.0
+    unit: m/s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_external_odometry_bridge
+    overlay: forbidden
+    sources:
+    - config/runtime/sim.yaml:87
+    superseded_sources:
+    - src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:57
+    oracle_name: bridge_maximum_expected_speed_mps
+  max_body_rate_rad_s:
+    value: 5.0
+    unit: rad/s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:102
+    superseded_sources: []
+    oracle_name: max_body_rate_rad_s
+  max_yaw_rate_rad_s:
+    value: 5.0
+    unit: rad/s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:102
+    superseded_sources: []
+    oracle_name: max_yaw_rate_rad_s
+  max_yaw_acceleration_rad_s2:
+    value: 2.0
+    unit: rad/s^2
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:73
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_limits.hpp:21
+    oracle_name: max_yaw_acceleration_rad_s2
+  mass_kg:
+    value: 1.64
+    unit: kg
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:181
+    superseded_sources: []
+    oracle_name: mass_kg
+  min_thrust_acceleration_m_s2:
+    value: 6.0
+    unit: m/s^2
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:104
+    superseded_sources: []
+    oracle_name: minimum_thrust_n
+    notes: derived_n = value × mass_kg; witness records the acceleration input and effective N separately.
+  max_thrust_acceleration_m_s2:
+    value: 25.0
+    unit: m/s^2
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:103
+    superseded_sources: []
+    oracle_name: maximum_thrust_n
+    notes: derived_n = value × mass_kg; witness records the acceleration input and effective N separately.
+  planner_route_yaw_rate_max_rad_s:
+    value: 2.0
+    unit: rad/s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:72
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/planner_core/config.hpp:202
+    oracle_name: planner_route_yaw_rate_max_rad_s
+  optimization_dynamic_reserve_ratio:
+    value: 0.98
+    unit: ratio
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:139
+    superseded_sources: []
+    oracle_name: optimization_dynamic_reserve_ratio
+  bridge_position_jump_m:
+    value: 0.75
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_external_odometry_bridge
+    overlay: forbidden
+    sources:
+    - config/runtime/sim.yaml:85
+    superseded_sources:
+    - src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:53
+    oracle_name: bridge_position_jump_m
+  bridge_orientation_jump_rad:
+    value: 0.35
+    unit: rad
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_external_odometry_bridge
+    overlay: forbidden
+    sources:
+    - config/runtime/sim.yaml:86
+    superseded_sources:
+    - src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:55
+    oracle_name: bridge_orientation_jump_rad
+  bridge_maximum_continuity_dt_s:
+    value: 0.5
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_external_odometry_bridge
+    overlay: forbidden
+    sources:
+    - config/runtime/sim.yaml:90
+    superseded_sources:
+    - src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp:63
+    oracle_name: bridge_maximum_continuity_dt_s
+  adapter_airborne_height_gate_m:
+    value: 0.5
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_navigation_external_mode
+    overlay: forbidden
+    sources:
+    - src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:385
+    - src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:937
+    - src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1518
+    - src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:2294
+    superseded_sources: []
+    oracle_name: adapter_airborne_height_gate_m
+  adapter_diagnostics_wait_cap_s:
+    value: 0.5
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - px4_navigation_external_mode
+    overlay: forbidden
+    sources:
+    - src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:2346
+    superseded_sources: []
+    oracle_name: adapter_diagnostics_wait_cap_s
+geometry:
+  vehicle_radius_m:
+    value: 0.35
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - judge
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:64
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/planner_core/config.hpp:196
+    oracle_name: vehicle_radius_m
+    hg: HG-005
+  tracking_error_budget_m:
+    value: 0.25
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:65
+    superseded_sources: []
+    oracle_name: tracking_error_budget_m
+    hg: HG-005
+  localization_error_budget_m:
+    value: 0.05
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:66
+    superseded_sources: []
+    oracle_name: localization_error_budget_m
+    hg: HG-005
+  mapping_error_budget_m:
+    value: 0.1
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:67
+    superseded_sources: []
+    oracle_name: mapping_error_budget_m
+    hg: HG-005
+  planning_margin_m:
+    value: 0.05
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:68
+    superseded_sources: []
+    oracle_name: planning_margin_m
+    hg: HG-005
+  planning_radius_sum_m:
+    value: DERIVED
+    unit: m
+    qualification_status: PROVISIONAL
+    owners: []
+    overlay: forbidden
+    sources:
+    - docs/safety/archive/runtime_safety_legacy_full.md#HG-005
+    superseded_sources: []
+    oracle_name: planning_radius_sum_m
+    hg: HG-005
+    derived_from:
+      formula: vehicle_radius_m + tracking_error_budget_m + localization_error_budget_m
+        + mapping_error_budget_m + planning_margin_m
+      sources:
+      - docs/safety/archive/runtime_safety_legacy_full.md#HG-005
+  command_anchor_error_limit_m:
+    value: 0.75
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/contracts/navigation_contracts/include/navigation_contracts/command_safety_contract.hpp:10
+    superseded_sources:
+    - src/contracts/navigation_contracts/include/navigation_contracts/command_safety_contract.hpp:10
+    oracle_name: command_anchor_error_limit_m
+    hg: HG-007
+  goal_completion_tolerance_m:
+    value: 0.2
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - judge
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/mapping/navigation_world_model/include/navigation_world_model/goal_contract.hpp:12
+    superseded_sources:
+    - src/mapping/navigation_world_model/include/navigation_world_model/goal_contract.hpp:12
+    oracle_name: goal_completion_tolerance_m
+    hg: HG-009
+  corridor_plane_tolerance_m:
+    value: 0.01
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:125
+    - src/runtime/navigation_runtime/config/planner.yaml:167
+    superseded_sources:
+    - src/mapping/navigation_world_model/include/navigation_world_model/continuous_clearance.hpp:23
+    oracle_name: corridor_plane_tolerance_m
+    hg: HG-002;HG-013
+  map_resolution_m:
+    value: 0.2
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:215
+    - src/runtime/navigation_runtime/config/planner.yaml:216
+    superseded_sources: []
+    oracle_name: map_resolution_m
+    hg: HG-010
+  local_window_m:
+    value: 20.0
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:52
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp:22
+    oracle_name: local_window_m
+  horizon_floor_m:
+    value: 14.0
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:33
+    superseded_sources: []
+    oracle_name: horizon_floor_m
+    hg: HG-034
+  horizon_cap_m:
+    value: 23.0
+    unit: m
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:28
+    superseded_sources: []
+    oracle_name: horizon_cap_m
+    hg: HG-034
+  min_range_m:
+    value: 0.5
+    unit: m
+    qualification_status: PROVISIONAL
+    owners: &id001
+    - fast_lio
+    overlay: allowed
+    sources:
+    - config/runtime/sim.yaml:44
+    superseded_sources: &id002
+    - src/estimation/fast_lio_ros/src/parameter_loader.cpp:259
+    oracle_name: min_range_m
+  scan_voxel_m:
+    value: 0.2
+    unit: m
+    qualification_status: PROVISIONAL
+    owners: &id003
+    - fast_lio
+    overlay: allowed
+    sources:
+    - config/runtime/sim.yaml:46
+    superseded_sources: &id004
+    - src/estimation/fast_lio_ros/src/parameter_loader.cpp:262
+    oracle_name: scan_voxel_m
+  registration_voxel_m:
+    value: 0.3
+    unit: m
+    qualification_status: PROVISIONAL
+    owners: &id005
+    - fast_lio
+    overlay: allowed
+    sources:
+    - config/runtime/sim.yaml:52
+    superseded_sources: &id006
+    - src/estimation/fast_lio_ros/src/parameter_loader.cpp:264
+    oracle_name: registration_voxel_m
+  local_map_half_extent_xy_m:
+    value: 30.0
+    unit: m
+    qualification_status: PROVISIONAL
+    owners: &id007
+    - fast_lio
+    overlay: allowed
+    sources:
+    - config/runtime/sim.yaml:54
+    superseded_sources: &id008
+    - src/estimation/fast_lio_ros/src/parameter_loader.cpp:266
+    oracle_name: local_map_half_extent_xy_m
+  local_map_half_extent_z_m:
+    value: 15.0
+    unit: m
+    qualification_status: PROVISIONAL
+    owners: &id009
+    - fast_lio
+    overlay: allowed
+    sources:
+    - config/runtime/sim.yaml:54
+    superseded_sources: &id010
+    - src/estimation/fast_lio_ros/src/parameter_loader.cpp:266
+    oracle_name: local_map_half_extent_z_m
+  visibility_association_maximum_age_s:
+    value: 0.5
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - fast_lio
+    overlay: forbidden
+    sources:
+    - src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:23
+    superseded_sources:
+    - src/estimation/fast_lio_ros/src/ros_output_publisher.cpp:23
+    oracle_name: visibility_association_maximum_age_s
+tolerance_numeric:
+  anchor_pvaj_roundoff_tolerances:
+    value: position=1.0e-5;velocity=1.0e-5;acceleration=1.0e-4;jerk=1.0e-3;yaw=1.0e-6;yaw_rate=1.0e-5
+    unit: m,m/s,m/s^2,m/s^3,rad,rad/s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:398
+    - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:399
+    - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:400
+    - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:401
+    - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:402
+    - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:403
+    - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:47
+    - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:48
+    - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:49
+    - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:50
+    - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:51
+    - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:52
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:398
+    - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:399
+    - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:400
+    - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:401
+    - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:402
+    - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:403
+    - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:47
+    - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:48
+    - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:49
+    - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:50
+    - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:51
+    - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:52
+    oracle_name: anchor_pvaj_roundoff_tolerances
+  exp_opt_accuracy:
+    value: 5.0e-06
+    unit: solver units
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:112
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/traj_opt/config.hpp:187
+    oracle_name: exp_opt_accuracy
+  backup_opt_accuracy:
+    value: 1.0e-06
+    unit: solver units
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:161
+    superseded_sources: []
+    oracle_name: backup_opt_accuracy
+  smooth_eps:
+    value: 0.01
+    unit: solver units
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:121
+    - src/runtime/navigation_runtime/config/planner.yaml:166
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/traj_opt/config.hpp:190
+    oracle_name: smooth_eps
+  command_clock_tolerance_s:
+    value: 1.0e-09
+    unit: s
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp:459
+    superseded_sources:
+    - src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp:459
+    oracle_name: command_clock_tolerance_s
+queue:
+  lbfgs_memory_size:
+    value: 32
+    unit: entries
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:116
+    - src/runtime/navigation_runtime/config/planner.yaml:164
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/traj_opt/config.hpp:189
+    oracle_name: lbfgs_memory_size
+  nominal_integral_resolution:
+    value: 15
+    unit: samples
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:120
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/traj_opt/config.hpp:188
+    oracle_name: nominal_integral_resolution
+  backup_integral_resolution:
+    value: 12
+    unit: samples
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:165
+    superseded_sources: []
+    oracle_name: backup_integral_resolution
+  imu_queue_capacity:
+    value: 4096
+    unit: samples
+    qualification_status: PROVISIONAL
+    owners:
+    - fast_lio
+    overlay: forbidden
+    sources:
+    - config/runtime/sim.yaml:71
+    - config/runtime/dataset.yaml:72
+    superseded_sources:
+    - src/estimation/fast_lio_ros/src/parameter_loader.cpp:286
+    oracle_name: imu_queue_capacity
+  monitor_queue_depth:
+    value: 100
+    unit: samples
+    qualification_status: PROVISIONAL
+    owners:
+    - judge
+    overlay: forbidden
+    sources:
+    - config/runtime/common.yaml:2
+    superseded_sources: []
+    oracle_name: monitor_queue_depth
+  lidar_queue_capacity:
+    value: 16
+    unit: scans
+    qualification_status: PROVISIONAL
+    owners:
+    - fast_lio
+    overlay: forbidden
+    sources:
+    - config/runtime/sim.yaml:72
+    - config/runtime/dataset.yaml:73
+    superseded_sources:
+    - src/estimation/fast_lio_ros/src/parameter_loader.cpp:288
+    oracle_name: lidar_queue_capacity
+  navigation_command_queue_capacity:
+    value: 16
+    unit: commands
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:2780
+    superseded_sources: []
+    oracle_name: navigation_command_queue_capacity
+retry:
+  feasibility_retry_max_iterations:
+    value: 64
+    unit: iterations
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:119
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/traj_opt/config.hpp:195
+    oracle_name: feasibility_retry_max_iterations
+  maximum_feasibility_retries:
+    value: 2
+    unit: retries
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/planning/navigation_planning_backend/src/traj_opt/nominal_trajectory_optimizer.cpp:2767
+    superseded_sources:
+    - src/planning/navigation_planning_backend/src/traj_opt/nominal_trajectory_optimizer.cpp:2767
+    oracle_name: maximum_feasibility_retries
+  ciri_pass_count:
+    value: 1
+    unit: passes
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:36
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/planner_core/config.hpp:201
+    oracle_name: ciri_pass_count
+  roundoff_correction_count:
+    value: 8
+    unit: corrections
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/planning/navigation_planning_backend/include/planner_core/evidence_speed_governor.hpp:152
+    superseded_sources:
+    - src/planning/navigation_planning_backend/include/planner_core/evidence_speed_governor.hpp:152
+    oracle_name: roundoff_correction_count
+overlays:
+  dataset:
+    min_range_m:
+      value: 0.5
+      unit: m
+      qualification_status: PROVISIONAL
+      owners: *id001
+      overlay: allowed
+      sources:
+      - config/runtime/dataset.yaml:44
+      superseded_sources: *id002
+      oracle_name: min_range_m
+    scan_voxel_m:
+      value: 0.9
+      unit: m
+      qualification_status: PROVISIONAL
+      owners: *id003
+      overlay: allowed
+      sources:
+      - config/runtime/dataset.yaml:46
+      superseded_sources: *id004
+      oracle_name: scan_voxel_m
+    registration_voxel_m:
+      value: 0.3
+      unit: m
+      qualification_status: PROVISIONAL
+      owners: *id005
+      overlay: allowed
+      sources:
+      - config/runtime/dataset.yaml:52
+      superseded_sources: *id006
+      oracle_name: registration_voxel_m
+    local_map_half_extent_xy_m:
+      value: 50.0
+      unit: m
+      qualification_status: PROVISIONAL
+      owners: *id007
+      overlay: allowed
+      sources:
+      - config/runtime/dataset.yaml:54
+      superseded_sources: *id008
+      oracle_name: local_map_half_extent_xy_m
+    local_map_half_extent_z_m:
+      value: 25.0
+      unit: m
+      qualification_status: PROVISIONAL
+      owners: *id009
+      overlay: allowed
+      sources:
+      - config/runtime/dataset.yaml:54
+      superseded_sources: *id010
+      oracle_name: local_map_half_extent_z_m
+qualification:
+  judge:
+    max_match_gap_s:
+      value: 0.15
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - tools/runtime/evaluation.py:27
+      superseded_sources: []
+      oracle_name: max_match_gap_s
+    stop_enter_mps:
+      value: 0.1
+      unit: m/s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - tools/runtime/evaluation.py:28
+      superseded_sources: []
+      oracle_name: stop_enter_mps
+    stop_exit_mps:
+      value: 0.2
+      unit: m/s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - tools/runtime/evaluation.py:29
+      superseded_sources: []
+      oracle_name: stop_exit_mps
+    min_stop_duration_s:
+      value: 0.2
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - tools/runtime/evaluation.py:30
+      superseded_sources: []
+      oracle_name: min_stop_duration_s
+    mission_acceptance_speed_mps:
+      value: 0.15
+      unit: m/s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/missions/external_mode_pillar.yaml:37
+      - config/runtime/missions/long_cross_obstacles.yaml:29
+      - config/runtime/missions/long_featured.yaml:33
+      - config/runtime/missions/long_open_featured_core_60.yaml:19
+      - config/runtime/missions/long_open_featured_core_60_pv.yaml:19
+      - config/runtime/missions/long_open_featured_speed.yaml:21
+      - config/runtime/missions/long_three_pillars.yaml:44
+      - config/runtime/missions/long_three_pillars_multiwaypoint.yaml:49
+      - config/runtime/missions/long_three_pillars_speed.yaml:21
+      - config/runtime/missions/navigation_generalization.yaml:24
+      - config/runtime/missions/single_pillar_speed.yaml:19
+      - config/runtime/missions/single_pillar_speed_pv.yaml:19
+      - config/runtime/missions/t2_same_identity_renewal.yaml:23
+      superseded_sources:
+      - src/contracts/navigation_mission/include/navigation_mission/mission.hpp:38
+      oracle_name: mission_acceptance_speed_mps
+    stream_simulation_clock_stale_after_s:
+      value: 0.5
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:11
+      superseded_sources: []
+      oracle_name: stream_simulation_clock_stale_after_s
+    stream_imu_stale_after_s:
+      value: 0.1
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:12
+      superseded_sources: []
+      oracle_name: stream_imu_stale_after_s
+    stream_lidar_stale_after_s:
+      value: 0.5
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:13
+      superseded_sources: []
+      oracle_name: stream_lidar_stale_after_s
+    stream_corrected_odometry_stale_after_s:
+      value: 1.0
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:14
+      superseded_sources: []
+      oracle_name: stream_corrected_odometry_stale_after_s
+    stream_propagated_odometry_stale_after_s:
+      value: 0.5
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:15
+      superseded_sources: []
+      oracle_name: stream_propagated_odometry_stale_after_s
+    stream_registered_scan_stale_after_s:
+      value: 0.5
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:16
+      superseded_sources: []
+      oracle_name: stream_registered_scan_stale_after_s
+    stream_mapping_diagnostics_stale_after_s:
+      value: 2.0
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:17
+      superseded_sources: []
+      oracle_name: stream_mapping_diagnostics_stale_after_s
+    stream_external_odometry_stale_after_s:
+      value: 0.2
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:18
+      superseded_sources: []
+      oracle_name: stream_external_odometry_stale_after_s
+    stream_ground_truth_odometry_stale_after_s:
+      value: 0.5
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:19
+      superseded_sources: []
+      oracle_name: stream_ground_truth_odometry_stale_after_s
+    stream_px4_odometry_stale_after_s:
+      value: 1.0
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:20
+      superseded_sources: []
+      oracle_name: stream_px4_odometry_stale_after_s
+    stream_vehicle_status_stale_after_s:
+      value: 1.0
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:21
+      superseded_sources: []
+      oracle_name: stream_vehicle_status_stale_after_s
+    stream_local_position_stale_after_s:
+      value: 1.0
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:22
+      superseded_sources: []
+      oracle_name: stream_local_position_stale_after_s
+    stream_estimator_status_flags_stale_after_s:
+      value: 2.5
+      unit: s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/common.yaml:23
+      superseded_sources: []
+      oracle_name: stream_estimator_status_flags_stale_after_s
+    vehicle_collision_radius_m:
+      value: 0.35
+      unit: m
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - tools/runtime/runner.py:3161
+      - tools/runtime/external_mode_scenario.py:1118
+      superseded_sources: []
+      oracle_name: vehicle_collision_radius_m
+    ground_truth_collision_clearance_m:
+      value: 0.05
+      unit: m
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - tools/runtime/external_mode_scenario.py:3112
+      superseded_sources: []
+      oracle_name: ground_truth_collision_clearance_m
+    lio_residual_p95_warning_m:
+      value: 0.35
+      unit: m
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - tools/runtime/external_mode_scenario.py:2923
+      superseded_sources: []
+      oracle_name: lio_residual_p95_warning_m
+    lio_residual_watchdog_m:
+      value: 0.5
+      unit: m
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - tools/runtime/external_mode_scenario.py:1395
+      superseded_sources: []
+      oracle_name: lio_residual_watchdog_m
+    lio_residual_watchdog_velocity_mps:
+      value: 0.75
+      unit: m/s
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - tools/runtime/external_mode_scenario.py:1395
+      superseded_sources: []
+      oracle_name: lio_residual_watchdog_velocity_mps
+    pillar_clearance_m:
+      value: 0.8
+      unit: m
+      qualification_status: PROVISIONAL
+      owners:
+      - judge
+      overlay: forbidden
+      sources:
+      - config/runtime/external_mode_scenario.yaml:30
+      superseded_sources: []
+      oracle_name: pillar_clearance_m
+  evidence:
+    qualified_speed_mps:
+      value:
+      - 1.0
+      - 3.0
+      - 5.0
+      unit: m/s
+      qualification_status: PROVISIONAL
+      owners:
+      - qualification
+      overlay: forbidden
+      sources:
+      - config/runtime/planning_stability_qualification.yaml:4
+      superseded_sources: []
+      oracle_name: qualified_speed_mps
+    characterization_speed_mps:
+      value:
+      - 6.0
+      - 8.0
+      unit: m/s
+      qualification_status: PROVISIONAL
+      owners:
+      - qualification
+      overlay: forbidden
+      sources:
+      - config/runtime/planning_stability_qualification.yaml:5
+      superseded_sources: []
+      oracle_name: characterization_speed_mps
+    minimum_seed_count:
+      value: 30
+      unit: seeds
+      qualification_status: PROVISIONAL
+      owners:
+      - qualification
+      overlay: forbidden
+      sources:
+      - config/runtime/planning_stability_qualification.yaml:10
+      superseded_sources: []
+      oracle_name: minimum_seed_count
+    consecutive_runs_per_speed:
+      value: 10
+      unit: runs
+      qualification_status: PROVISIONAL
+      owners:
+      - qualification
+      overlay: forbidden
+      sources:
+      - config/runtime/planning_stability_qualification.yaml:8
+      superseded_sources: []
+      oracle_name: consecutive_runs_per_speed
+    mid360_visibility_sensor_model:
+      value: Mid-360
+      unit: model
+      qualification_status: PROVISIONAL
+      owners:
+      - qualification
+      overlay: forbidden
+      sources:
+      - docs/safety/runtime_safety_current.md:102
+      superseded_sources: []
+      oracle_name: mid360_visibility_sensor_model
+      hg: HG-011
+    hg_027_pvaj_equality_bound:
+      value: PVAJ coefficient-derived bound
+      unit: mixed
+      qualification_status: PROVISIONAL
+      owners:
+      - qualification
+      overlay: forbidden
+      sources:
+      - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:398-403
+      - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:47-52
+      superseded_sources:
+      - src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp:398-403
+      - src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp:47-52
+      oracle_name: hg_027_pvaj_equality_bound
+      hg: HG-027

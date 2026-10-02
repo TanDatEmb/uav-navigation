@@ -4,16 +4,38 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <map>
 #include <limits>
 #include <pthread.h>
 #include <utility>
 
 #include "fast_lio_ros/qos_profiles.hpp"
 #include "fast_lio_ros/ros_static_transform_resolver.hpp"
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <navigation_common/time.hpp>
+#include <nav_safety_profile/generated/profile.hpp>
+#include <nav_safety_profile/witness.hpp>
 
 namespace uav::nav::lio {
 namespace {
+
+void logSafetyProfileWitness(
+    rclcpp::Node& node,
+    const std::map<std::string, nav_safety_profile::Scalar>& effective_values) {
+  try {
+    const auto path = node.get_parameter("safety_profile.path").as_string();
+    const auto loaded = nav_safety_profile::load(path);
+    if (loaded) {
+      const auto line = nav_safety_profile::witness_line(
+          *loaded.value, "fast_lio", effective_values);
+      RCLCPP_INFO(node.get_logger(), "%s", line.c_str());
+      return;
+    }
+  } catch (const std::exception&) {
+  }
+  RCLCPP_ERROR(node.get_logger(),
+      "SAFETY_PROFILE_LOAD_ERROR reason=unavailable");
+}
 
 LidarTimingMode adapterTiming(const RosParameters& parameters) {
   if (parameters.lidar_timing_mode == "per_point") {
@@ -127,6 +149,20 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
       transform_publisher_(*this) {
   maximum_processing_lag_ns_ = ParameterLoader::durationNanosecondsFromSeconds(
       parameters_.maximum_processing_lag_s);
+  logSafetyProfileWitness(*this, {
+      {"freshness.propagated_odometry_maximum_correction_age_s",
+       parameters_.propagated_odometry_maximum_correction_age_s},
+      {"freshness.initial_prior_maximum_topic_prior_age_s",
+       parameters_.initial_prior_maximum_age_s},
+      {"geometry.min_range_m", parameters_.minimum_range_m},
+      {"geometry.scan_voxel_m", parameters_.scan_voxel_size_m},
+      {"geometry.registration_voxel_m", parameters_.registration_map_voxel_size_m},
+      {"geometry.local_map_half_extent_xy_m", parameters_.local_map_half_extent_m[0]},
+      {"geometry.local_map_half_extent_z_m", parameters_.local_map_half_extent_m[2]},
+      {"geometry.visibility_association_maximum_age_s", 0.5},
+      {"queue.imu_queue_capacity", parameters_.imu_queue_capacity},
+      {"queue.lidar_queue_capacity", parameters_.lidar_queue_capacity},
+  });
   runtime_diagnostics_.imu_queue_capacity =
       static_cast<std::size_t>(parameters_.imu_queue_capacity);
   runtime_diagnostics_.lidar_queue_capacity =

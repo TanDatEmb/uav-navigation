@@ -3,17 +3,21 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <navigation_common/time.hpp>
 #include <navigation_contracts/msg/propagated_odometry.hpp>
+#include <nav_safety_profile/generated/profile.hpp>
+#include <nav_safety_profile/witness.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 
@@ -29,6 +33,26 @@ namespace px4_odometry_bridge {
 
 namespace {
 constexpr char kLioPropagatedOdometryTopic[] = "/lio/odometry_propagated";
+
+void logSafetyProfileWitness(
+    rclcpp::Node& node,
+    const std::map<std::string, nav_safety_profile::Scalar>& effective_values) {
+  try {
+    const auto default_path = ament_index_cpp::get_package_share_directory(
+        "nav_safety_profile") + "/config/sitl_current_as_is.yaml";
+    const auto path = node.declare_parameter<std::string>("safety_profile.path", default_path);
+    const auto loaded = nav_safety_profile::load(path);
+    if (loaded) {
+      const auto line = nav_safety_profile::witness_line(
+          *loaded.value, "px4_external_odometry_bridge", effective_values);
+      RCLCPP_INFO(node.get_logger(), "%s", line.c_str());
+      return;
+    }
+  } catch (const std::exception&) {
+  }
+  RCLCPP_ERROR(node.get_logger(),
+      "SAFETY_PROFILE_LOAD_ERROR reason=unavailable");
+}
 
 std::int64_t requireDurationNanoseconds(const double seconds, const bool allow_zero) {
   const auto nanoseconds = navigation_common::secondsToNanoseconds(seconds);
@@ -76,6 +100,14 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     }
     max_age_ns_ = requireDurationNanoseconds(max_age_s, false);
     diagnostics_max_age_ns_ = requireDurationNanoseconds(diagnostics_max_age_s, false);
+    logSafetyProfileWitness(*this, {
+        {"freshness.observation_max_age_s", max_age_s},
+        {"freshness.odometry_diagnostics_max_age_s", diagnostics_max_age_s},
+        {"envelope.bridge_maximum_expected_speed_mps", maximum_expected_speed_mps_},
+        {"envelope.bridge_position_jump_m", position_jump_m_},
+        {"envelope.bridge_orientation_jump_rad", orientation_jump_rad_},
+        {"envelope.bridge_maximum_continuity_dt_s", maximum_continuity_dt_s_},
+    });
     const auto input_clock_domain = declare_parameter<std::string>(
         "timing.clock_domain", "ros_time");
     timestamp_mapping_mode_ = timestampMappingModeFor(

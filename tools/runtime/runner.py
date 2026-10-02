@@ -42,6 +42,75 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_CONFIG = ROOT / "config/runtime"
 DATASET_SHADOW_MISSION = RUNTIME_CONFIG / "missions/recorded_replay.yaml"
 
+_SAFETY_PROFILE_WITNESS_PATTERN = re.compile(
+    r"SAFETY_PROFILE_WITNESS hash=([0-9a-f]{16}) keys=(\d+) mismatches=\[(.*?)\]"
+)
+_SAFETY_PROFILE_LOAD_ERROR_PATTERN = re.compile(
+    r"SAFETY_PROFILE_LOAD_ERROR reason=([a-z_]+)"
+)
+
+
+def _parse_safety_profile_witness(
+    log: str, role: str, process: str | None = None
+) -> dict[str, Any]:
+    """Parse exactly one startup witness without turning mismatches into a gate."""
+    lines = log.splitlines()
+    if process is not None:
+        lines = [line for line in lines if f"[{process}]:" in line]
+    matches = [match for line in lines
+               for match in _SAFETY_PROFILE_WITNESS_PATTERN.finditer(line)]
+    errors = [match for line in lines
+              for match in _SAFETY_PROFILE_LOAD_ERROR_PATTERN.finditer(line)]
+    if len(matches) + len(errors) != 1:
+        raise ValueError(
+            f"{role}: expected exactly one SafetyProfile startup record, "
+            f"observed witnesses={len(matches)} load_errors={len(errors)}"
+        )
+    if errors:
+        return {"status": "unavailable", "reason": errors[0].group(1)}
+    match = matches[0]
+    mismatch_text = match.group(3)
+    mismatches = [] if not mismatch_text else mismatch_text.split(",")
+    return {
+        "hash": match.group(1),
+        "keys": int(match.group(2)),
+        "mismatches": mismatches,
+    }
+
+
+def _record_safety_profile_witness(
+    session: Session, role: str, process: str | None = None,
+    witness_name: str | None = None,
+) -> dict[str, Any]:
+    """Store one process witness; mismatches remain evidence and do not fail the run."""
+    log_path = session.directory / "logs" / f"{role}.log"
+    try:
+        witness = _parse_safety_profile_witness(
+            log_path.read_text(encoding="utf-8", errors="replace"), role, process)
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"SAFETY_PROFILE_WITNESS {role}: unavailable: {error}") from error
+    metadata_path = session.directory / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    configuration = metadata.setdefault("runtime_configuration", {})
+    profiles = configuration.setdefault("safety_profile", {})
+    witness_name = witness_name or process or role
+    profiles[witness_name] = {
+        **witness, "source": f"logs/{role}.log:SAFETY_PROFILE_STARTUP_RECORD"
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+                             encoding="utf-8")
+    return witness
+
+
+def _wait_and_record_safety_profile_witness(
+    session: Session, log_role: str, process: str, witness_name: str
+) -> dict[str, Any]:
+    _wait_for_log_fragment(
+        session, log_role, f"[{process}]: SAFETY_PROFILE_", 15.0,
+        f"{process} SafetyProfile startup witness",
+    )
+    return _record_safety_profile_witness(session, log_role, process, witness_name)
+
 
 def _shared_artifact_root(root: Path = ROOT) -> Path:
     """Return one runtime artifact root shared by every Git worktree."""
@@ -3736,6 +3805,9 @@ def _run_sim_unlocked(
                 "ros2", "run", "px4_odometry_bridge", "px4_odometry_bridge_node", "--ros-args",
                 "--params-file", str(ros_config), "-p", "use_sim_time:=true",
             ], enable_rviz=not headless), cwd=ROOT)
+            _wait_and_record_safety_profile_witness(
+                session, "px4_ingress", "px4_odometry_bridge", "px4_odometry_bridge"
+            )
         if not characterization_profile:
             if world_observation_fault_duration_ms:
                 gate_log = session.directory / "world_observation_gate.jsonl"
@@ -3758,6 +3830,9 @@ def _run_sim_unlocked(
                     enable_rviz=not headless,
                 ),
                 cwd=ROOT,
+            )
+            _wait_and_record_safety_profile_witness(
+                session, "mapping", "navigation_runtime_node", "navigation_runtime"
             )
             _check_effective_tracking_configuration(
                 session, "mapping", tracking_experiment
@@ -3808,6 +3883,14 @@ def _run_sim_unlocked(
             f"livox_lidar_to_imu_xyz:={lidar_to_imu_xyz}",
             f"livox_lidar_to_imu_rpy:={lidar_to_imu_rpy}",
         ], enable_rviz=not headless), cwd=ROOT)
+        _wait_and_record_safety_profile_witness(
+            session, "lio", "fast_lio", "fast_lio"
+        )
+        if not characterization_profile:
+            _wait_and_record_safety_profile_witness(
+                session, "lio", "px4_external_odometry_bridge",
+                "px4_external_odometry_bridge",
+            )
         if control_interface == "external_mode" and not headless and not auto_scenario:
             session.start(
                 "external_mode",
@@ -3818,6 +3901,10 @@ def _run_sim_unlocked(
                     enable_rviz=True,
                 ),
                 cwd=ROOT,
+            )
+            _wait_and_record_safety_profile_witness(
+                session, "external_mode", "px4_navigation_external_mode",
+                "px4_navigation_external_mode",
             )
         if not headless:
             _start_rviz(session, use_sim_time=True)
@@ -3872,6 +3959,10 @@ def _run_sim_unlocked(
                 session.start("external_mode", _ros_shell([
                     *external_mode_args,
                 ], enable_rviz=not headless), cwd=ROOT)
+                _wait_and_record_safety_profile_witness(
+                    session, "external_mode", "px4_navigation_external_mode",
+                    "px4_navigation_external_mode",
+                )
                 _wait_for_log_fragment(
                     session,
                     "external_mode",

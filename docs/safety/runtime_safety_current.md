@@ -90,7 +90,7 @@ mean `CERTIFIED`.
 
 | ID | Current contract | Gate state |
 |---|---|---|
-| HG-001 | SUPER absolute budget: A* attempt 40 ms, A* total 80 ms, solve 180 ms, future-state lead 200 ms. | ACTIVE / PROVISIONAL |
+| HG-001 | SUPER absolute budget: A* attempt 30 ms, A* total 60 ms, solve 80 ms, future-state lead 200 ms. Lineage: archived contract recorded 40/80/180 ms; SITL YAML uses 30/60/80 ms (`src/runtime/navigation_runtime/config/planner.yaml:199,203,44`); owner decision Q-HG001 in ADR-017 §6.3 selects the effective SITL values. | ACTIVE / PROVISIONAL |
 | HG-002 | Independent continuous normalized corridor-plane violation limit: 0.01 m. | ACTIVE / PROVISIONAL |
 | HG-004 | Physical/BACKUP envelope 12/12/30; MAIN nominal envelope 5/5/8; body-rate/thrust limits remain separately owned. | ACTIVE / PROVISIONAL |
 | HG-005 | Planning radius sum: 0.35 + 0.25 + 0.05 + 0.10 + 0.05 = 0.80 m. | ACTIVE / PROVISIONAL |

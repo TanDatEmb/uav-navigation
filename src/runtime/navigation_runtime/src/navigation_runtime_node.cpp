@@ -27,6 +27,8 @@
 #include <navigation_planning/candidate_admission.hpp>
 #include <navigation_planning/planning_timing.hpp>
 #include <navigation_mission/route_progress.hpp>
+#include <nav_safety_profile/generated/profile.hpp>
+#include <nav_safety_profile/witness.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -34,12 +36,14 @@
 #include <filesystem>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
+#include <yaml-cpp/yaml.h>
 
 namespace navigation_runtime {
 using navigation_execution::ExecutionPhase;
@@ -50,6 +54,169 @@ using navigation_execution::executionRecoveryStateKnown;
 using navigation_execution::nominalPlanningAllowed;
 using navigation_execution::transitionExecutionRecovery;
 namespace {
+
+void logSafetyProfileWitness(
+    rclcpp::Node& node, const std::string& profile_path,
+    std::map<std::string, nav_safety_profile::Scalar> effective_values,
+    const YAML::Node& planner_config) {
+  std::string failure_stage = "load";
+  try {
+    const auto loaded = nav_safety_profile::load(profile_path);
+    if (!loaded) {
+      RCLCPP_ERROR(node.get_logger(),
+          "SAFETY_PROFILE_LOAD_ERROR reason=unavailable stage=load detail=%s",
+          loaded.error.c_str());
+      return;
+    }
+    failure_stage = "effective_value_extraction";
+    const auto add_yaml_value = [&](const std::string& profile_key,
+                                   std::initializer_list<const char*> path) {
+      auto value = planner_config;
+      for (const char* key : path) value.reset(value[key]);
+      if (!value || value.IsNull()) return;
+      const auto entry = loaded.value->entries.find(profile_key);
+      if (entry == loaded.value->entries.end()) return;
+      if (std::holds_alternative<std::int64_t>(entry->second.value)) {
+        effective_values[profile_key] = value.as<std::int64_t>();
+      } else if (std::holds_alternative<double>(entry->second.value)) {
+        effective_values[profile_key] = value.as<double>();
+      }
+    };
+    const auto add_yaml_pair = [&](const std::string& profile_key,
+                                   std::initializer_list<const char*> first_path,
+                                   std::initializer_list<const char*> second_path) {
+      auto first = planner_config;
+      auto second = planner_config;
+      for (const char* key : first_path) first.reset(first[key]);
+      for (const char* key : second_path) second.reset(second[key]);
+      if (!first || !second || first.IsNull() || second.IsNull()) return;
+      const double first_value = first.as<double>();
+      const double second_value = second.as<double>();
+      if (first_value == second_value) {
+        add_yaml_value(profile_key, first_path);
+      } else {
+        std::ostringstream mismatch;
+        mismatch << "first=" << std::setprecision(17) << first_value
+                 << ";second=" << std::setprecision(17) << second_value;
+        effective_values[profile_key] = mismatch.str();
+      }
+    };
+    add_yaml_value("timing.stitch_duration_s", {"planner", "replan_forward_dt_s"});
+    add_yaml_value("timing.finalization_reserve_s", {"planner", "finalization_reserve_s"});
+    add_yaml_value("timing.astar_attempt_s", {"astar", "search_time_limit_s"});
+    add_yaml_value("timing.astar_total_s", {"astar", "total_time_limit_s"});
+    add_yaml_value("envelope.physical_max_velocity_mps", {"traj_opt", "boundary", "max_vel"});
+    add_yaml_value("envelope.physical_max_acceleration_mps2", {"traj_opt", "boundary", "max_acc"});
+    add_yaml_value("envelope.physical_max_jerk_mps3", {"traj_opt", "boundary", "max_jerk"});
+    add_yaml_value("envelope.max_body_rate_rad_s", {"traj_opt", "boundary", "max_omg"});
+    add_yaml_value("envelope.max_yaw_rate_rad_s", {"traj_opt", "boundary", "max_omg"});
+    add_yaml_value("envelope.max_yaw_acceleration_rad_s2",
+                   {"planner", "yaw_acceleration_max_rad_s2"});
+    add_yaml_value("envelope.mass_kg", {"traj_opt", "flatness", "mass"});
+    add_yaml_value("envelope.min_thrust_acceleration_m_s2",
+                   {"traj_opt", "boundary", "min_acc_thr"});
+    add_yaml_value("envelope.max_thrust_acceleration_m_s2",
+                   {"traj_opt", "boundary", "max_acc_thr"});
+    add_yaml_value("envelope.planner_route_yaw_rate_max_rad_s", {"planner", "yaw_rate_max_rad_s"});
+    add_yaml_value("envelope.optimization_dynamic_reserve_ratio",
+                   {"traj_opt", "exp_traj", "optimization_dynamic_reserve_ratio"});
+    add_yaml_value("geometry.vehicle_radius_m", {"planner", "vehicle_radius_m"});
+    add_yaml_value("geometry.tracking_error_budget_m", {"planner", "tracking_error_budget_m"});
+    add_yaml_value("geometry.localization_error_budget_m", {"planner", "localization_error_budget_m"});
+    add_yaml_value("geometry.mapping_error_budget_m", {"planner", "mapping_error_budget_m"});
+    add_yaml_value("geometry.planning_margin_m", {"planner", "planning_margin_m"});
+    add_yaml_value("geometry.corridor_plane_tolerance_m",
+                   {"traj_opt", "exp_traj", "corridor_plane_tolerance_m"});
+    add_yaml_pair("geometry.corridor_plane_tolerance_m",
+                  {"traj_opt", "exp_traj", "corridor_plane_tolerance_m"},
+                  {"traj_opt", "backup_traj", "corridor_plane_tolerance_m"});
+    add_yaml_value("geometry.map_resolution_m", {"rog_map", "resolution"});
+    add_yaml_pair("geometry.map_resolution_m", {"rog_map", "resolution"},
+                  {"rog_map", "inflation_resolution"});
+    add_yaml_value("geometry.local_window_m", {"planner", "local_window_m"});
+    add_yaml_value("geometry.horizon_floor_m", {"planner", "visibility_horizon_floor_m"});
+    add_yaml_value("geometry.horizon_cap_m", {"planner", "visibility_horizon_cap_m"});
+    add_yaml_value("tolerance_numeric.exp_opt_accuracy", {"traj_opt", "exp_traj", "opt_accuracy"});
+    add_yaml_value("tolerance_numeric.backup_opt_accuracy", {"traj_opt", "backup_traj", "opt_accuracy"});
+    add_yaml_value("tolerance_numeric.smooth_eps", {"traj_opt", "exp_traj", "smooth_eps"});
+    add_yaml_pair("tolerance_numeric.smooth_eps", {"traj_opt", "exp_traj", "smooth_eps"},
+                  {"traj_opt", "backup_traj", "smooth_eps"});
+    add_yaml_pair("queue.lbfgs_memory_size", {"traj_opt", "exp_traj", "lbfgs_memory_size"},
+                  {"traj_opt", "backup_traj", "lbfgs_memory_size"});
+    add_yaml_value("queue.nominal_integral_resolution", {"traj_opt", "exp_traj", "integral_reso"});
+    add_yaml_value("queue.backup_integral_resolution", {"traj_opt", "backup_traj", "integral_reso"});
+    add_yaml_value("retry.feasibility_retry_max_iterations",
+                   {"traj_opt", "exp_traj", "feasibility_retry_max_iterations"});
+    add_yaml_value("retry.ciri_pass_count", {"planner", "iris_iter_num"});
+    effective_values["geometry.command_anchor_error_limit_m"] =
+        navigation_contracts::kCommandAnchorErrorLimitM;
+    effective_values["geometry.goal_completion_tolerance_m"] =
+        navigation_world_model::kGoalCompletionToleranceM;
+    effective_values["geometry.planning_radius_sum_m"] =
+        planner_config["planner"]["vehicle_radius_m"].as<double>() +
+        planner_config["planner"]["tracking_error_budget_m"].as<double>() +
+        planner_config["planner"]["localization_error_budget_m"].as<double>() +
+        planner_config["planner"]["mapping_error_budget_m"].as<double>() +
+        planner_config["planner"]["planning_margin_m"].as<double>();
+    effective_values["timing.runtime_stopped_recovery_speed_gate_mps"] = 0.15;
+    effective_values["lease.adapter_command_lease_s"] =
+        navigation_planning::PlanningTimingContract::kCommandStreamTimeoutS;
+    effective_values["timing.temporal_sample_min_s"] = 0.002;
+    effective_values["timing.temporal_sample_max_s"] = 0.05;
+    effective_values["tolerance_numeric.command_clock_tolerance_s"] = 1.0e-9;
+    effective_values["queue.navigation_command_queue_capacity"] = std::int64_t{16};
+    effective_values["retry.maximum_feasibility_retries"] = std::int64_t{2};
+    effective_values["retry.roundoff_correction_count"] = std::int64_t{8};
+    const auto tolerance_text = [](const double value) {
+      std::ostringstream text;
+      text << std::scientific << std::setprecision(1) << value;
+      auto result = text.str();
+      const auto exponent = result.find('e');
+      if (exponent != std::string::npos && exponent + 2 < result.size() &&
+          result[exponent + 2] == '0') {
+        result.erase(exponent + 2, 1);
+      }
+      return result;
+    };
+    effective_values["tolerance_numeric.anchor_pvaj_roundoff_tolerances"] =
+        std::string("position=") + tolerance_text(
+            navigation_planning::CandidateHandoffCertificate::kPositionToleranceM) +
+        ";velocity=" + tolerance_text(
+            navigation_planning::CandidateHandoffCertificate::kVelocityToleranceMps) +
+        ";acceleration=" + tolerance_text(
+            navigation_planning::CandidateHandoffCertificate::kAccelerationToleranceMps2) +
+        ";jerk=" + tolerance_text(
+            navigation_planning::CandidateHandoffCertificate::kJerkToleranceMps3) +
+        ";yaw=" + tolerance_text(
+            navigation_planning::CandidateHandoffCertificate::kYawToleranceRad) +
+        ";yaw_rate=" + tolerance_text(
+            navigation_planning::CandidateHandoffCertificate::kYawRateToleranceRadS);
+    failure_stage = "witness_serialization";
+    const auto line = nav_safety_profile::witness_line(
+        *loaded.value, "navigation_runtime", effective_values);
+    RCLCPP_INFO(node.get_logger(), "%s", line.c_str());
+    const double mass_kg = planner_config["traj_opt"]["flatness"]["mass"].as<double>();
+    const double min_thrust_acceleration =
+        planner_config["traj_opt"]["boundary"]["min_acc_thr"].as<double>();
+    const double max_thrust_acceleration =
+        planner_config["traj_opt"]["boundary"]["max_acc_thr"].as<double>();
+    RCLCPP_INFO(node.get_logger(),
+        "SAFETY_PROFILE_THRUST_WITNESS min_acceleration_m_s2=%.17g "
+        "max_acceleration_m_s2=%.17g minimum_thrust_n=%.17g maximum_thrust_n=%.17g",
+        min_thrust_acceleration, max_thrust_acceleration,
+        min_thrust_acceleration * mass_kg, max_thrust_acceleration * mass_kg);
+  } catch (const std::exception& error) {
+    RCLCPP_ERROR(node.get_logger(),
+        "SAFETY_PROFILE_LOAD_ERROR reason=unavailable stage=%s detail=%s",
+        failure_stage.c_str(), error.what());
+    return;
+  } catch (...) {
+    RCLCPP_ERROR(node.get_logger(),
+        "SAFETY_PROFILE_LOAD_ERROR reason=unavailable stage=%s detail=unknown",
+        failure_stage.c_str());
+    return;
+  }
+}
 
 bool executionLifecycleSnapshotsEqual(
     const navigation_execution::ExecutionAuthoritySnapshot& lhs,
@@ -675,6 +842,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
     : rclcpp::Node("navigation_runtime_node", options),
       command_sampler_(execution_authority_),
       mapping_lifecycle_observer_(std::move(dependencies.lifecycle_observer)) {
+  const auto safety_profile_path = declare_parameter<std::string>(
+      "safety_profile.path", ament_index_cpp::get_package_share_directory(
+          "nav_safety_profile") + "/config/sitl_current_as_is.yaml");
   registered_scan_topic_ = declare_parameter(
       "navigation_runtime.registered_scan_topic", std::string("/lio/mapping_observation"));
   propagated_odometry_topic_ = declare_parameter(
@@ -1703,6 +1873,31 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         "planner.solve_deadline_s must match the typed product timing contract "
         "and fit inside one planner period");
   }
+  logSafetyProfileWitness(*this, safety_profile_path, {
+      {"timing.planner_period_s",
+       navigation_planning::PlanningTimingContract::kPlannerPeriodS},
+      {"timing.solve_deadline_s", solve_deadline_s},
+      {"timing.stitch_duration_s",
+       navigation_planning::PlanningTimingContract::kStitchDurationS},
+      {"timing.commit_guard_s",
+       navigation_planning::PlanningTimingContract::kCommitGuardS},
+      {"timing.urgent_baseline_threshold_s",
+       navigation_planning::PlanningTimingContract::kUrgentBaselineThresholdS},
+      {"timing.command_period_s",
+       navigation_planning::PlanningTimingContract::kCommandPeriodS},
+      {"timing.planner_watchdog_timeout_s", planner_watchdog_timeout_s_},
+      {"timing.stationary_speed_mps",
+       navigation_planning::PlanningTimingContract::kStationarySpeedMps},
+      {"timing.minimum_main_reserve_s",
+       navigation_planning::PlanningTimingContract::kMinimumMainReserveS},
+      {"freshness.observation_max_age_s", data_freshness_window_s_},
+      {"envelope.main_max_velocity_mps", control_envelope.maximum_velocity_mps},
+      {"envelope.main_max_acceleration_mps2",
+       control_envelope.maximum_acceleration_mps2},
+      {"envelope.main_max_jerk_mps3", control_envelope.maximum_jerk_mps3},
+      {"geometry.local_window_m",
+       navigation_planning::PlanningTimingContract::kLocalWindowM},
+  }, YAML::LoadFile(planner_config_path_));
   planning_worker_ = std::make_unique<
       PlanningWorker<navigation_planning_backend::PlannerFacade>>(
       std::move(planner), [this](std::exception_ptr failure) {

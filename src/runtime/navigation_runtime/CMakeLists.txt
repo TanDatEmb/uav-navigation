@@ -35,6 +35,7 @@ find_package(navigation_mapping REQUIRED)
 find_package(navigation_mission REQUIRED)
 find_package(navigation_world_model REQUIRED)
 find_package(navigation_planning_backend REQUIRED)
+find_package(nav_safety_profile REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -68,6 +69,7 @@ ament_target_dependencies(navigation_runtime_core PUBLIC
   navigation_planning
   navigation_mapping
   navigation_mission
+  nav_safety_profile
   rclcpp
   sensor_msgs
   std_msgs
@@ -107,6 +109,7 @@ ament_export_dependencies(
   navigation_mapping
   navigation_mission
   navigation_world_model
+  nav_safety_profile
   rclcpp
   sensor_msgs
   std_msgs

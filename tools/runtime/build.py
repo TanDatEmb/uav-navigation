@@ -58,6 +58,7 @@ PRODUCT_TEST_EXCLUDED_PACKAGES: tuple[str, ...] = (
     "example_rover_velocity_mode_cpp",
 )
 PRODUCT_TEST_PACKAGES: tuple[str, ...] = (
+    "nav_safety_profile",
     "fast_lio_core",
     "fast_lio_ros",
     "fast_lio_tools",
