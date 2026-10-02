@@ -485,7 +485,6 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
         return finalizeResult(std::move(result));
       }
       estimator_.rebase(state_, covariance_);
-      state_time_ = group.propagation_start_time;
       ++diagnostics_.propagation_discontinuity_count;
       diagnostics_.last_propagation_gap_ns =
           propagation_gap.value().nanoseconds();
