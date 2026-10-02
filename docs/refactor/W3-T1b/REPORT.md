@@ -8,11 +8,14 @@ error. Không có kết luận ngưỡng và không có đề xuất tuning.
 
 ## Input audit
 
-- Input root: `/home/letandat/Dev/uav-navigation-w3-c1/.artifacts/`.
-- Có 20 `report.json` của các session external-mode.
-- Có rosbag `.db3`, `metadata.yaml` và log ROS/PX4; không có file `.ulg` hoặc
-  `.ulog`.
-- `pyulog` đã hiện diện trong môi trường, nhưng không có ulog để đọc.
+- Input roots audited: the retained legacy baseline artifacts and the clean C1
+  cohort under `/home/letandat/Dev/uav-navigation/.artifacts/runtime/`.
+- The clean C1 cohort contains 48 complete session bundles, all bound to
+  navigation SHA `c435a4f19da0455cd538cb7ae111c0ba00e2e644`.
+- The retained sessions contain `report.json`, ROS bags (`.db3`),
+  `metadata.yaml`, and ROS/PX4 logs, but no `.ulg` or `.ulog` file.
+- `pyulog` is available in the system interpreter; the missing input, not the
+  parser, is the blocker.
 
 ## Scope decision
 
@@ -23,7 +26,9 @@ chỉ báo cáo các ô có `n >= 5`.
 
 ## Verification
 
-    find /home/letandat/Dev/uav-navigation-w3-c1/.artifacts -type f \\
-      \( -iname '*.ulg' -o -iname '*.ulog' \) -print
+    rg --files /home/letandat/Dev/uav-navigation/.artifacts \\
+      /home/letandat/uavnav-w3-c1-baseline-20261001 \\
+      /home/letandat/uavnav-w3-c1-part2-golden-20261002 \\
+      | rg -i '\.(ulg|ulog)$'
 
-Kết quả: không có output.
+Kết quả: không có output; `pyulog` import được bằng `/usr/bin/python3`.
