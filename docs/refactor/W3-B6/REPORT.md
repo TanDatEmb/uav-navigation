@@ -95,7 +95,7 @@ qualification; B6 không phải runtime/SITL qualification.
 | `docs/refactor/kb/areas/R5_layer.md` citation range | cập nhật line anchor do xoá 25 dòng helper khỏi node |
 | `docs/refactor/W3-B6/REPORT.md` | evidence/handoff only |
 
-N15 là follow-up dọn oracle lịch sử; các bằng chứng coverage cần dùng tiếp đã được giữ trong report này trước khi dọn `WP-A5`.
+N15 là follow-up dọn oracle lịch sử; các bằng chứng coverage cần dùng tiếp đã được giữ trong report này trước khi dọn oracle cũ.
 
 ## Finding → trạng thái → commit
 

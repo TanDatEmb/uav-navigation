@@ -61,7 +61,7 @@
 
 ## 5. Hệ quả
 - Spec và prompt đợt 2 (P1 SafetyProfile, P2 evidence, P3 certifier, P4-0) được viết **sau** khi ADR này được duyệt.
-- Trạng thái A4-R1: **ACCEPT như exit-site index**, không đòi R2. A6-R1 là input cho P1. A5-R1 là oracle cho P6.
+- Trạng thái A4-R1: **ACCEPT như exit-site index**, không đòi R2. A6-R1 là input cho P1. B6 predicate coverage là oracle cho P6.
 - Mọi quyết định có nhãn "behavior" đi thành commit riêng, có ledger entry và evidence SITL theo AGENTS.md. Không commit nào vừa refactor vừa đổi behavior.
 
 ## 6. Amendment 1 (2026-09-29): bổ sung từ knowledge base (`docs/refactor/kb/`)
