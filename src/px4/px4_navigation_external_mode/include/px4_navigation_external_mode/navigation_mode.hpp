@@ -115,7 +115,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
       const navigation_contracts::msg::NavigationCommand& command);
   [[nodiscard]] bool plannerRecoveryEpisodeMatchesLocked(
       const navigation_contracts::msg::NavigationCommand& command) const noexcept;
-  void safetyStopNavigation(const char* reason);
+  void safetyStopNavigation(const char* reason,
+                            bool terminal_hold_unrepresentable = false);
   void failNavigation(const char* reason);
   void logRuntimeMetrics(const rclcpp::Time& now);
   [[nodiscard]] Px4InputTraceRecord makePx4InputTraceRecord(
