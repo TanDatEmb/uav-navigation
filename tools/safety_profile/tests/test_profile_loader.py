@@ -19,6 +19,9 @@ class ProfileLoaderTest(unittest.TestCase):
         self.assertEqual(profile.hash64, profile.sha256[:16])
         self.assertEqual(profile.values["geometry.planning_radius_sum_m"], 0.8)
         self.assertEqual(profile.values["timing.minimum_main_reserve_s"], 0.6)
+        self.assertEqual(profile.values["envelope.max_yaw_acceleration_rad_s2"], 2.0)
+        self.assertEqual(profile.values["envelope.min_thrust_acceleration_m_s2"], 6.0)
+        self.assertEqual(profile.values["envelope.max_thrust_acceleration_m_s2"], 25.0)
 
     def test_missing_required_key_fails(self):
         document = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))

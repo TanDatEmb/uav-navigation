@@ -116,8 +116,10 @@ def _derive(path: str, record: dict[str, Any], values: dict[str, Any]) -> Any:
     if path == "timing.minimum_main_reserve_s" and formula == (
         "solve_deadline_s + stitch_duration_s + planner_period_s + commit_guard_s"
     ):
-        return sum(float(values[f"timing.{{key}}"]) for key in (
-            "solve_deadline_s", "stitch_duration_s", "planner_period_s", "commit_guard_s"))
+        nanoseconds = sum(round(float(values[f"timing.{{key}}"]) * 1_000_000_000)
+                          for key in ("solve_deadline_s", "stitch_duration_s",
+                                      "planner_period_s", "commit_guard_s"))
+        return nanoseconds / 1_000_000_000
     raise ValueError(f"unknown derived SafetyProfile field: {{path}}")
 
 
@@ -243,10 +245,12 @@ def cxx_template(document: dict[str, Any], keys: list[str]) -> str:
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         }} else if (std::string("{path}") == "timing.minimum_main_reserve_s") {{
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         }} else {{ return failure("unsupported DERIVED formula: {path}"); }}
       }} else {{
         try {{ value = node["value"].as<{kind}>(); }}
@@ -272,12 +276,26 @@ def cxx_template(document: dict[str, Any], keys: list[str]) -> str:
         sources.as<std::vector<std::string>>(), superseded.as<std::vector<std::string>>()}});
     }}''')
         if field_type == "std::int64_t" and path.endswith("_s") and kind == "double":
-            assignments.append(f'''    {{
-      const double seconds = number(profile.entries, "{path}");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+            if path == "timing.minimum_main_reserve_s":
+                assignments.append(f'''    {{
+      try {{
+        profile.typed.{member_name(path)} =
+            durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+            durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+            durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+            durationNanoseconds(number(profile.entries, "timing.commit_guard_s"));
+      }} catch (const std::exception&) {{
         return failure("duration overflow: {path}");
-      profile.typed.{member_name(path)} = static_cast<std::int64_t>(std::llround(ns));
+      }}
+    }}''')
+            else:
+                assignments.append(f'''    {{
+      try {{
+        profile.typed.{member_name(path)} = durationNanoseconds(
+            number(profile.entries, "{path}"));
+      }} catch (const std::exception&) {{
+        return failure("duration overflow: {path}");
+      }}
     }}''')
         else:
             assignments.append(f'    profile.typed.{member_name(path)} = std::get<{kind}>(profile.entries.at("{path}").value);')
@@ -399,6 +417,13 @@ inline bool valid(const Scalar& value) {{
 }}
 inline double number(const std::map<std::string, Entry>& entries, const std::string& key) {{
   return std::get<double>(entries.at(key).value);
+}}
+inline std::int64_t durationNanoseconds(const double seconds) {{
+  const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
+  if (!std::isfinite(seconds) || ns < 0.0L ||
+      ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+    throw std::out_of_range("duration outside int64 nanosecond range");
+  return static_cast<std::int64_t>(std::llround(ns));
 }}
 inline YAML::Node lookup(const YAML::Node& root, const std::string& path) {{
   YAML::Node node = root; std::size_t begin = 0;

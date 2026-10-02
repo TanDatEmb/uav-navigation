@@ -7,7 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 PROFILE = ROOT / "config/safety_profile/sitl_current_as_is.yaml"
-ORACLE = ROOT / "docs/refactor/WP-A6/constants.csv"
+ORACLE = ROOT / "tools/safety_profile/oracle/a6_constants.csv"
 
 
 class ProfileSourceContractTest(unittest.TestCase):
@@ -43,7 +43,7 @@ class ProfileSourceContractTest(unittest.TestCase):
         excluded = {"numerical_roundoff_epsilons",
                     "world_observation_fault_duration_ms"}
         self.assertEqual((included - excluded) - represented, unresolved)
-        self.assertEqual(unresolved, {"minimum_thrust_n", "maximum_thrust_n"})
+        self.assertEqual(unresolved, set())
         for forbidden in ("numerical_roundoff_epsilons",
                           "world_observation_fault_duration_ms"):
             self.assertNotIn(forbidden, represented)

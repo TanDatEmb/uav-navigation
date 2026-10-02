@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 from tools.safety_profile.profile import load_profile
 
 
-ORACLE = ROOT / "docs/refactor/WP-A6/constants.csv"
+ORACLE = ROOT / "tools/safety_profile/oracle/a6_constants.csv"
 SOURCE = ROOT / "config/safety_profile/sitl_current_as_is.yaml"
 EXCLUDED = {
     "numerical_roundoff_epsilons": "K3: named constexpr roundoff is not a profile key",

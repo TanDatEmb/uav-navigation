@@ -73,7 +73,10 @@ struct ProfileValues {
   double envelope_bridge_maximum_expected_speed_mps{};
   std::int64_t envelope_max_body_rate_rad_ns{};
   std::int64_t envelope_max_yaw_rate_rad_ns{};
+  double envelope_max_yaw_acceleration_rad_s2{};
   double envelope_mass_kg{};
+  double envelope_min_thrust_acceleration_m_s2{};
+  double envelope_max_thrust_acceleration_m_s2{};
   std::int64_t envelope_planner_route_yaw_rate_max_rad_ns{};
   double envelope_optimization_dynamic_reserve_ratio{};
   double envelope_bridge_position_jump_m{};
@@ -212,6 +215,13 @@ inline bool valid(const Scalar& value) {
 inline double number(const std::map<std::string, Entry>& entries, const std::string& key) {
   return std::get<double>(entries.at(key).value);
 }
+inline std::int64_t durationNanoseconds(const double seconds) {
+  const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
+  if (!std::isfinite(seconds) || ns < 0.0L ||
+      ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+    throw std::out_of_range("duration outside int64 nanosecond range");
+  return static_cast<std::int64_t>(std::llround(ns));
+}
 inline YAML::Node lookup(const YAML::Node& root, const std::string& path) {
   YAML::Node node = root; std::size_t begin = 0;
   while (begin < path.size()) { const auto end = path.find('.', begin); const auto part = path.substr(begin, end - begin); const YAML::Node next = node[part]; node.reset(next); if (end == std::string::npos) break; begin = end + 1; }
@@ -235,10 +245,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.planner_period_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.planner_period_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -276,10 +288,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.solve_deadline_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.solve_deadline_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -317,10 +331,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.stitch_duration_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.stitch_duration_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -358,10 +374,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.commit_guard_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.commit_guard_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -399,10 +417,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.urgent_baseline_threshold_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.urgent_baseline_threshold_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -440,10 +460,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.command_period_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.command_period_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -481,10 +503,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.planner_watchdog_timeout_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.planner_watchdog_timeout_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -522,10 +546,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.stationary_speed_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.stationary_speed_mps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -563,10 +589,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.finalization_reserve_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.finalization_reserve_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -604,10 +632,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.astar_attempt_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.astar_attempt_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -645,10 +675,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.astar_total_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.astar_total_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -686,10 +718,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.temporal_sample_min_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.temporal_sample_min_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -727,10 +761,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.temporal_sample_max_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.temporal_sample_max_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -768,10 +804,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.safety_stop_speed_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.safety_stop_speed_mps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -809,10 +847,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.adapter_stationary_velocity_gate_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.adapter_stationary_velocity_gate_mps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -850,10 +890,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.runtime_stopped_recovery_speed_gate_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.runtime_stopped_recovery_speed_gate_mps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -891,10 +933,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.takeoff_stable_speed_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.takeoff_stable_speed_mps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -932,10 +976,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.trajectory_wait_timeout_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.trajectory_wait_timeout_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -973,10 +1019,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.planner_recovery_wait_timeout_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.planner_recovery_wait_timeout_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1014,10 +1062,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("lease.adapter_command_lease_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: lease.adapter_command_lease_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1055,10 +1105,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("freshness.external_state_age_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: freshness.external_state_age_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1096,10 +1148,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("freshness.observation_max_age_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: freshness.observation_max_age_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1137,10 +1191,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("freshness.odometry_diagnostics_max_age_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: freshness.odometry_diagnostics_max_age_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1178,10 +1234,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("freshness.reset_metadata_max_age_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: freshness.reset_metadata_max_age_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1219,10 +1277,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("freshness.odometry_association_gap_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: freshness.odometry_association_gap_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1260,10 +1320,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("freshness.propagated_odometry_maximum_correction_age_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: freshness.propagated_odometry_maximum_correction_age_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1301,10 +1363,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("freshness.initial_prior_maximum_topic_prior_age_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: freshness.initial_prior_maximum_topic_prior_age_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1342,10 +1406,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("freshness.px4_time_validator_max_stale_age_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: freshness.px4_time_validator_max_stale_age_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1383,10 +1449,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("freshness.px4_time_validator_max_future_age_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: freshness.px4_time_validator_max_future_age_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1424,10 +1492,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("freshness.judge_default_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: freshness.judge_default_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1465,10 +1535,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("freshness.trajectory_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: freshness.trajectory_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1506,10 +1578,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("freshness.state_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: freshness.state_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1547,10 +1621,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.main_max_velocity_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.main_max_velocity_mps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1588,10 +1664,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.main_max_acceleration_mps2") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.main_max_acceleration_mps2"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1629,10 +1707,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.main_max_jerk_mps3") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.main_max_jerk_mps3"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1670,10 +1750,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.physical_max_velocity_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.physical_max_velocity_mps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1711,10 +1793,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.physical_max_acceleration_mps2") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.physical_max_acceleration_mps2"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1752,10 +1836,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.physical_max_jerk_mps3") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.physical_max_jerk_mps3"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1793,10 +1879,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.bridge_maximum_expected_speed_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.bridge_maximum_expected_speed_mps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1834,10 +1922,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.max_body_rate_rad_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.max_body_rate_rad_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1875,10 +1965,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.max_yaw_rate_rad_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.max_yaw_rate_rad_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1904,6 +1996,49 @@ inline Result<Profile> load(const std::string& path) {
         sources.as<std::vector<std::string>>(), superseded.as<std::vector<std::string>>()});
     }
     {
+      const auto node = lookup(root, "envelope.max_yaw_acceleration_rad_s2");
+      if (!node || !node["value"]) return failure("missing required SafetyProfile key: envelope.max_yaw_acceleration_rad_s2");
+      Scalar value;
+      const auto raw_value = node["value"];
+      if (raw_value.IsScalar() && raw_value.Scalar() == "DERIVED") {
+        if (std::string("envelope.max_yaw_acceleration_rad_s2") == "geometry.planning_radius_sum_m") {
+          value = number(profile.entries, "geometry.vehicle_radius_m") +
+                  number(profile.entries, "geometry.tracking_error_budget_m") +
+                  number(profile.entries, "geometry.localization_error_budget_m") +
+                  number(profile.entries, "geometry.mapping_error_budget_m") +
+                  number(profile.entries, "geometry.planning_margin_m");
+        } else if (std::string("envelope.max_yaw_acceleration_rad_s2") == "timing.minimum_main_reserve_s") {
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
+        } else { return failure("unsupported DERIVED formula: envelope.max_yaw_acceleration_rad_s2"); }
+      } else {
+        try { value = node["value"].as<double>(); }
+        catch (const std::exception&) { return failure("invalid typed value: envelope.max_yaw_acceleration_rad_s2"); }
+      }
+      const auto unit = node["unit"];
+      const auto status = node["qualification_status"];
+      const auto owners = node["owners"];
+      const auto overlay = node["overlay"];
+      const auto sources = node["sources"];
+      const auto superseded = node["superseded_sources"];
+      if (!unit || unit.as<std::string>().empty() || !status || !owners || !overlay || !sources || !superseded)
+        return failure("incomplete SafetyProfile metadata: envelope.max_yaw_acceleration_rad_s2");
+      const auto q = status.as<std::string>();
+      if (q != "PROVISIONAL" && q != "ACTIVE" && q != "NOT_EVALUABLE")
+        return failure("invalid qualification status: envelope.max_yaw_acceleration_rad_s2");
+      const auto overlay_text = overlay.as<std::string>();
+      if (overlay_text != "allowed" && overlay_text != "forbidden")
+        return failure("invalid overlay policy: envelope.max_yaw_acceleration_rad_s2");
+      if (!valid(value)) return failure("value outside valid domain: envelope.max_yaw_acceleration_rad_s2");
+      profile.entries.emplace("envelope.max_yaw_acceleration_rad_s2", Entry{value, unit.as<std::string>(), q,
+        owners.as<std::vector<std::string>>(), overlay_text == "allowed",
+        sources.as<std::vector<std::string>>(), superseded.as<std::vector<std::string>>()});
+    }
+    {
       const auto node = lookup(root, "envelope.mass_kg");
       if (!node || !node["value"]) return failure("missing required SafetyProfile key: envelope.mass_kg");
       Scalar value;
@@ -1916,10 +2051,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.mass_kg") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.mass_kg"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1945,6 +2082,92 @@ inline Result<Profile> load(const std::string& path) {
         sources.as<std::vector<std::string>>(), superseded.as<std::vector<std::string>>()});
     }
     {
+      const auto node = lookup(root, "envelope.min_thrust_acceleration_m_s2");
+      if (!node || !node["value"]) return failure("missing required SafetyProfile key: envelope.min_thrust_acceleration_m_s2");
+      Scalar value;
+      const auto raw_value = node["value"];
+      if (raw_value.IsScalar() && raw_value.Scalar() == "DERIVED") {
+        if (std::string("envelope.min_thrust_acceleration_m_s2") == "geometry.planning_radius_sum_m") {
+          value = number(profile.entries, "geometry.vehicle_radius_m") +
+                  number(profile.entries, "geometry.tracking_error_budget_m") +
+                  number(profile.entries, "geometry.localization_error_budget_m") +
+                  number(profile.entries, "geometry.mapping_error_budget_m") +
+                  number(profile.entries, "geometry.planning_margin_m");
+        } else if (std::string("envelope.min_thrust_acceleration_m_s2") == "timing.minimum_main_reserve_s") {
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
+        } else { return failure("unsupported DERIVED formula: envelope.min_thrust_acceleration_m_s2"); }
+      } else {
+        try { value = node["value"].as<double>(); }
+        catch (const std::exception&) { return failure("invalid typed value: envelope.min_thrust_acceleration_m_s2"); }
+      }
+      const auto unit = node["unit"];
+      const auto status = node["qualification_status"];
+      const auto owners = node["owners"];
+      const auto overlay = node["overlay"];
+      const auto sources = node["sources"];
+      const auto superseded = node["superseded_sources"];
+      if (!unit || unit.as<std::string>().empty() || !status || !owners || !overlay || !sources || !superseded)
+        return failure("incomplete SafetyProfile metadata: envelope.min_thrust_acceleration_m_s2");
+      const auto q = status.as<std::string>();
+      if (q != "PROVISIONAL" && q != "ACTIVE" && q != "NOT_EVALUABLE")
+        return failure("invalid qualification status: envelope.min_thrust_acceleration_m_s2");
+      const auto overlay_text = overlay.as<std::string>();
+      if (overlay_text != "allowed" && overlay_text != "forbidden")
+        return failure("invalid overlay policy: envelope.min_thrust_acceleration_m_s2");
+      if (!valid(value)) return failure("value outside valid domain: envelope.min_thrust_acceleration_m_s2");
+      profile.entries.emplace("envelope.min_thrust_acceleration_m_s2", Entry{value, unit.as<std::string>(), q,
+        owners.as<std::vector<std::string>>(), overlay_text == "allowed",
+        sources.as<std::vector<std::string>>(), superseded.as<std::vector<std::string>>()});
+    }
+    {
+      const auto node = lookup(root, "envelope.max_thrust_acceleration_m_s2");
+      if (!node || !node["value"]) return failure("missing required SafetyProfile key: envelope.max_thrust_acceleration_m_s2");
+      Scalar value;
+      const auto raw_value = node["value"];
+      if (raw_value.IsScalar() && raw_value.Scalar() == "DERIVED") {
+        if (std::string("envelope.max_thrust_acceleration_m_s2") == "geometry.planning_radius_sum_m") {
+          value = number(profile.entries, "geometry.vehicle_radius_m") +
+                  number(profile.entries, "geometry.tracking_error_budget_m") +
+                  number(profile.entries, "geometry.localization_error_budget_m") +
+                  number(profile.entries, "geometry.mapping_error_budget_m") +
+                  number(profile.entries, "geometry.planning_margin_m");
+        } else if (std::string("envelope.max_thrust_acceleration_m_s2") == "timing.minimum_main_reserve_s") {
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
+        } else { return failure("unsupported DERIVED formula: envelope.max_thrust_acceleration_m_s2"); }
+      } else {
+        try { value = node["value"].as<double>(); }
+        catch (const std::exception&) { return failure("invalid typed value: envelope.max_thrust_acceleration_m_s2"); }
+      }
+      const auto unit = node["unit"];
+      const auto status = node["qualification_status"];
+      const auto owners = node["owners"];
+      const auto overlay = node["overlay"];
+      const auto sources = node["sources"];
+      const auto superseded = node["superseded_sources"];
+      if (!unit || unit.as<std::string>().empty() || !status || !owners || !overlay || !sources || !superseded)
+        return failure("incomplete SafetyProfile metadata: envelope.max_thrust_acceleration_m_s2");
+      const auto q = status.as<std::string>();
+      if (q != "PROVISIONAL" && q != "ACTIVE" && q != "NOT_EVALUABLE")
+        return failure("invalid qualification status: envelope.max_thrust_acceleration_m_s2");
+      const auto overlay_text = overlay.as<std::string>();
+      if (overlay_text != "allowed" && overlay_text != "forbidden")
+        return failure("invalid overlay policy: envelope.max_thrust_acceleration_m_s2");
+      if (!valid(value)) return failure("value outside valid domain: envelope.max_thrust_acceleration_m_s2");
+      profile.entries.emplace("envelope.max_thrust_acceleration_m_s2", Entry{value, unit.as<std::string>(), q,
+        owners.as<std::vector<std::string>>(), overlay_text == "allowed",
+        sources.as<std::vector<std::string>>(), superseded.as<std::vector<std::string>>()});
+    }
+    {
       const auto node = lookup(root, "envelope.planner_route_yaw_rate_max_rad_s");
       if (!node || !node["value"]) return failure("missing required SafetyProfile key: envelope.planner_route_yaw_rate_max_rad_s");
       Scalar value;
@@ -1957,10 +2180,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.planner_route_yaw_rate_max_rad_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.planner_route_yaw_rate_max_rad_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -1998,10 +2223,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.optimization_dynamic_reserve_ratio") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.optimization_dynamic_reserve_ratio"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2039,10 +2266,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.bridge_position_jump_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.bridge_position_jump_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2080,10 +2309,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.bridge_orientation_jump_rad") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.bridge_orientation_jump_rad"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2121,10 +2352,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.bridge_maximum_continuity_dt_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.bridge_maximum_continuity_dt_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2162,10 +2395,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.adapter_airborne_height_gate_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.adapter_airborne_height_gate_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2203,10 +2438,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("envelope.adapter_diagnostics_wait_cap_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: envelope.adapter_diagnostics_wait_cap_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2244,10 +2481,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.vehicle_radius_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.vehicle_radius_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2285,10 +2524,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.tracking_error_budget_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.tracking_error_budget_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2326,10 +2567,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.localization_error_budget_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.localization_error_budget_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2367,10 +2610,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.mapping_error_budget_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.mapping_error_budget_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2408,10 +2653,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.planning_margin_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.planning_margin_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2449,10 +2696,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.command_anchor_error_limit_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.command_anchor_error_limit_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2490,10 +2739,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.goal_completion_tolerance_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.goal_completion_tolerance_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2531,10 +2782,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.corridor_plane_tolerance_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.corridor_plane_tolerance_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2572,10 +2825,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.map_resolution_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.map_resolution_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2613,10 +2868,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.local_window_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.local_window_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2654,10 +2911,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.horizon_floor_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.horizon_floor_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2695,10 +2954,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.horizon_cap_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.horizon_cap_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2736,10 +2997,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.min_range_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.min_range_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2777,10 +3040,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.scan_voxel_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.scan_voxel_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2818,10 +3083,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.registration_voxel_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.registration_voxel_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2859,10 +3126,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.local_map_half_extent_xy_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.local_map_half_extent_xy_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2900,10 +3169,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.local_map_half_extent_z_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.local_map_half_extent_z_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2941,10 +3212,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.visibility_association_maximum_age_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.visibility_association_maximum_age_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -2982,10 +3255,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("tolerance_numeric.anchor_pvaj_roundoff_tolerances") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: tolerance_numeric.anchor_pvaj_roundoff_tolerances"); }
       } else {
         try { value = node["value"].as<std::string>(); }
@@ -3023,10 +3298,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("tolerance_numeric.exp_opt_accuracy") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: tolerance_numeric.exp_opt_accuracy"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -3064,10 +3341,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("tolerance_numeric.backup_opt_accuracy") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: tolerance_numeric.backup_opt_accuracy"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -3105,10 +3384,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("tolerance_numeric.smooth_eps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: tolerance_numeric.smooth_eps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -3146,10 +3427,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("tolerance_numeric.command_clock_tolerance_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: tolerance_numeric.command_clock_tolerance_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -3187,10 +3470,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("queue.lbfgs_memory_size") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: queue.lbfgs_memory_size"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -3228,10 +3513,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("queue.nominal_integral_resolution") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: queue.nominal_integral_resolution"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -3269,10 +3556,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("queue.backup_integral_resolution") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: queue.backup_integral_resolution"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -3310,10 +3599,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("queue.imu_queue_capacity") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: queue.imu_queue_capacity"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -3351,10 +3642,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("queue.monitor_queue_depth") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: queue.monitor_queue_depth"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -3392,10 +3685,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("queue.lidar_queue_capacity") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: queue.lidar_queue_capacity"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -3433,10 +3728,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("queue.navigation_command_queue_capacity") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: queue.navigation_command_queue_capacity"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -3474,10 +3771,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("retry.feasibility_retry_max_iterations") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: retry.feasibility_retry_max_iterations"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -3515,10 +3814,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("retry.maximum_feasibility_retries") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: retry.maximum_feasibility_retries"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -3556,10 +3857,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("retry.ciri_pass_count") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: retry.ciri_pass_count"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -3597,10 +3900,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("retry.roundoff_correction_count") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: retry.roundoff_correction_count"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -3638,10 +3943,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.max_match_gap_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.max_match_gap_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -3679,10 +3986,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stop_enter_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stop_enter_mps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -3720,10 +4029,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stop_exit_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stop_exit_mps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -3761,10 +4072,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.min_stop_duration_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.min_stop_duration_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -3802,10 +4115,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.mission_acceptance_speed_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.mission_acceptance_speed_mps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -3843,10 +4158,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_simulation_clock_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_simulation_clock_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -3884,10 +4201,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_imu_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_imu_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -3925,10 +4244,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_lidar_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_lidar_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -3966,10 +4287,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_corrected_odometry_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_corrected_odometry_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4007,10 +4330,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_propagated_odometry_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_propagated_odometry_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4048,10 +4373,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_registered_scan_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_registered_scan_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4089,10 +4416,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_mapping_diagnostics_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_mapping_diagnostics_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4130,10 +4459,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_external_odometry_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_external_odometry_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4171,10 +4502,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_ground_truth_odometry_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_ground_truth_odometry_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4212,10 +4545,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_px4_odometry_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_px4_odometry_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4253,10 +4588,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_vehicle_status_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_vehicle_status_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4294,10 +4631,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_local_position_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_local_position_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4335,10 +4674,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.stream_estimator_status_flags_stale_after_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.stream_estimator_status_flags_stale_after_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4376,10 +4717,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.vehicle_collision_radius_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.vehicle_collision_radius_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4417,10 +4760,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.ground_truth_collision_clearance_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.ground_truth_collision_clearance_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4458,10 +4803,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.lio_residual_p95_warning_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.lio_residual_p95_warning_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4499,10 +4846,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.lio_residual_watchdog_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.lio_residual_watchdog_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4540,10 +4889,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.lio_residual_watchdog_velocity_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.lio_residual_watchdog_velocity_mps"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4581,10 +4932,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.judge.pillar_clearance_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.judge.pillar_clearance_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4622,10 +4975,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.evidence.qualified_speed_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.evidence.qualified_speed_mps"); }
       } else {
         try { value = node["value"].as<std::vector<double>>(); }
@@ -4663,10 +5018,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.evidence.characterization_speed_mps") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.evidence.characterization_speed_mps"); }
       } else {
         try { value = node["value"].as<std::vector<double>>(); }
@@ -4704,10 +5061,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.evidence.minimum_seed_count") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.evidence.minimum_seed_count"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -4745,10 +5104,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.evidence.consecutive_runs_per_speed") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.evidence.consecutive_runs_per_speed"); }
       } else {
         try { value = node["value"].as<int64_t>(); }
@@ -4786,10 +5147,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.evidence.mid360_visibility_sensor_model") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.evidence.mid360_visibility_sensor_model"); }
       } else {
         try { value = node["value"].as<std::string>(); }
@@ -4827,10 +5190,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("qualification.evidence.hg_027_pvaj_equality_bound") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: qualification.evidence.hg_027_pvaj_equality_bound"); }
       } else {
         try { value = node["value"].as<std::string>(); }
@@ -4868,10 +5233,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("timing.minimum_main_reserve_s") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: timing.minimum_main_reserve_s"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4909,10 +5276,12 @@ inline Result<Profile> load(const std::string& path) {
                   number(profile.entries, "geometry.mapping_error_budget_m") +
                   number(profile.entries, "geometry.planning_margin_m");
         } else if (std::string("geometry.planning_radius_sum_m") == "timing.minimum_main_reserve_s") {
-          value = number(profile.entries, "timing.solve_deadline_s") +
-                  number(profile.entries, "timing.stitch_duration_s") +
-                  number(profile.entries, "timing.planner_period_s") +
-                  number(profile.entries, "timing.commit_guard_s");
+          value = static_cast<double>(
+              durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+              durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+              durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+              durationNanoseconds(number(profile.entries, "timing.commit_guard_s"))) /
+              1000000000.0;
         } else { return failure("unsupported DERIVED formula: geometry.planning_radius_sum_m"); }
       } else {
         try { value = node["value"].as<double>(); }
@@ -4993,198 +5362,225 @@ inline Result<Profile> load(const std::string& path) {
       } catch (const std::exception&) { return failure("invalid overlay value: dataset.local_map_half_extent_z_m"); }
     }
     {
-      const double seconds = number(profile.entries, "timing.planner_period_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_planner_period_ns = durationNanoseconds(
+            number(profile.entries, "timing.planner_period_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.planner_period_s");
-      profile.typed.timing_planner_period_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "timing.solve_deadline_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_solve_deadline_ns = durationNanoseconds(
+            number(profile.entries, "timing.solve_deadline_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.solve_deadline_s");
-      profile.typed.timing_solve_deadline_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "timing.stitch_duration_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_stitch_duration_ns = durationNanoseconds(
+            number(profile.entries, "timing.stitch_duration_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.stitch_duration_s");
-      profile.typed.timing_stitch_duration_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "timing.commit_guard_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_commit_guard_ns = durationNanoseconds(
+            number(profile.entries, "timing.commit_guard_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.commit_guard_s");
-      profile.typed.timing_commit_guard_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "timing.urgent_baseline_threshold_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_urgent_baseline_threshold_ns = durationNanoseconds(
+            number(profile.entries, "timing.urgent_baseline_threshold_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.urgent_baseline_threshold_s");
-      profile.typed.timing_urgent_baseline_threshold_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "timing.command_period_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_command_period_ns = durationNanoseconds(
+            number(profile.entries, "timing.command_period_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.command_period_s");
-      profile.typed.timing_command_period_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "timing.planner_watchdog_timeout_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_planner_watchdog_timeout_ns = durationNanoseconds(
+            number(profile.entries, "timing.planner_watchdog_timeout_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.planner_watchdog_timeout_s");
-      profile.typed.timing_planner_watchdog_timeout_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     profile.typed.timing_stationary_speed_mps = std::get<double>(profile.entries.at("timing.stationary_speed_mps").value);
     {
-      const double seconds = number(profile.entries, "timing.finalization_reserve_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_finalization_reserve_ns = durationNanoseconds(
+            number(profile.entries, "timing.finalization_reserve_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.finalization_reserve_s");
-      profile.typed.timing_finalization_reserve_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "timing.astar_attempt_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_astar_attempt_ns = durationNanoseconds(
+            number(profile.entries, "timing.astar_attempt_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.astar_attempt_s");
-      profile.typed.timing_astar_attempt_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "timing.astar_total_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_astar_total_ns = durationNanoseconds(
+            number(profile.entries, "timing.astar_total_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.astar_total_s");
-      profile.typed.timing_astar_total_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "timing.temporal_sample_min_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_temporal_sample_min_ns = durationNanoseconds(
+            number(profile.entries, "timing.temporal_sample_min_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.temporal_sample_min_s");
-      profile.typed.timing_temporal_sample_min_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "timing.temporal_sample_max_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_temporal_sample_max_ns = durationNanoseconds(
+            number(profile.entries, "timing.temporal_sample_max_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.temporal_sample_max_s");
-      profile.typed.timing_temporal_sample_max_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     profile.typed.timing_safety_stop_speed_mps = std::get<double>(profile.entries.at("timing.safety_stop_speed_mps").value);
     profile.typed.timing_adapter_stationary_velocity_gate_mps = std::get<double>(profile.entries.at("timing.adapter_stationary_velocity_gate_mps").value);
     profile.typed.timing_runtime_stopped_recovery_speed_gate_mps = std::get<double>(profile.entries.at("timing.runtime_stopped_recovery_speed_gate_mps").value);
     profile.typed.timing_takeoff_stable_speed_mps = std::get<double>(profile.entries.at("timing.takeoff_stable_speed_mps").value);
     {
-      const double seconds = number(profile.entries, "timing.trajectory_wait_timeout_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_trajectory_wait_timeout_ns = durationNanoseconds(
+            number(profile.entries, "timing.trajectory_wait_timeout_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.trajectory_wait_timeout_s");
-      profile.typed.timing_trajectory_wait_timeout_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "timing.planner_recovery_wait_timeout_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_planner_recovery_wait_timeout_ns = durationNanoseconds(
+            number(profile.entries, "timing.planner_recovery_wait_timeout_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.planner_recovery_wait_timeout_s");
-      profile.typed.timing_planner_recovery_wait_timeout_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "lease.adapter_command_lease_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.lease_adapter_command_lease_ns = durationNanoseconds(
+            number(profile.entries, "lease.adapter_command_lease_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: lease.adapter_command_lease_s");
-      profile.typed.lease_adapter_command_lease_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "freshness.external_state_age_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.freshness_external_state_age_ns = durationNanoseconds(
+            number(profile.entries, "freshness.external_state_age_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: freshness.external_state_age_s");
-      profile.typed.freshness_external_state_age_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "freshness.observation_max_age_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.freshness_observation_max_age_ns = durationNanoseconds(
+            number(profile.entries, "freshness.observation_max_age_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: freshness.observation_max_age_s");
-      profile.typed.freshness_observation_max_age_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "freshness.odometry_diagnostics_max_age_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.freshness_odometry_diagnostics_max_age_ns = durationNanoseconds(
+            number(profile.entries, "freshness.odometry_diagnostics_max_age_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: freshness.odometry_diagnostics_max_age_s");
-      profile.typed.freshness_odometry_diagnostics_max_age_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "freshness.reset_metadata_max_age_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.freshness_reset_metadata_max_age_ns = durationNanoseconds(
+            number(profile.entries, "freshness.reset_metadata_max_age_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: freshness.reset_metadata_max_age_s");
-      profile.typed.freshness_reset_metadata_max_age_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "freshness.odometry_association_gap_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.freshness_odometry_association_gap_ns = durationNanoseconds(
+            number(profile.entries, "freshness.odometry_association_gap_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: freshness.odometry_association_gap_s");
-      profile.typed.freshness_odometry_association_gap_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "freshness.propagated_odometry_maximum_correction_age_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.freshness_propagated_odometry_maximum_correction_age_ns = durationNanoseconds(
+            number(profile.entries, "freshness.propagated_odometry_maximum_correction_age_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: freshness.propagated_odometry_maximum_correction_age_s");
-      profile.typed.freshness_propagated_odometry_maximum_correction_age_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "freshness.initial_prior_maximum_topic_prior_age_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.freshness_initial_prior_maximum_topic_prior_age_ns = durationNanoseconds(
+            number(profile.entries, "freshness.initial_prior_maximum_topic_prior_age_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: freshness.initial_prior_maximum_topic_prior_age_s");
-      profile.typed.freshness_initial_prior_maximum_topic_prior_age_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "freshness.px4_time_validator_max_stale_age_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.freshness_px4_time_validator_max_stale_age_ns = durationNanoseconds(
+            number(profile.entries, "freshness.px4_time_validator_max_stale_age_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: freshness.px4_time_validator_max_stale_age_s");
-      profile.typed.freshness_px4_time_validator_max_stale_age_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "freshness.px4_time_validator_max_future_age_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.freshness_px4_time_validator_max_future_age_ns = durationNanoseconds(
+            number(profile.entries, "freshness.px4_time_validator_max_future_age_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: freshness.px4_time_validator_max_future_age_s");
-      profile.typed.freshness_px4_time_validator_max_future_age_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "freshness.judge_default_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.freshness_judge_default_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "freshness.judge_default_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: freshness.judge_default_stale_after_s");
-      profile.typed.freshness_judge_default_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "freshness.trajectory_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.freshness_trajectory_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "freshness.trajectory_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: freshness.trajectory_stale_after_s");
-      profile.typed.freshness_trajectory_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "freshness.state_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.freshness_state_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "freshness.state_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: freshness.state_stale_after_s");
-      profile.typed.freshness_state_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     profile.typed.envelope_main_max_velocity_mps = std::get<double>(profile.entries.at("envelope.main_max_velocity_mps").value);
     profile.typed.envelope_main_max_acceleration_mps2 = std::get<double>(profile.entries.at("envelope.main_max_acceleration_mps2").value);
@@ -5194,44 +5590,52 @@ inline Result<Profile> load(const std::string& path) {
     profile.typed.envelope_physical_max_jerk_mps3 = std::get<double>(profile.entries.at("envelope.physical_max_jerk_mps3").value);
     profile.typed.envelope_bridge_maximum_expected_speed_mps = std::get<double>(profile.entries.at("envelope.bridge_maximum_expected_speed_mps").value);
     {
-      const double seconds = number(profile.entries, "envelope.max_body_rate_rad_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.envelope_max_body_rate_rad_ns = durationNanoseconds(
+            number(profile.entries, "envelope.max_body_rate_rad_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: envelope.max_body_rate_rad_s");
-      profile.typed.envelope_max_body_rate_rad_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "envelope.max_yaw_rate_rad_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.envelope_max_yaw_rate_rad_ns = durationNanoseconds(
+            number(profile.entries, "envelope.max_yaw_rate_rad_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: envelope.max_yaw_rate_rad_s");
-      profile.typed.envelope_max_yaw_rate_rad_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
+    profile.typed.envelope_max_yaw_acceleration_rad_s2 = std::get<double>(profile.entries.at("envelope.max_yaw_acceleration_rad_s2").value);
     profile.typed.envelope_mass_kg = std::get<double>(profile.entries.at("envelope.mass_kg").value);
+    profile.typed.envelope_min_thrust_acceleration_m_s2 = std::get<double>(profile.entries.at("envelope.min_thrust_acceleration_m_s2").value);
+    profile.typed.envelope_max_thrust_acceleration_m_s2 = std::get<double>(profile.entries.at("envelope.max_thrust_acceleration_m_s2").value);
     {
-      const double seconds = number(profile.entries, "envelope.planner_route_yaw_rate_max_rad_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.envelope_planner_route_yaw_rate_max_rad_ns = durationNanoseconds(
+            number(profile.entries, "envelope.planner_route_yaw_rate_max_rad_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: envelope.planner_route_yaw_rate_max_rad_s");
-      profile.typed.envelope_planner_route_yaw_rate_max_rad_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     profile.typed.envelope_optimization_dynamic_reserve_ratio = std::get<double>(profile.entries.at("envelope.optimization_dynamic_reserve_ratio").value);
     profile.typed.envelope_bridge_position_jump_m = std::get<double>(profile.entries.at("envelope.bridge_position_jump_m").value);
     profile.typed.envelope_bridge_orientation_jump_rad = std::get<double>(profile.entries.at("envelope.bridge_orientation_jump_rad").value);
     {
-      const double seconds = number(profile.entries, "envelope.bridge_maximum_continuity_dt_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.envelope_bridge_maximum_continuity_dt_ns = durationNanoseconds(
+            number(profile.entries, "envelope.bridge_maximum_continuity_dt_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: envelope.bridge_maximum_continuity_dt_s");
-      profile.typed.envelope_bridge_maximum_continuity_dt_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     profile.typed.envelope_adapter_airborne_height_gate_m = std::get<double>(profile.entries.at("envelope.adapter_airborne_height_gate_m").value);
     {
-      const double seconds = number(profile.entries, "envelope.adapter_diagnostics_wait_cap_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.envelope_adapter_diagnostics_wait_cap_ns = durationNanoseconds(
+            number(profile.entries, "envelope.adapter_diagnostics_wait_cap_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: envelope.adapter_diagnostics_wait_cap_s");
-      profile.typed.envelope_adapter_diagnostics_wait_cap_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     profile.typed.geometry_vehicle_radius_m = std::get<double>(profile.entries.at("geometry.vehicle_radius_m").value);
     profile.typed.geometry_tracking_error_budget_m = std::get<double>(profile.entries.at("geometry.tracking_error_budget_m").value);
@@ -5251,22 +5655,24 @@ inline Result<Profile> load(const std::string& path) {
     profile.typed.geometry_local_map_half_extent_xy_m = std::get<double>(profile.entries.at("geometry.local_map_half_extent_xy_m").value);
     profile.typed.geometry_local_map_half_extent_z_m = std::get<double>(profile.entries.at("geometry.local_map_half_extent_z_m").value);
     {
-      const double seconds = number(profile.entries, "geometry.visibility_association_maximum_age_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.geometry_visibility_association_maximum_age_ns = durationNanoseconds(
+            number(profile.entries, "geometry.visibility_association_maximum_age_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: geometry.visibility_association_maximum_age_s");
-      profile.typed.geometry_visibility_association_maximum_age_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     profile.typed.tolerance_numeric_anchor_pvaj_roundoff_tolerances = std::get<std::string>(profile.entries.at("tolerance_numeric.anchor_pvaj_roundoff_tolerances").value);
     profile.typed.tolerance_numeric_exp_opt_accuracy = std::get<double>(profile.entries.at("tolerance_numeric.exp_opt_accuracy").value);
     profile.typed.tolerance_numeric_backup_opt_accuracy = std::get<double>(profile.entries.at("tolerance_numeric.backup_opt_accuracy").value);
     profile.typed.tolerance_numeric_smooth_eps = std::get<double>(profile.entries.at("tolerance_numeric.smooth_eps").value);
     {
-      const double seconds = number(profile.entries, "tolerance_numeric.command_clock_tolerance_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.tolerance_numeric_command_clock_tolerance_ns = durationNanoseconds(
+            number(profile.entries, "tolerance_numeric.command_clock_tolerance_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: tolerance_numeric.command_clock_tolerance_s");
-      profile.typed.tolerance_numeric_command_clock_tolerance_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     profile.typed.queue_lbfgs_memory_size = std::get<int64_t>(profile.entries.at("queue.lbfgs_memory_size").value);
     profile.typed.queue_nominal_integral_resolution = std::get<int64_t>(profile.entries.at("queue.nominal_integral_resolution").value);
@@ -5280,112 +5686,127 @@ inline Result<Profile> load(const std::string& path) {
     profile.typed.retry_ciri_pass_count = std::get<int64_t>(profile.entries.at("retry.ciri_pass_count").value);
     profile.typed.retry_roundoff_correction_count = std::get<int64_t>(profile.entries.at("retry.roundoff_correction_count").value);
     {
-      const double seconds = number(profile.entries, "qualification.judge.max_match_gap_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_max_match_gap_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.max_match_gap_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.max_match_gap_s");
-      profile.typed.qualification_judge_max_match_gap_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     profile.typed.qualification_judge_stop_enter_mps = std::get<double>(profile.entries.at("qualification.judge.stop_enter_mps").value);
     profile.typed.qualification_judge_stop_exit_mps = std::get<double>(profile.entries.at("qualification.judge.stop_exit_mps").value);
     {
-      const double seconds = number(profile.entries, "qualification.judge.min_stop_duration_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_min_stop_duration_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.min_stop_duration_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.min_stop_duration_s");
-      profile.typed.qualification_judge_min_stop_duration_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     profile.typed.qualification_judge_mission_acceptance_speed_mps = std::get<double>(profile.entries.at("qualification.judge.mission_acceptance_speed_mps").value);
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_simulation_clock_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_simulation_clock_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_simulation_clock_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_simulation_clock_stale_after_s");
-      profile.typed.qualification_judge_stream_simulation_clock_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_imu_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_imu_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_imu_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_imu_stale_after_s");
-      profile.typed.qualification_judge_stream_imu_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_lidar_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_lidar_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_lidar_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_lidar_stale_after_s");
-      profile.typed.qualification_judge_stream_lidar_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_corrected_odometry_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_corrected_odometry_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_corrected_odometry_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_corrected_odometry_stale_after_s");
-      profile.typed.qualification_judge_stream_corrected_odometry_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_propagated_odometry_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_propagated_odometry_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_propagated_odometry_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_propagated_odometry_stale_after_s");
-      profile.typed.qualification_judge_stream_propagated_odometry_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_registered_scan_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_registered_scan_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_registered_scan_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_registered_scan_stale_after_s");
-      profile.typed.qualification_judge_stream_registered_scan_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_mapping_diagnostics_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_mapping_diagnostics_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_mapping_diagnostics_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_mapping_diagnostics_stale_after_s");
-      profile.typed.qualification_judge_stream_mapping_diagnostics_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_external_odometry_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_external_odometry_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_external_odometry_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_external_odometry_stale_after_s");
-      profile.typed.qualification_judge_stream_external_odometry_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_ground_truth_odometry_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_ground_truth_odometry_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_ground_truth_odometry_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_ground_truth_odometry_stale_after_s");
-      profile.typed.qualification_judge_stream_ground_truth_odometry_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_px4_odometry_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_px4_odometry_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_px4_odometry_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_px4_odometry_stale_after_s");
-      profile.typed.qualification_judge_stream_px4_odometry_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_vehicle_status_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_vehicle_status_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_vehicle_status_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_vehicle_status_stale_after_s");
-      profile.typed.qualification_judge_stream_vehicle_status_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_local_position_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_local_position_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_local_position_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_local_position_stale_after_s");
-      profile.typed.qualification_judge_stream_local_position_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     {
-      const double seconds = number(profile.entries, "qualification.judge.stream_estimator_status_flags_stale_after_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.qualification_judge_stream_estimator_status_flags_stale_after_ns = durationNanoseconds(
+            number(profile.entries, "qualification.judge.stream_estimator_status_flags_stale_after_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: qualification.judge.stream_estimator_status_flags_stale_after_s");
-      profile.typed.qualification_judge_stream_estimator_status_flags_stale_after_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     profile.typed.qualification_judge_vehicle_collision_radius_m = std::get<double>(profile.entries.at("qualification.judge.vehicle_collision_radius_m").value);
     profile.typed.qualification_judge_ground_truth_collision_clearance_m = std::get<double>(profile.entries.at("qualification.judge.ground_truth_collision_clearance_m").value);
@@ -5400,11 +5821,15 @@ inline Result<Profile> load(const std::string& path) {
     profile.typed.qualification_evidence_mid360_visibility_sensor_model = std::get<std::string>(profile.entries.at("qualification.evidence.mid360_visibility_sensor_model").value);
     profile.typed.qualification_evidence_hg_027_pvaj_equality_bound = std::get<std::string>(profile.entries.at("qualification.evidence.hg_027_pvaj_equality_bound").value);
     {
-      const double seconds = number(profile.entries, "timing.minimum_main_reserve_s");
-      const long double ns = static_cast<long double>(seconds) * 1000000000.0L;
-      if (ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+      try {
+        profile.typed.timing_minimum_main_reserve_ns =
+            durationNanoseconds(number(profile.entries, "timing.solve_deadline_s")) +
+            durationNanoseconds(number(profile.entries, "timing.stitch_duration_s")) +
+            durationNanoseconds(number(profile.entries, "timing.planner_period_s")) +
+            durationNanoseconds(number(profile.entries, "timing.commit_guard_s"));
+      } catch (const std::exception&) {
         return failure("duration overflow: timing.minimum_main_reserve_s");
-      profile.typed.timing_minimum_main_reserve_ns = static_cast<std::int64_t>(std::llround(ns));
+      }
     }
     profile.typed.geometry_planning_radius_sum_m = std::get<double>(profile.entries.at("geometry.planning_radius_sum_m").value);
     const auto canonical_document = canonical(root);

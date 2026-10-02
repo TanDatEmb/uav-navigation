@@ -110,7 +110,13 @@ void logSafetyProfileWitness(
     add_yaml_value("envelope.physical_max_jerk_mps3", {"traj_opt", "boundary", "max_jerk"});
     add_yaml_value("envelope.max_body_rate_rad_s", {"traj_opt", "boundary", "max_omg"});
     add_yaml_value("envelope.max_yaw_rate_rad_s", {"traj_opt", "boundary", "max_omg"});
+    add_yaml_value("envelope.max_yaw_acceleration_rad_s2",
+                   {"planner", "yaw_acceleration_max_rad_s2"});
     add_yaml_value("envelope.mass_kg", {"traj_opt", "flatness", "mass"});
+    add_yaml_value("envelope.min_thrust_acceleration_m_s2",
+                   {"traj_opt", "boundary", "min_acc_thr"});
+    add_yaml_value("envelope.max_thrust_acceleration_m_s2",
+                   {"traj_opt", "boundary", "max_acc_thr"});
     add_yaml_value("envelope.planner_route_yaw_rate_max_rad_s", {"planner", "yaw_rate_max_rad_s"});
     add_yaml_value("envelope.optimization_dynamic_reserve_ratio",
                    {"traj_opt", "exp_traj", "optimization_dynamic_reserve_ratio"});
@@ -189,6 +195,16 @@ void logSafetyProfileWitness(
     const auto line = nav_safety_profile::witness_line(
         *loaded.value, "navigation_runtime", effective_values);
     RCLCPP_INFO(node.get_logger(), "%s", line.c_str());
+    const double mass_kg = planner_config["traj_opt"]["flatness"]["mass"].as<double>();
+    const double min_thrust_acceleration =
+        planner_config["traj_opt"]["boundary"]["min_acc_thr"].as<double>();
+    const double max_thrust_acceleration =
+        planner_config["traj_opt"]["boundary"]["max_acc_thr"].as<double>();
+    RCLCPP_INFO(node.get_logger(),
+        "SAFETY_PROFILE_THRUST_WITNESS min_acceleration_m_s2=%.17g "
+        "max_acceleration_m_s2=%.17g minimum_thrust_n=%.17g maximum_thrust_n=%.17g",
+        min_thrust_acceleration, max_thrust_acceleration,
+        min_thrust_acceleration * mass_kg, max_thrust_acceleration * mass_kg);
   } catch (const std::exception& error) {
     RCLCPP_ERROR(node.get_logger(),
         "SAFETY_PROFILE_LOAD_ERROR reason=unavailable stage=%s detail=%s",

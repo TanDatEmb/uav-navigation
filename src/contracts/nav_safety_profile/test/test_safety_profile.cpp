@@ -25,6 +25,7 @@ TEST(SafetyProfile, LoadsTypedFieldsAndStableHash) {
   EXPECT_EQ(first.value->hash64,
             std::stoull(first.value->sha256.substr(0, 16), nullptr, 16));
   EXPECT_EQ(first.value->typed.timing_planner_period_ns, 100000000);
+  EXPECT_EQ(first.value->typed.timing_minimum_main_reserve_ns, 600000000);
   EXPECT_EQ(first.value->typed.geometry_planning_radius_sum_m, 0.8);
 }
 

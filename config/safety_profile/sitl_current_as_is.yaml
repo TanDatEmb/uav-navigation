@@ -4,10 +4,7 @@ profile:
   qualification_status: NOT_EVALUABLE
   provenance:
     baseline_commit: 2543b0b4bc469c709038b4db9e332b6b9d1de11f
-  open_questions:
-  - max_yaw_acceleration_rad_s2
-  - maximum_thrust_n
-  - minimum_thrust_n
+  open_questions: []
 timing:
   planner_period_s:
     value: 0.1
@@ -536,6 +533,18 @@ envelope:
     - src/runtime/navigation_runtime/config/planner.yaml:102
     superseded_sources: []
     oracle_name: max_yaw_rate_rad_s
+  max_yaw_acceleration_rad_s2:
+    value: 2.0
+    unit: rad/s^2
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:73
+    superseded_sources:
+    - src/planning/navigation_planning/include/navigation_planning/planning_limits.hpp:21
+    oracle_name: max_yaw_acceleration_rad_s2
   mass_kg:
     value: 1.64
     unit: kg
@@ -547,6 +556,30 @@ envelope:
     - src/runtime/navigation_runtime/config/planner.yaml:181
     superseded_sources: []
     oracle_name: mass_kg
+  min_thrust_acceleration_m_s2:
+    value: 6.0
+    unit: m/s^2
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:104
+    superseded_sources: []
+    oracle_name: minimum_thrust_n
+    notes: derived_n = value × mass_kg; witness records the acceleration input and effective N separately.
+  max_thrust_acceleration_m_s2:
+    value: 25.0
+    unit: m/s^2
+    qualification_status: PROVISIONAL
+    owners:
+    - navigation_runtime
+    overlay: forbidden
+    sources:
+    - src/runtime/navigation_runtime/config/planner.yaml:103
+    superseded_sources: []
+    oracle_name: maximum_thrust_n
+    notes: derived_n = value × mass_kg; witness records the acceleration input and effective N separately.
   planner_route_yaw_rate_max_rad_s:
     value: 2.0
     unit: rad/s
