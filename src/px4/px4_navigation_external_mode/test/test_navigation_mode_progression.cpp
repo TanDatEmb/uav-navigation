@@ -225,4 +225,11 @@ TEST_F(NavigationModeProgressionTest, StaleCompletionReceiptCannotCompleteNewAct
   EXPECT_FALSE(handingOver());
 }
 
+TEST_F(NavigationModeProgressionTest,
+       UnrepresentableTerminalHoldRepeatsPx4HoldHandoverAfterFailureLatch) {
+  EXPECT_TRUE(shouldRepeatPx4HoldHandover(true, true));
+  EXPECT_FALSE(shouldRepeatPx4HoldHandover(true, false));
+  EXPECT_FALSE(shouldRepeatPx4HoldHandover(false, true));
+}
+
 }  // namespace px4_navigation_external_mode

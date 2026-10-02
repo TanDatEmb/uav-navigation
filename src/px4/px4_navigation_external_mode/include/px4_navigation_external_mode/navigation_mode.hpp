@@ -45,6 +45,9 @@
 
 namespace px4_navigation_external_mode {
 
+[[nodiscard]] bool shouldRepeatPx4HoldHandover(
+    bool failure_reported, bool terminal_hold_unrepresentable) noexcept;
+
 class NavigationMode final : public px4_ros2::ModeBase {
  public:
   explicit NavigationMode(rclcpp::Node& node);
