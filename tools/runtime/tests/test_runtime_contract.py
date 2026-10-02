@@ -103,6 +103,16 @@ def _installed_targets(cmake: Path, package: str) -> set[str]:
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_dirty_build_provenance_requires_explicit_opt_in(self) -> None:
+        dirty = {"source": {"git_dirty": True}}
+        allowed, reason = runner._provenance_readiness(dirty, False)
+        self.assertFalse(allowed)
+        self.assertIn("git_dirty", reason)
+
+        allowed, reason = runner._provenance_readiness(dirty, True)
+        self.assertTrue(allowed)
+        self.assertIsNone(reason)
+
     def test_mission_scenario_reads_core_progress_receipt(self) -> None:
         scenario = external_mode_scenario.ExternalModeScenario.__new__(
             external_mode_scenario.ExternalModeScenario)
