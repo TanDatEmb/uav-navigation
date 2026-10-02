@@ -4658,6 +4658,32 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(runtime_monitor._sample_stream.getvalue(), "")
         self.assertEqual(runtime_monitor.streams["simulation_clock"].received, 1)
 
+    def test_monitor_tick_reads_simulation_clock_stamp_without_crashing(self) -> None:
+        class FakeStats:
+            def __init__(self) -> None:
+                self.source_now_ns: int | None = None
+
+            def check_stale(self, _now_ns: int, source_now_ns: int | None = None) -> None:
+                self.source_now_ns = source_now_ns
+
+        runtime_monitor = monitor.RuntimeMonitor.__new__(monitor.RuntimeMonitor)
+        stats = FakeStats()
+        runtime_monitor.workflow = "sim"
+        runtime_monitor.latest = {"simulation_clock": {"stamp_ns": "123456789"}}
+        runtime_monitor.streams = {"simulation_clock": stats}
+        runtime_monitor._last_graph_query_ns = time.time_ns()
+        runtime_monitor._graph_query_period_ns = 2_000_000_000
+        runtime_monitor._last_snapshot_wall_ns = time.time_ns()
+        runtime_monitor._snapshot_period_ns = 1_000_000_000
+
+        runtime_monitor._tick()
+
+        self.assertEqual(stats.source_now_ns, 123456789)
+
+        runtime_monitor.latest = {}
+        runtime_monitor._tick()
+        self.assertIsNone(stats.source_now_ns)
+
     def test_monitor_decodes_typed_propagated_odometry_envelope(self) -> None:
         stamp = SimpleNamespace(sec=12, nanosec=345)
         nested = SimpleNamespace(

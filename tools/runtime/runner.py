@@ -19,6 +19,7 @@ import subprocess
 from shutil import copy2, which
 import sys
 import tempfile
+import threading
 import time
 from functools import wraps
 from typing import Any, Callable
@@ -35,6 +36,16 @@ from runtime_environment import (
     CANONICAL_PYTHON,
     canonical_python_error,
     require_canonical_python,
+)
+from sitl_preflight import (
+    DEFAULT_LOADAVG_LIMIT,
+    HostTelemetryRecorder,
+    PreflightViolation,
+    check_preflight,
+    competing_processes,
+    current_process_ancestry,
+    read_process_table,
+    snapshot_host,
 )
 
 
@@ -163,6 +174,51 @@ RUNTIME_EVIDENCE_TOPICS = (
 
 class RuntimeBusyError(RuntimeError):
     """Raised when a second workspace runtime would collide with a live one."""
+
+
+def _sitl_preflight_load_limit() -> float:
+    raw = os.environ.get("UAV_NAV_PREFLIGHT_MAX_LOADAVG", str(DEFAULT_LOADAVG_LIMIT))
+    try:
+        value = float(raw)
+    except ValueError as error:
+        raise RuntimeError(
+            "UAV_NAV_PREFLIGHT_MAX_LOADAVG must be a finite positive number"
+        ) from error
+    if not math.isfinite(value) or value <= 0.0:
+        raise RuntimeError(
+            "UAV_NAV_PREFLIGHT_MAX_LOADAVG must be a finite positive number"
+        )
+    return value
+
+
+def _run_sitl_preflight() -> dict[str, object]:
+    """Reject host contention before creating a SITL session."""
+    try:
+        loadavg_1m = float(os.getloadavg()[0])
+    except (OSError, IndexError) as error:
+        raise RuntimeError("SITL_PREFLIGHT_BLOCKED: 1-minute load average unavailable") from error
+    process_rows = competing_processes(
+        read_process_table(), excluded_pids=current_process_ancestry()
+    )
+    active_sessions = _active_runtime_sessions(
+        ARTIFACT_ROOT, {"sim", "external-mode"}
+    )
+    limit = _sitl_preflight_load_limit()
+    violation = check_preflight(
+        loadavg_1m=loadavg_1m,
+        max_loadavg_1m=limit,
+        process_rows=process_rows,
+        excluded_pids=set(),
+        active_runtime_sessions=active_sessions,
+    )
+    if isinstance(violation, PreflightViolation):
+        raise RuntimeBusyError(str(violation))
+    return {
+        "status": "PASS",
+        "max_loadavg_1m": limit,
+        "excluded_ancestor_pids": sorted(current_process_ancestry()),
+        "snapshot": snapshot_host(),
+    }
 
 
 def _active_runtime_sessions(
@@ -1111,6 +1167,7 @@ def _write_runtime_evidence_metadata(
     sitl_dynamics_profile: dict[str, Any] | None = None,
     scenario_identity: dict[str, Any] | None = None,
     tracking_experiment: dict[str, Any] | None = None,
+    sitl_preflight: dict[str, Any] | None = None,
 ) -> None:
     """Write a self-contained run manifest without changing runtime policy."""
     snapshot = session.directory / "config_snapshot"
@@ -1248,6 +1305,17 @@ def _write_runtime_evidence_metadata(
         "instrumentation": {
             "behavior_neutral": True,
             "failure_injection_default": "off",
+        },
+        "sitl_preflight": sitl_preflight or {
+            "status": "NOT_RECORDED",
+            "max_loadavg_1m": None,
+            "snapshot": None,
+        },
+        "host_telemetry": {
+            "interval_s": 10.0,
+            "samples": ([sitl_preflight["snapshot"]]
+                        if sitl_preflight and sitl_preflight.get("snapshot") else []),
+            "rtf_gazebo": [],
         },
     }
     (session.directory / "metadata.json").write_text(
@@ -3325,6 +3393,7 @@ def _run_sim_unlocked(
     px4_dir = Path(os.environ.get("PX4_DIR", str(Path.home() / "Dev/Autopilot"))).expanduser().resolve()
     gz_command = _detect_gz_command()
     workflow = "external-mode" if control_interface == "external_mode" else "sim"
+    sitl_preflight = _run_sitl_preflight()
     session_name = (
         "external-mode-check"
         if headless and control_interface == "external_mode"
@@ -3480,6 +3549,7 @@ def _run_sim_unlocked(
         sitl_dynamics_profile=sitl_dynamics_profile_contract,
         scenario_identity=scenario_identity,
         tracking_experiment=tracking_experiment,
+        sitl_preflight=sitl_preflight,
     )
     if qualification_scope == "C0_SW":
         metadata_path = session.directory / "metadata.json"
@@ -3545,7 +3615,13 @@ def _run_sim_unlocked(
         print(result["verdict"])
         print(session.directory)
         return 1
+    host_telemetry = HostTelemetryRecorder(
+        session.directory / "metadata.json",
+        session.directory / "gazebo_native_rtf.json",
+        interval_s=10.0,
+    )
     try:
+        host_telemetry.start()
         ros_config = _ros_params(
             session,
             RUNTIME_CONFIG / "sim.yaml",
@@ -3947,6 +4023,7 @@ def _run_sim_unlocked(
             ),
         )
     finally:
+        host_telemetry.stop()
         result = _stop_and_report(
             session,
             workflow,
@@ -4282,7 +4359,11 @@ def main() -> int:
         default=5.0,
         help="bounded dataset shadow-planning goal distance; 0 disables planning",
     )
-    sub.add_parser("sim-check")
+    sim_check = sub.add_parser("sim-check")
+    sim_check.add_argument(
+        "--gazebo-native-diagnostic", action="store_true",
+        help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
+    )
     characterization = sub.add_parser(
         "characterization-check",
         help="run the test-only closed-loop PX4 characterization harness",
@@ -4556,7 +4637,7 @@ def main() -> int:
             ros_domain_id=args.ros_domain_id,
         )
     if args.command == "sim-check":
-        return run_sim(True)
+        return run_sim(True, gazebo_native_diagnostic=args.gazebo_native_diagnostic)
     if args.command == "characterization-check":
         return run_sim(
             True,
