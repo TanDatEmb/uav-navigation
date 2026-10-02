@@ -103,6 +103,16 @@ def _installed_targets(cmake: Path, package: str) -> set[str]:
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_dirty_build_provenance_requires_explicit_opt_in(self) -> None:
+        dirty = {"source": {"git_dirty": True}}
+        allowed, reason = runner._provenance_readiness(dirty, False)
+        self.assertFalse(allowed)
+        self.assertIn("git_dirty", reason)
+
+        allowed, reason = runner._provenance_readiness(dirty, True)
+        self.assertTrue(allowed)
+        self.assertIsNone(reason)
+
     def test_mission_scenario_reads_core_progress_receipt(self) -> None:
         scenario = external_mode_scenario.ExternalModeScenario.__new__(
             external_mode_scenario.ExternalModeScenario)
@@ -2530,6 +2540,17 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertTrue(failures)
             killpg.assert_not_called()
 
+    def test_cleanup_postcheck_reports_orphan_after_stop(self) -> None:
+        class FakeSession:
+            def live_records(self) -> list[dict[str, object]]:
+                return [{"role": "orphan", "pid": 1234, "pgid": 1234}]
+
+            def write_state(self, _values: dict[str, object]) -> None:
+                return None
+
+        failures = process_group.cleanup_failures_after_stop(FakeSession(), [])
+        self.assertEqual(failures, ["process remains after stop: orphan (1234)"])
+
     def test_stop_rejects_invalid_grace_period(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = process_group.Session(Path(temporary) / "session")
@@ -4657,6 +4678,32 @@ class RuntimeContractTest(unittest.TestCase):
         runtime_monitor._callback(spec)(SimpleNamespace())
         self.assertEqual(runtime_monitor._sample_stream.getvalue(), "")
         self.assertEqual(runtime_monitor.streams["simulation_clock"].received, 1)
+
+    def test_monitor_tick_reads_simulation_clock_stamp_without_crashing(self) -> None:
+        class FakeStats:
+            def __init__(self) -> None:
+                self.source_now_ns: int | None = None
+
+            def check_stale(self, _now_ns: int, source_now_ns: int | None = None) -> None:
+                self.source_now_ns = source_now_ns
+
+        runtime_monitor = monitor.RuntimeMonitor.__new__(monitor.RuntimeMonitor)
+        stats = FakeStats()
+        runtime_monitor.workflow = "sim"
+        runtime_monitor.latest = {"simulation_clock": {"stamp_ns": "123456789"}}
+        runtime_monitor.streams = {"simulation_clock": stats}
+        runtime_monitor._last_graph_query_ns = time.time_ns()
+        runtime_monitor._graph_query_period_ns = 2_000_000_000
+        runtime_monitor._last_snapshot_wall_ns = time.time_ns()
+        runtime_monitor._snapshot_period_ns = 1_000_000_000
+
+        runtime_monitor._tick()
+
+        self.assertEqual(stats.source_now_ns, 123456789)
+
+        runtime_monitor.latest = {}
+        runtime_monitor._tick()
+        self.assertIsNone(stats.source_now_ns)
 
     def test_monitor_decodes_typed_propagated_odometry_envelope(self) -> None:
         stamp = SimpleNamespace(sec=12, nanosec=345)

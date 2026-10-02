@@ -905,9 +905,10 @@ class RuntimeMonitor:
     def _tick(self) -> None:
         now_ns = time.time_ns()
         clock_payload = self.latest.get("simulation_clock", {})
+        clock_stamp = clock_payload.get("stamp_ns") if isinstance(clock_payload, dict) else None
         source_now_ns = (
-            _integer_value(clock_payload.get("stamp_ns"))
-            if self.workflow == "sim" and isinstance(clock_payload, dict)
+            _integer(clock_stamp)
+            if self.workflow == "sim" and clock_stamp is not None
             else None
         )
         for stats in self.streams.values():

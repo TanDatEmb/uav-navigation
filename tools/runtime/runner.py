@@ -26,7 +26,7 @@ import xml.etree.ElementTree as ET
 
 import yaml
 
-from process_group import Session, resolve_latest, update_latest
+from process_group import Session, cleanup_failures_after_stop, resolve_latest, update_latest
 import report
 from build_provenance import sha256_file, source_fingerprint, validate_manifest
 from runtime_environment import (
@@ -949,6 +949,16 @@ def _capture_build_provenance(session: Session, px4_dir: Path | None = None) -> 
         }
     _write_runtime(session, build_provenance=evidence)
     return evidence
+
+
+def _provenance_readiness(
+    build_provenance: dict[str, Any], allow_dirty_provenance: bool,
+) -> tuple[bool, str | None]:
+    source = build_provenance.get("source")
+    dirty = isinstance(source, dict) and source.get("git_dirty") is True
+    if dirty and not allow_dirty_provenance:
+        return False, "workspace provenance git_dirty=true; pass --allow-dirty-provenance only for diagnostic runs"
+    return True, None
 
 
 def _bind_nominal_snapshot_provenance(
@@ -2584,7 +2594,7 @@ def _stop_and_report(session: Session, workflow: str, config_path: Path, *, px4_
     # timer can otherwise report a final stale event after its publishers have
     # intentionally begun shutting down.
     _write_runtime(session, observation_finished_wall_ns=time.time_ns())
-    cleanup_failures = session.stop()
+    cleanup_failures = cleanup_failures_after_stop(session, session.stop())
     world_gate_validation = _validate_world_observation_gate(session)
     if world_gate_validation is not None:
         failures = _load_runtime_failures(session)
@@ -3044,6 +3054,7 @@ def _run_sim_unlocked(
     velocity_only_max_reference_age_s: float = 0.0,
     velocity_only_output_transport_bound_s: float = 0.0,
     velocity_only_px4_consume_bound_s: float = 0.0,
+    allow_dirty_provenance: bool = False,
 ) -> int:
     if qualification_scope not in {None, "C0_SW"}:
         raise ValueError("unsupported qualification scope")
@@ -3526,6 +3537,11 @@ def _run_sim_unlocked(
     prereq = _sim_prerequisites(px4_dir, gz_command, ros_environment)
     try:
         build_provenance = _capture_build_provenance(session, px4_dir)
+        ready, readiness_error = _provenance_readiness(
+            build_provenance, allow_dirty_provenance
+        )
+        if not ready and readiness_error:
+            prereq.append(readiness_error)
         _prepare_nominal_snapshot_directory()
         _bind_nominal_snapshot_provenance(
             build_provenance, session.directory.name
@@ -3534,6 +3550,13 @@ def _run_sim_unlocked(
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         metadata["build_timestamp_ns"] = build_provenance.get("validated_wall_ns")
         metadata["build_provenance"] = build_provenance
+        metadata["provenance_dirty"] = bool(
+            isinstance(build_provenance.get("source"), dict)
+            and build_provenance["source"].get("git_dirty") is True
+        )
+        metadata["provenance_policy"] = (
+            "allow_dirty_diagnostic" if allow_dirty_provenance else "clean_required"
+        )
         metadata_path.write_text(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
@@ -4383,6 +4406,10 @@ def main() -> int:
         help="requested tracking experiment; C0-SW requires off",
     )
     external_mode.add_argument(
+        "--allow-dirty-provenance", action="store_true",
+        help="diagnostic-only override; mark the session provenance_dirty and exclude it from baseline",
+    )
+    external_mode.add_argument(
         "--inject-failed-replan-cycle-id", type=int, default=None,
         help="diagnostic-only one-shot hot-replan failure cycle; off by default",
     )
@@ -4502,6 +4529,10 @@ def main() -> int:
         help="tracking experiment mode; relaxed is diagnostic-only, off keeps tracking/health responses enabled",
     )
     external_mode_gui.add_argument(
+        "--allow-dirty-provenance", action="store_true",
+        help="diagnostic-only override; mark the session provenance_dirty and exclude it from baseline",
+    )
+    external_mode_gui.add_argument(
         "--gazebo-native-diagnostic", action="store_true",
         help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
     )
@@ -4589,6 +4620,7 @@ def main() -> int:
             experiment_id=args.experiment_id,
             qualification_scope=args.qualification_scope,
             tracking_experiment_mode=args.tracking_experiment_mode,
+            allow_dirty_provenance=args.allow_dirty_provenance,
             world_observation_fault_duration_ms=args.world_observation_fault_ms,
             inject_failed_replan_cycle_id=args.inject_failed_replan_cycle_id,
             inject_failed_replan_once=args.inject_failed_replan_once,
@@ -4623,6 +4655,7 @@ def main() -> int:
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
             tracking_experiment_mode=args.tracking_experiment_mode,
+            allow_dirty_provenance=args.allow_dirty_provenance,
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
             auto_scenario=True,
             manual_takeoff=args.manual_takeoff,
