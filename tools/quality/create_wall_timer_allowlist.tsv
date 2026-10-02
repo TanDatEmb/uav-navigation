@@ -1,0 +1,13 @@
+# path<TAB>finding ID<TAB>removal WP
+src/estimation/fast_lio_ros/src/fast_lio_node.cpp	R4-22	W4-R4
+src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp	R4-22	W4-R4
+src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp	R4-22	W4-R4
+src/runtime/navigation_runtime/src/navigation_runtime_node.cpp	R4-22	W4-R4
+src/uav_simulation/src/gz_lidar_bridge.cpp	R4-22	W4-R4
+src/external/px4_ros2_interface_lib/examples/cpp/navigation/global_navigation/include/global_navigation.hpp	VENDOR-TIMER	W4-R4
+src/external/px4_ros2_interface_lib/examples/cpp/navigation/local_navigation/include/local_navigation.hpp	VENDOR-TIMER	W4-R4
+src/external/px4_ros2_interface_lib/px4_ros2_cpp/include/px4_ros2/mission/actions/default_actions.hpp	VENDOR-TIMER	W4-R4
+src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/health_and_arming_checks.cpp	VENDOR-TIMER	W4-R4
+src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode.cpp	VENDOR-TIMER	W4-R4
+src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/mission/mission.cpp	VENDOR-TIMER	W4-R4
+src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/mission/mission_executor.cpp	VENDOR-TIMER	W4-R4

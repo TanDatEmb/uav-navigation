@@ -19,6 +19,7 @@ src/runtime/
   navigation_runtime/   ROS composition and lifecycle wiring
 src/mapping/
   navigation_mapping/   product-owned mapping worker and lifecycle accounting
+  navigation_world_model/ product-owned world snapshot and UNKNOWN semantics
   rog_map_vendor/       pinned ROG-Map source, tests and provenance
 src/planning/
   navigation_planning/  pure C++20 planning contracts and candidate types
@@ -27,9 +28,12 @@ src/execution/
   navigation_execution/ immutable commit, freshness and sampling gates
 src/external/
   px4_msgs/             pinned PX4 messages
-  px4_ros2_interface_lib/ PX4 v1.17 ROS 2 Control Interface
+  px4_ros2_interface_lib/ PX4 v1.17 ROS 2 Control Interface source
+  px4_ros2_cpp/         PX4 ROS 2 Control Interface package
   livox_ros_driver2/    Livox driver and message package
 src/px4/                PX4 ingress and External Mode adapters
+  px4_navigation_external_mode/ External Mode adapter package
+  px4_odometry_bridge/ PX4 odometry bridge package
 src/navigation_bringup/ launch files and RViz profile
 src/uav_description/    sensor-frame source of truth
 src/uav_simulation/     Gazebo assets

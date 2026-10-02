@@ -214,6 +214,101 @@ class GateScriptTest(unittest.TestCase):
         self.assertIn("GATE_V3_RESULT=FAIL", result.stdout)
         self.assertNotIn("GATE_V3_RESULT=PASS", result.stdout)
 
+    def _run_quality_gate_with_stub(self, exit_code: int) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            self._init_fixture_repo(repo)
+            (repo / "tools").mkdir()
+            gate_copy = repo / "tools" / "gate.sh"
+            gate_copy.write_bytes(GATE.read_bytes())
+            gate_copy.chmod(0o755)
+            checker = repo / "quality-checker"
+            checker.write_text(f"#!/usr/bin/env bash\nexit {exit_code}\n", encoding="utf-8")
+            checker.chmod(0o755)
+            return subprocess.run(
+                [str(gate_copy), "quality"],
+                cwd=repo,
+                env={**os.environ, "QUALITY_CHECKER": str(checker)},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+    def test_quality_gate_passes_when_checker_passes(self) -> None:
+        result = self._run_quality_gate_with_stub(0)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("GATE_V3_RESULT=PASS", result.stdout)
+
+    def test_quality_gate_is_fail_closed(self) -> None:
+        result = self._run_quality_gate_with_stub(7)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("GATE_V3_RESULT=FAIL", result.stdout)
+
+    def test_all_does_not_run_quality_before_wave3_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            self._init_fixture_repo(repo)
+            subprocess.run(
+                ["git", "update-ref", "refs/remotes/origin/main", "HEAD"],
+                cwd=repo,
+                check=True,
+            )
+            gate_copy = repo / "tools" / "gate.sh"
+            gate_copy.parent.mkdir()
+            gate_copy.write_bytes(GATE.read_bytes())
+            gate_copy.chmod(0o755)
+            checker = repo / "quality-checker"
+            checker.write_text("#!/usr/bin/env bash\necho ran-quality >&2\nexit 7\n", encoding="utf-8")
+            checker.chmod(0o755)
+            colcon = repo / "colcon"
+            colcon.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$1\" in list) echo 'demo src/demo' ;; build|test|test-result) exit 0 ;; *) exit 0 ;; esac\n",
+                encoding="utf-8",
+            )
+            colcon.chmod(0o755)
+            result = subprocess.run(
+                [str(gate_copy), "all"], cwd=repo,
+                env={**os.environ, "PYTHON": "/bin/true", "QUALITY_CHECKER": str(checker),
+                     "PACKAGES": "demo", "PATH": f"{repo}:{os.environ['PATH']}"},
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("ran-quality", result.stderr)
+
+    def _run_tsan_gate_with_stub(self, failing_step: str | None = None) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            self._init_fixture_repo(repo)
+            gate_copy = repo / "tools" / "gate.sh"
+            gate_copy.parent.mkdir()
+            gate_copy.write_bytes(GATE.read_bytes())
+            gate_copy.chmod(0o755)
+            colcon = repo / "colcon"
+            failure = failing_step or ""
+            colcon.write_text(
+                "#!/usr/bin/env bash\n"
+                f"[[ -n \"{failure}\" && \"$1\" == \"{failure}\" ]] && exit 9\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            colcon.chmod(0o755)
+            return subprocess.run(
+                [str(gate_copy), "tsan"], cwd=repo,
+                env={**os.environ, "PATH": f"{repo}:{os.environ['PATH']}"},
+                text=True, capture_output=True, check=False,
+            )
+
+    def test_tsan_gate_passes_when_build_and_test_pass(self) -> None:
+        result = self._run_tsan_gate_with_stub()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("GATE_V3_RESULT=PASS", result.stdout)
+
+    def test_tsan_gate_fails_closed_on_build_failure(self) -> None:
+        result = self._run_tsan_gate_with_stub("build")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("GATE_V3_RESULT=FAIL", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

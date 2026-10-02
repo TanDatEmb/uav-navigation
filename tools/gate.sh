@@ -40,6 +40,38 @@ python_gate() {
   return "$status"
 }
 
+architecture_doc_gate() {
+  printf '%s\n' 'gate: architecture-docs'
+  "$PYTHON" tools/refactor/check_architecture_docs.py
+}
+
+quality_gate() {
+  printf '%s\n' 'gate: quality'
+  if [[ -n "${QUALITY_CHECKER:-}" ]]; then
+    "$QUALITY_CHECKER"
+  else
+    "$PYTHON" tools/quality/check_quality.py
+  fi
+}
+
+tsan_gate() {
+  printf '%s\n' 'gate: tsan'
+  command -v colcon >/dev/null || {
+    printf '%s\n' 'gate: tsan: colcon is required' >&2
+    return 1
+  }
+  local -a packages=(navigation_execution navigation_runtime)
+  colcon build --packages-up-to "${packages[@]}" \
+    --build-base build/tsan --install-base install/tsan \
+    --cmake-args -DCMAKE_BUILD_TYPE=Debug \
+      -DCMAKE_CXX_FLAGS=-fsanitize=thread \
+      -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread \
+      -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=thread
+  colcon test --packages-select "${packages[@]}" \
+    --build-base build/tsan --install-base install/tsan --event-handlers console_direct+
+  colcon test-result --test-result-base build/tsan --verbose
+}
+
 ros_gate() {
   printf '%s\n' 'gate: ros'
   command -v colcon >/dev/null || {
@@ -149,11 +181,23 @@ ros_gate() {
 main() {
   log_header
   case "${1:-all}" in
-    static) static_gate ;;
+    static) static_gate; architecture_doc_gate ;;
     python) python_gate ;;
     ros) ros_gate ;;
-    all) static_gate; python_gate; ros_gate ;;
-    *) printf 'usage: %s {static|python|ros|all}\n' "$0" >&2; return 64 ;;
+    quality) quality_gate ;;
+    tsan) tsan_gate ;;
+    all)
+      static_gate; architecture_doc_gate; python_gate; ros_gate
+      if [[ "${WAVE3_CLOSED:-0}" == "1" ]]; then
+        quality_gate
+      else
+        printf '%s\n' 'gate: quality: not included until WAVE3 CLOSED'
+      fi
+      if [[ "${GATE_TSAN:-0}" == "1" ]]; then
+        tsan_gate
+      fi
+      ;;
+    *) printf 'usage: %s {static|python|ros|quality|tsan|all}\n' "$0" >&2; return 64 ;;
   esac
 }
 
