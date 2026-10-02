@@ -15,7 +15,7 @@
 #include <navigation_execution/execution_authority.hpp>
 #include <navigation_execution/execution_state_lease.hpp>
 #include <navigation_planning/planning_timing.hpp>
-#include "navigation_runtime/planning_key.hpp"
+#include "navigation_runtime_policy/planning_key.hpp"
 
 namespace navigation_runtime {
 

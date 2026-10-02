@@ -25,6 +25,9 @@
 namespace navigation_runtime {
 using navigation_execution::ExecutionRecoveryState;
 
+using navigation_execution::ExecutionRecoveryState;
+using navigation_execution::retainedCommandTrackingLimit;
+
 // Access-only peer: no executor is spun. The scheduler-only fixtures model
 // inputs, not a certificate proof. The real-facade handoff fixtures also invoke
 // the production command callback and queued backend ACK, without DDS dispatch

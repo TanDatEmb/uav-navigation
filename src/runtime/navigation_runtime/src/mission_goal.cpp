@@ -14,7 +14,8 @@ geometry_msgs::msg::Point point(const Eigen::Vector3d& vector) {
 }  // namespace
 
 std::optional<navigation_contracts::msg::NavigationGoal> makeMissionGoal(
-    const MissionProgress& progress, const builtin_interfaces::msg::Time& stamp) {
+    const navigation_mission::MissionProgress& progress,
+    const builtin_interfaces::msg::Time& stamp) {
   const auto route = progress.routeSnapshot();
   const auto gate = progress.currentGate();
   if (!route.valid() || gate.request_id == 0U ||

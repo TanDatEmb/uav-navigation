@@ -8,7 +8,7 @@
 #include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_planning/planning_timing.hpp>
 
-namespace navigation_runtime {
+namespace navigation_execution {
 
 // Producer facts reduced to the immutable values needed to decide whether a
 // pass-through boundary can carry a nominal MAIN continuation certificate.
@@ -97,4 +97,4 @@ struct CertifiedMainContinuationWindow final {
       minimumMainContinuationReserveNs();
 }
 
-}  // namespace navigation_runtime
+}  // namespace navigation_execution

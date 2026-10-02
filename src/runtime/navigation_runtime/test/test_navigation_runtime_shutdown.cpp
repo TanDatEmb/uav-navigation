@@ -28,7 +28,7 @@
 #include <sensor_msgs/msg/point_field.hpp>
 
 #include "navigation_runtime/navigation_runtime_node.hpp"
-#include "navigation_runtime/runtime_boundaries.hpp"
+#include "navigation_runtime_policy/runtime_boundaries.hpp"
 #include "navigation_runtime/mapping_observation_contract.hpp"
 
 namespace navigation_runtime {
@@ -123,7 +123,8 @@ class NavigationRuntimeEpochResetTestPeer {
     node.onModeStatus(status);
   }
   static void missionTick(NavigationRuntimeNode& node) { node.tickMissionProgress(); }
-  static MissionGateIdentity missionGate(NavigationRuntimeNode& node) {
+  static navigation_mission::MissionGateIdentity missionGate(
+      NavigationRuntimeNode& node) {
     std::lock_guard localization_lock(node.localization_transition_mutex_);
     std::lock_guard input_lock(node.input_mutex_);
     return node.mission_progress_->currentGate();

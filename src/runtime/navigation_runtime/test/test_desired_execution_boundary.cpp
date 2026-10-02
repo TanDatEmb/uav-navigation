@@ -5,7 +5,7 @@
 
 #include <navigation_execution/command_sampler.hpp>
 #include <navigation_execution/execution_authority.hpp>
-#include <navigation_runtime/desired_planning_intent.hpp>
+#include <navigation_runtime_policy/desired_planning_intent.hpp>
 
 namespace navigation_runtime {
 namespace {

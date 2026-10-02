@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 
-namespace navigation_runtime {
+namespace navigation_mission {
 
 // A completion is an observation about one immutable execution bundle.  It is
 // deliberately a value rather than a global readiness bit: callers must match
@@ -50,4 +50,4 @@ struct TrajectoryCompletionWitness final {
          lhs.mission_id == rhs.mission_id && lhs.waypoint_index == rhs.waypoint_index;
 }
 
-}  // namespace navigation_runtime
+}  // namespace navigation_mission

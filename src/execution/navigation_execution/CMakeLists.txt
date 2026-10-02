@@ -31,10 +31,16 @@ target_include_directories(${PROJECT_NAME} INTERFACE ${navigation_contracts_INCL
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}Targets)
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
-ament_export_dependencies(builtin_interfaces navigation_common navigation_contracts navigation_planning navigation_world_model)
+ament_export_dependencies(
+  builtin_interfaces
+  navigation_common
+  navigation_contracts
+  navigation_planning
+  navigation_world_model)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(navigation_mission REQUIRED)
   ament_add_gtest(test_execution_state test/test_timestamp_freshness.cpp)
   target_include_directories(test_execution_state PRIVATE
     include ${navigation_contracts_INCLUDE_DIRS})
@@ -46,6 +52,20 @@ if(BUILD_TESTING)
   target_link_libraries(test_execution_authority ${PROJECT_NAME})
   ament_target_dependencies(test_execution_authority
     builtin_interfaces navigation_common navigation_planning navigation_world_model)
+
+  ament_add_gtest(test_certified_continuation
+    test/test_certified_continuation.cpp)
+  target_include_directories(test_certified_continuation PRIVATE include)
+  target_link_libraries(test_certified_continuation
+    navigation_mission::navigation_mission)
+  ament_target_dependencies(test_certified_continuation
+    navigation_planning)
+
+  ament_add_gtest(test_world_temporal_assessment
+    test/test_world_temporal_assessment.cpp)
+  target_include_directories(test_world_temporal_assessment PRIVATE include)
+  ament_target_dependencies(test_world_temporal_assessment
+    navigation_world_model)
 endif()
 
 ament_package()

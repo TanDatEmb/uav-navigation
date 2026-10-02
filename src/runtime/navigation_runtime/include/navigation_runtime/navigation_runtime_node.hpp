@@ -37,12 +37,14 @@
 #include <navigation_planning/planning_outcome.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
 #include "navigation_runtime/planner_fsm.hpp"
-#include "navigation_runtime/runtime_boundaries.hpp"
-#include "navigation_runtime/baseline_refinement.hpp"
+#include "navigation_runtime_policy/planning_policy.hpp"
+#include "navigation_runtime_policy/runtime_boundaries.hpp"
+#include "navigation_runtime_policy/baseline_refinement.hpp"
 #include "navigation_runtime/same_identity_renewal_injection.hpp"
+#include <navigation_execution/execution_lifecycle.hpp>
 #include <navigation_execution/execution_recovery_state.hpp>
-#include "navigation_runtime/execution_lifecycle_view.hpp"
-#include "navigation_runtime/trajectory_completion.hpp"
+#include <navigation_execution/execution_decisions.hpp>
+#include <navigation_mission/trajectory_completion.hpp>
 #include "navigation_runtime/planning_worker.hpp"
 #include "navigation_runtime/heading_rebind_worker.hpp"
 #include "navigation_runtime/execution_trace_snapshot.hpp"
@@ -50,12 +52,12 @@
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
 #include <navigation_execution/execution_authority.hpp>
-#include "navigation_runtime/desired_planning_intent.hpp"
+#include "navigation_runtime_policy/desired_planning_intent.hpp"
 #include <navigation_execution/command_sampler.hpp>
 #include <navigation_mapping/world_snapshot_store.hpp>
 #include <navigation_planning/planning_limits.hpp>
 #include "navigation_runtime/kinematic_derivative_estimator.hpp"
-#include "navigation_runtime/mission_progress.hpp"
+#include <navigation_mission/mission_progress.hpp>
 
 namespace navigation_planning_backend {
 class PlannerFacade;
@@ -299,7 +301,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       const navigation_contracts::msg::NavigationCommandAdmission::ConstSharedPtr& message);
   // Caller holds localization_transition_mutex_ and input_mutex_. The
   // decision and internal goal transition share this owner transaction.
-  void applyMissionDecisionLocked(const MissionProgressDecision& decision);
+  void applyMissionDecisionLocked(
+      const navigation_mission::MissionProgressDecision& decision);
   void schedulePlanningCycle();
   void scheduleHeadingRebind(const PlanningKey& key);
   void consumeHeadingRebind(std::int64_t now_ns);
@@ -469,7 +472,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // Mapping never takes ingress: it must finish while an epoch reset drains.
   std::mutex localization_epoch_ingress_mutex_;
   std::mutex localization_transition_mutex_;
-  std::optional<MissionProgress> mission_progress_;
+  std::optional<navigation_mission::MissionProgress> mission_progress_;
   struct ModeMissionBoundary {
     std::uint64_t activation_id{0U};
     std::int64_t source_stamp_ns{0};
@@ -597,7 +600,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // transition mutex. Goal/timeline matching and lifecycle mutation use the
   // canonical localization -> input -> execution-transition lock order; it is
   // consumed only when its immutable bundle identity is still current.
-  std::optional<TrajectoryCompletionWitness> trajectory_completion_witness_;
+  std::optional<navigation_mission::TrajectoryCompletionWitness>
+      trajectory_completion_witness_;
   std::atomic_bool trajectory_reaches_goal_{false};
   // Non-zero only after the command publisher has observed the terminal sample
   // of a bundle whose endpoint reaches the active mission goal. This is a

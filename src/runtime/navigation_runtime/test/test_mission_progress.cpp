@@ -1,7 +1,6 @@
-#include "navigation_runtime/mission_progress.hpp"
+#include <navigation_mission/mission_progress.hpp>
 #include "navigation_runtime/mission_goal.hpp"
-#include "navigation_runtime/execution_lifecycle_view.hpp"
-#include "navigation_runtime/runtime_boundaries.hpp"
+#include "navigation_runtime_policy/runtime_boundaries.hpp"
 
 #include <navigation_contracts/navigation_command_contract.hpp>
 #include <navigation_execution/command_sampler.hpp>
@@ -13,6 +12,11 @@
 
 namespace navigation_runtime {
 namespace {
+
+using navigation_mission::MissionContinuationWitness;
+using navigation_mission::MissionMeasuredSample;
+using navigation_mission::MissionProgress;
+using navigation_mission::MissionProgressDecision;
 navigation_mission::Mission mission() {
   navigation_mission::Mission result;
   result.id = "core-mission";

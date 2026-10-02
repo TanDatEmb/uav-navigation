@@ -3,10 +3,11 @@
 #include <optional>
 
 #include <navigation_execution/execution_authority.hpp>
+#include <navigation_execution/execution_lifecycle.hpp>
+#include <navigation_execution/execution_recovery_state.hpp>
 #include <navigation_planning/planning_outcome.hpp>
-#include "navigation_runtime/execution_lifecycle_view.hpp"
-#include "navigation_runtime/planner_fsm.hpp"
-#include "navigation_runtime/planning_key.hpp"
+#include "navigation_runtime_policy/planning_policy.hpp"
+#include "navigation_runtime_policy/planning_key.hpp"
 
 namespace navigation_runtime {
 

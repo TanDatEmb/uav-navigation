@@ -1,10 +1,13 @@
-#include "navigation_runtime/certified_continuation.hpp"
-#include "navigation_runtime/trajectory_completion.hpp"
+#include "navigation_execution/certified_continuation.hpp"
+#include "navigation_mission/trajectory_completion.hpp"
 
 #include <gtest/gtest.h>
 
-namespace navigation_runtime {
+namespace navigation_execution {
 namespace {
+
+using navigation_mission::TrajectoryCompletionWitness;
+using navigation_mission::completionWitnessMatches;
 
 CertifiedMainContinuationBoundaryFacts validFacts() {
   CertifiedMainContinuationBoundaryFacts facts;
@@ -171,4 +174,4 @@ TEST(TrajectoryCompletion, InvalidWithoutAnActiveBundleIdentity) {
 }
 
 }  // namespace
-}  // namespace navigation_runtime
+}  // namespace navigation_execution

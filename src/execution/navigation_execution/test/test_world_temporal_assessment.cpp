@@ -1,11 +1,11 @@
-#include <navigation_runtime/world_temporal_assessment.hpp>
+#include <navigation_execution/world_temporal_assessment.hpp>
 
 #include <gtest/gtest.h>
 
 namespace {
 
-using navigation_runtime::WorldTemporalReason;
-using navigation_runtime::assessWorldTemporal;
+using navigation_execution::WorldTemporalReason;
+using navigation_execution::assessWorldTemporal;
 
 navigation_world_model::WorldSnapshotIdentity identity(std::int64_t stamp) {
   return {1U, 2U, 3U, stamp};

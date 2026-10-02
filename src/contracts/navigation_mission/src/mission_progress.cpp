@@ -1,4 +1,4 @@
-#include "navigation_runtime/mission_progress.hpp"
+#include "navigation_mission/mission_progress.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace navigation_runtime {
+namespace navigation_mission {
 namespace {
 constexpr std::int64_t kMaximumCrossingSampleGapNs = 250'000'000;
 
@@ -269,4 +269,4 @@ navigation_mission::ImmutableRouteSnapshot MissionProgress::routeSnapshot() cons
                                   gate_.request_id, gate_.waypoint_index);
 }
 
-}  // namespace navigation_runtime
+}  // namespace navigation_mission

@@ -5,7 +5,7 @@
 #include <navigation_execution/timestamp_freshness.hpp>
 #include <navigation_world_model/world_model_view.hpp>
 
-namespace navigation_runtime {
+namespace navigation_execution {
 
 // A value assessment of the source-time evidence carried by an immutable
 // world snapshot. This is deliberately not authority state and does not
@@ -72,4 +72,4 @@ struct WorldTemporalAssessment {
   return result;
 }
 
-}  // namespace navigation_runtime
+}  // namespace navigation_execution

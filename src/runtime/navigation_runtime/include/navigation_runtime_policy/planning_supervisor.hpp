@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "navigation_runtime/planning_key.hpp"
+#include "navigation_runtime_policy/planning_key.hpp"
 
 namespace navigation_runtime {
 

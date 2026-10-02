@@ -8,7 +8,7 @@
 #include <navigation_mission/mission.hpp>
 #include <navigation_mission/route_progress.hpp>
 
-namespace navigation_runtime {
+namespace navigation_mission {
 
 // Mission policy has one writer: the Core callback transaction. PX4 lifecycle,
 // execution role and command admission are observations supplied by their
@@ -117,4 +117,4 @@ class MissionProgress final {
   bool active_{false};
 };
 
-}  // namespace navigation_runtime
+}  // namespace navigation_mission
