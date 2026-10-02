@@ -1,0 +1,50 @@
+{
+ "commit_decision_hist_all": {
+  "kCandidateRejected": 36,
+  "kCommitted": 285,
+  "kNotAttempted": 103,
+  "kWorldAdvanced": 8
+ },
+ "emergencies": 137,
+ "failing_solves": 147,
+ "failing_solves_by_bridge_and_anchor": {
+  "anchor_error_not_measured": 25,
+  "bridge_unavailable/anchor_above_retained_limit/emergency_committed=True": 70,
+  "bridge_unavailable/anchor_within_limit/emergency_committed=False": 17,
+  "bridge_unavailable/anchor_within_limit/emergency_committed=True": 2,
+  "bridge_usable/anchor_above_retained_limit/emergency_committed=False": 12,
+  "bridge_usable/anchor_within_limit/emergency_committed=False": 21
+ },
+ "failure_hist_all": {
+  "backup_refinement/backup_dynamics": 1,
+  "backup_seed/backup_known_free_insufficient": 9,
+  "commit_recertification/world_changed": 44,
+  "deadline/no_complete_bundle_at_deadline": 36,
+  "nominal_seed/main_known_free_insufficient": 22,
+  "nominal_seed/nominal_dynamics": 35
+ },
+ "initiator_of_paused_safety_stop": {
+  "CERT_ROUTE_REGRESSION": 1,
+  "SOLVE_DEADLINE": 3,
+  "SOLVE_DYNAMICS": 9,
+  "SOLVE_KNOWN_FREE": 3
+ },
+ "paused_safety_stop_sessions": 16,
+ "paused_sessions_failing_solve_with_tracking_certificate_exceeded": 15,
+ "paused_sessions_whose_first_emergency_is_within_3s_before_stop": 9,
+ "paused_sessions_with_emergency_within_3s_before_stop": 15,
+ "reject_subtype_hist_all": {
+  "COMMIT_GATE_REJECTED": 8,
+  "LATEST_WORLD_CERTIFICATE_BLOCKED": 4,
+  "ROUTE_REGRESSION_CERTIFICATE": 32
+ },
+ "sessions": 18,
+ "sessions_with_any_world_advanced": 7,
+ "sessions_with_world_advanced_in_final_streak": 0,
+ "solves": 432,
+ "terminal_of_paused_safety_stop": {
+  "ADAPTER_TRACKING_ENVELOPE": 14,
+  "RUNTIME_PLANFROMREST_TIMEOUT": 1,
+  "RUNTIME_STOPPED_HOLD_ENDPOINT_REJECTED": 1
+ }
+}
