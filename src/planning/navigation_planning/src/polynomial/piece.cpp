@@ -4,7 +4,7 @@
  * package documentation; they are not part of the runtime API or behaviour.
  */
 
-#include <data_structure/base/piece.h>
+#include <navigation_planning/polynomial/piece.hpp>
 
 #include <cfloat>
 #include <cmath>

@@ -7,7 +7,7 @@
 
 #ifndef EXP_TRAJ_H
 #define EXP_TRAJ_H
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 
 #include <cmath>
 

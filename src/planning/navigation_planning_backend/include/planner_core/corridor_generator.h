@@ -19,7 +19,7 @@
 #include <planner_core/absolute_deadline.hpp>
 
 #include <data_structure/base/polytope.h>
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 
 #include <navigation_world_model/world_model_view.hpp>
 #include <utils/header/fmt_eigen.hpp>

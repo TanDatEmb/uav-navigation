@@ -4,16 +4,40 @@
  * package documentation; they are not part of the runtime API or behaviour.
  */
 
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <limits>
+#include <string>
 #include <stdexcept>
 #include <utility>
 
+namespace color_text{
+    static const std::string RESET = "\033[0m";
+    static const std::string BLACK = "\033[30m";             /* Black */
+    static const std::string RED = "\033[31m";             /* Red */
+    static const std::string GREEN = "\033[32m";             /* Green */
+    static const std::string YELLOW = "\033[33m";             /* Yellow */
+    static const std::string BLUE = "\033[34m";             /* Blue */
+    static const std::string MAGENTA = "\033[35m";             /* Magenta */
+    static const std::string CYAN = "\033[36m";             /* Cyan */
+    static const std::string WHITE = "\033[37m";             /* White */
+    static const std::string REDPURPLE = "\033[95m";             /* Red Purple */
+    static const std::string BOLDBLACK = "\033[1m\033[30m";      /* Bold Black */
+    static const std::string BOLDRED = "\033[1m\033[31m";      /* Bold Red */
+    static const std::string BOLDGREEN = "\033[1m\033[32m";      /* Bold Green */
+    static const std::string BOLDYELLOW = "\033[1m\033[33m";      /* Bold Yellow */
+    static const std::string BOLDBLUE = "\033[1m\033[34m";      /* Bold Blue */
+    static const std::string BOLDMAGENTA = "\033[1m\033[35m";      /* Bold Magenta */
+    static const std::string BOLDCYAN = "\033[1m\033[36m";      /* Bold Cyan */
+    static const std::string BOLDWHITE = "\033[1m\033[37m";      /* Bold White */
+    static const std::string BOLDREDPURPLE = "\033[1m\033[95m";  /* Bold Red Purple */
+}
+
 using namespace geometry_utils;
-using namespace navigation_math;
+using namespace navigation_planning::polynomial_types;
 using namespace color_text;
 // Trajectory===================================================
 

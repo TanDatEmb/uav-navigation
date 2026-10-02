@@ -36,13 +36,10 @@ set(NAVIGATION_PLANNING_BACKEND_SOURCES
   src/utils/minco.cpp
   src/utils/mvie.cpp
   src/utils/optimization_utils.cpp
-  src/utils/piece.cpp
   src/utils/polynomial_interpolation.cpp
   src/utils/polytope.cpp
   src/utils/quickhull.cpp
-  src/utils/root_finder.cpp
   src/utils/sdlp.cpp
-  src/utils/trajectory.cpp
 )
 
 add_library(${PROJECT_NAME} STATIC ${NAVIGATION_PLANNING_BACKEND_SOURCES})
@@ -63,6 +60,7 @@ target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${PCL_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC
   Eigen3::Eigen
   navigation_planning::navigation_planning
+  navigation_planning::polynomial
   navigation_mission::navigation_mission
   navigation_world_model::navigation_world_model
 )

@@ -34,8 +34,7 @@
 #include <cstddef>
 #include <stdexcept>
 
-#include <data_structure/base/piece.h>
-#include "utils/header/color_msg_utils.hpp"
+#include <navigation_planning/polynomial/piece.hpp>
 
 namespace geometry_utils {
 

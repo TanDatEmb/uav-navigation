@@ -12,7 +12,7 @@
 
 #include <yaml-cpp/yaml.h>
 
-#include "data_structure/base/trajectory.h"
+#include <navigation_planning/polynomial/trajectory.hpp>
 #include <navigation_planning/planner_diagnostics.hpp>
 #include <navigation_mapping/mapping_world_snapshot.hpp>
 #include <utils/geometry/geometry_utils.h>

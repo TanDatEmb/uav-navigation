@@ -10,7 +10,7 @@
 #include <data_structure/cmd_traj.h>
 #include <navigation_mission/route_progress.hpp>
 #include <navigation_planning/planning_request.hpp>
-#include <utils/optimization/root_finder.h>
+#include <navigation_planning/polynomial/root_finder.hpp>
 
 namespace navigation_planning_backend {
 

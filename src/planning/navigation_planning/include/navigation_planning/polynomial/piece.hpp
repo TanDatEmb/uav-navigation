@@ -30,24 +30,24 @@
 
 #pragma once
 
-#include <utils/header/type_utils.hpp>
-#include <utils/optimization/root_finder.h>
+#include <navigation_planning/polynomial/root_finder.hpp>
+#include <navigation_planning/polynomial/types.hpp>
 
 
 namespace geometry_utils {
-    using navigation_math::Mat3f;
-    using navigation_math::MatDf;
-    using navigation_math::VecDf;
-    using navigation_math::Vec3f;
-    using navigation_math::Quatf;
-    using navigation_math::Vec4f;
-    using navigation_math::vec_Vec3f;
-    using navigation_math::Mat3Df;
-    using navigation_math::MatD4f;
-    using navigation_math::vec_E;
+    using navigation_planning::polynomial_types::Mat3f;
+    using navigation_planning::polynomial_types::MatDf;
+    using navigation_planning::polynomial_types::VecDf;
+    using navigation_planning::polynomial_types::Vec3f;
+    using navigation_planning::polynomial_types::Quatf;
+    using navigation_planning::polynomial_types::Vec4f;
+    using navigation_planning::polynomial_types::vec_Vec3f;
+    using navigation_planning::polynomial_types::Mat3Df;
+    using navigation_planning::polynomial_types::MatD4f;
+    using navigation_planning::polynomial_types::vec_E;
 
-    using navigation_math::StatePVAJ;
-    using navigation_math::StatePVA;
+    using navigation_planning::polynomial_types::StatePVAJ;
+    using navigation_planning::polynomial_types::StatePVA;
 
     class Piece {
     public:

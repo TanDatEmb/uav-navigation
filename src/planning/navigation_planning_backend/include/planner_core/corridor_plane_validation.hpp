@@ -8,7 +8,7 @@
 
 #include <Eigen/Core>
 
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 
 namespace navigation_planning_backend {
 

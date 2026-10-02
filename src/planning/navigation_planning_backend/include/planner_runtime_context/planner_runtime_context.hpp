@@ -9,7 +9,7 @@
 #include <fmt/format.h>
 
 #include <data_structure/base/polytope.h>
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 #include <utils/header/color_msg_utils.hpp>
 #include <utils/header/eigen_alias.hpp>
 #include <utils/header/fmt_eigen.hpp>

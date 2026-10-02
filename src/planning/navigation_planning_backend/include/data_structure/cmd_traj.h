@@ -10,7 +10,7 @@
 
 #include <data_structure/exp_traj.h>
 #include <data_structure/backup_traj.h>
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 #include <navigation_common/time.hpp>
 #include <navigation_world_model/world_model_view.hpp>
 #include <utils/geometry/polynomial_state_roundoff.hpp>

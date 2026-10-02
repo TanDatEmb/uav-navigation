@@ -30,7 +30,7 @@
 #pragma once
 
 #include <utils/optimization/banded_system.h>
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 
 namespace traj_opt {
     using namespace geometry_utils;

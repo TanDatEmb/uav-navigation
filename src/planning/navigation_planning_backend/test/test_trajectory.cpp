@@ -12,7 +12,7 @@
 #include <Eigen/Core>
 #include <gtest/gtest.h>
 
-#include "data_structure/base/trajectory.h"
+#include <navigation_planning/polynomial/trajectory.hpp>
 #include <navigation_world_model/goal_contract.hpp>
 #include "planner_core/planner.hpp"
 #include "planner_core/fov_checker.h"
@@ -39,7 +39,7 @@
 #include "utils/geometry/quickhull.h"
 #include "utils/geometry/quadrotor_flatness.hpp"
 #include "utils/optimization/polynomial_interpolation.h"
-#include "utils/optimization/root_finder.h"
+#include <navigation_planning/polynomial/root_finder.hpp>
 #include "utils/optimization/lbfgs.h"
 #include "utils/optimization/sdlp.h"
 

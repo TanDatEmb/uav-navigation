@@ -15,7 +15,7 @@
 #include <traj_opt/minco.h>
 
 #include <data_structure/base/polytope.h>
-#include <data_structure/base/trajectory.h>
+#include <navigation_planning/polynomial/trajectory.hpp>
 
 #include <utils/header/type_utils.hpp>
 #include <utils/header/scope_timer.hpp>
