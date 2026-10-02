@@ -35,9 +35,10 @@ Ba helper được MOVE nguyên thân/signature, không đổi call site hoặc 
 
 ## Predicate → file
 
-Các `pred:<name>()` trong WP-A5 là nhãn inventory/decision-table; B6 không
+Các `pred:<name>()` trong inventory adapter/bridge của B6 là nhãn
+decision-table; B6 không
 tạo free function mới cho chúng. Bảng dưới đây ghi file sở hữu của guard theo
-`docs/refactor/WP-A5/setpoint_guard_inventory.csv` và giữ nguyên exit-site
+`docs/refactor/W3-B6/REPORT.md` và giữ nguyên exit-site
 ownership:
 
 | Predicate/guard IDs | File sở hữu |
@@ -94,7 +95,7 @@ qualification; B6 không phải runtime/SITL qualification.
 | `docs/refactor/kb/areas/R5_layer.md` citation range | cập nhật line anchor do xoá 25 dòng helper khỏi node |
 | `docs/refactor/W3-B6/REPORT.md` | evidence/handoff only |
 
-Không xoá file hay dọn `WP-A5`; prompt yêu cầu giữ oracle cho follow-up N15.
+N15 là follow-up dọn oracle lịch sử; các bằng chứng coverage cần dùng tiếp đã được giữ trong report này trước khi dọn `WP-A5`.
 
 ## Finding → trạng thái → commit
 
