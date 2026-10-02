@@ -42,4 +42,3 @@ Logs:
 The ROS failure is an environment prerequisite failure, not evidence of a
 passing or failing ROS test. The known TB-003 failure remains fail-closed and
 is not converted into a tuning task from this single run.
-
