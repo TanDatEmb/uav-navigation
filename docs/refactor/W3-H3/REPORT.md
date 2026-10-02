@@ -48,6 +48,11 @@ modified, no merge was performed, and SITL was not run.
 - `tools/gate.sh python`: PASS, 19 tooling tests and 423 runtime tests,
   2 expected skips. The runtime report failure was the test's intentional
   cleanup/report fixture and the gate result was PASS.
+- `tools/gate.sh ros`: **BLOCKED / NOT_PASS** on 2026-10-02 before any package
+  compiled: the canonical `/usr/bin/python3` could not import `ament_package`
+  while configuring `navigation_mission` (`ModuleNotFoundError`). The complete
+  log is `/home/letandat/uavnav-w3-h3-ros-gate-20261002.log`; this is an
+  environment prerequisite failure, not ROS test evidence.
 - Full Release build, full backend CTest, and focused C++ GREEN outputs are
   recorded here after the queued `/tmp/uavnav-build.lock` verification run.
 - Replay: `NOT_EVALUABLE`; no local recorded bag/cache exists. The catalog
