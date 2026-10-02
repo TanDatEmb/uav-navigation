@@ -8,6 +8,8 @@ RUNTIME = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME))
 
 from evaluation import (
+    _bracket,
+    _prepare_bracketing_stream,
     SourceTimestampPolicy,
     _source_time_status,
     build_execution_segments,
@@ -41,6 +43,17 @@ def pva(stamp_ns, position, velocity, *, generation=1, role=0, frame="world"):
         "sample_id": stamp_ns,
         "executable": True,
     }
+
+
+class EvaluationBracketTests(unittest.TestCase):
+    def test_prepared_bisect_matches_legacy_sorting_for_all_bracket_cases(self):
+        samples = [pva(stamp, (stamp, 0, 0), (1, 0, 0)) for stamp in (2_000_000_000, 1_000_000_000, 3_000_000_000)]
+        prepared = _prepare_bracketing_stream(samples)
+        for target in (500_000_000, 1_000_000_000, 1_500_000_000, 4_000_000_000):
+            self.assertEqual(
+                _bracket(samples, target, 2.0),
+                _bracket(samples, target, 2.0, prepared),
+            )
 
 
 def truth(stamp_ns, position, velocity, *, frame="world", epoch=1):
@@ -842,6 +855,30 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(metric["status"], "AVAILABLE")
         self.assertAlmostEqual(metric["coverage_ratio"], 0.5)
         self.assertEqual(metric["qualification_checks"]["coverage_sufficient"], False)
+
+    def test_evaluation_window_limits_position_and_velocity_error_statistics(self):
+        commands = [
+            pva(1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            pva(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            pva(3_000_000_000, (2.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        ]
+        data = inputs(commands, [
+            truth(1_000_000_000, (100.0, 0.0, 0.0), (100.0, 0.0, 0.0)),
+            truth(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            truth(3_000_000_000, (2.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        ])
+        data["evaluation_window"] = {
+            "start_ns": 2_000_000_000,
+            "end_ns": 3_000_000_000,
+        }
+        metrics = evaluate_session(data)["metrics"]
+        position = metrics["tracking.navigation_reference_vs_truth"]
+        velocity = metrics["tracking.navigation_reference_vs_truth.velocity"]
+        self.assertEqual(position["maximum"], 0.0)
+        self.assertEqual(position["p95"], 0.0)
+        self.assertEqual(position["matched_sample_ratio"], 1.0)
+        self.assertEqual(velocity["maximum"], 0.0)
+        self.assertEqual(velocity["p95"], 0.0)
 
     def test_zero_minimum_coverage_policy_is_invalid(self):
         data = inputs(

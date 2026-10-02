@@ -22,6 +22,8 @@ from planner_trace import (
     planner_timing_is_current,
     planner_trace_summary,
 )
+from stats import percentile as _percentile
+from tracking_diagnostics import annotate_tracking_metrics
 
 
 def _load(path: Path, default: Any) -> Any:
@@ -29,13 +31,6 @@ def _load(path: Path, default: Any) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return default
-
-
-def _percentile(values: list[float], fraction: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    return ordered[min(len(ordered) - 1, round((len(ordered) - 1) * fraction))]
 
 
 def _summary(values: list[float]) -> dict[str, float | int | None]:
@@ -1346,6 +1341,7 @@ def _analyze(session: Path) -> dict[str, Any]:
         len(waypoints),
         metrics["tracking"]["cross_track_error_m"].get("p95"),
     )
+    annotate_tracking_metrics(metrics)
     return {
         "metrics": metrics,
         "waypoints": waypoints,

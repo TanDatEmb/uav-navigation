@@ -24,6 +24,7 @@ from flight_review_report import (
     _timing_overview_cards,
     _timing_timeline_chart,
     _timing_rows,
+    render as render_flight_review,
     line_chart,
     map_svg,
 )
@@ -216,6 +217,36 @@ class HtmlReportSmoothnessTest(unittest.TestCase):
 
 
 class HtmlReportEvaluationTest(unittest.TestCase):
+    def test_report_html_renders_json_verdict_and_reasons_without_overall_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            (session / "report.json").write_text(json.dumps({
+                "verdict": "BLOCKED",
+                "reasons": ["R7 fixture reason"],
+            }), encoding="utf-8")
+            output = render_flight_review(session, session / "REPORT.html")
+            rendered = output.read_text(encoding="utf-8")
+        self.assertIn("BLOCKED", rendered)
+        self.assertIn("R7 fixture reason", rendered)
+        self.assertNotIn("Overall acceptance verdict", rendered)
+        self.assertIn("diagnostic_frame_unverified", rendered)
+
+    def test_display_verdict_and_reasons_are_taken_from_report_json(self) -> None:
+        reasons = ["RECORDED_REASON_1", "RECORDED_REASON_2"]
+        result = _evaluation(
+            {
+                "verdict": "OBSERVATION_COMPLETE",
+                "reasons": reasons,
+                "evaluation": {
+                    "qualification_eligible": False,
+                    "dimensions": {"safety": {"status": "FAIL"}},
+                },
+            },
+            {}, {}, {}, {}, None, None, None,
+        )
+        self.assertEqual(result["display_verdict"], "OBSERVATION_COMPLETE")
+        self.assertEqual(result["reasons"], reasons)
+
     def test_canonical_json_fields_are_invariant_to_display_decimation(self) -> None:
         base = {
             "evaluation": {
@@ -599,7 +630,93 @@ rog_map:
         )
 
         self.assertEqual(result["overall"], "PASS")
-        self.assertTrue(all(status == "PASS" for status in result["gates"].values()))
+        self.assertEqual(result["gates"]["cross_track"], "INFO")
+        self.assertTrue(all(
+            status == "PASS"
+            for name, status in result["gates"].items()
+            if name != "cross_track"
+        ))
+
+    def test_extreme_cross_track_diagnostic_does_not_change_legacy_verdict(self) -> None:
+        args = (
+            {"verdict": "PASS"},
+            {"outcome": "COMPLETE"},
+            {
+                "expected_outcome": "complete",
+                "mission_complete_observed": True,
+                "waypoint_acceptance_complete": True,
+            },
+            {"state": "TRACKING", "navigation_valid": True},
+            {
+                "estimator_initialized": True,
+                "local_position_valid": True,
+                "local_velocity_valid": True,
+            },
+            None,
+            0.75,
+            0.0,
+        )
+        nominal = _evaluation(*args[:5], 0.01, *args[6:])
+        extreme = _evaluation(*args[:5], 9999.0, *args[6:])
+        self.assertEqual(nominal["overall"], extreme["overall"])
+        self.assertEqual(extreme["gates"]["cross_track"], "INFO")
+
+    def test_report_tracking_metrics_are_explicitly_diagnostic(self) -> None:
+        document = {
+            "verdict": "PASS",
+            "tracking": {"reference_vs_ground_truth": {"p95": 0.1}},
+            "acceptance": {"cross_track_error_p95_m": 0.1},
+            "evaluation": {
+                "metrics": {
+                    "cross_track_error_m": {"p95": 0.1},
+                    "tracking.navigation_reference_vs_truth": {
+                        "p95": 0.1,
+                        "maximum": 0.2,
+                        "qualification_checks": {"source_time_valid": True},
+                    },
+                }
+            },
+        }
+        truth_metric_before = json.loads(json.dumps(
+            document["evaluation"]["metrics"]["tracking.navigation_reference_vs_truth"]
+        ))
+        report._annotate_tracking_diagnostics(document)
+        self.assertEqual(document["tracking"]["authority"], "diagnostic")
+        self.assertEqual(
+            document["tracking"]["frame_status"],
+            "diagnostic_frame_unverified",
+        )
+        self.assertEqual(
+            document["acceptance"]["cross_track_diagnostic"]["authority"],
+            "diagnostic",
+        )
+        self.assertEqual(
+            document["evaluation"]["metrics"]["cross_track_error_m"]["frame_status"],
+            "diagnostic_frame_unverified",
+        )
+        self.assertEqual(
+            document["evaluation"]["metrics"]["tracking.navigation_reference_vs_truth"],
+            truth_metric_before,
+        )
+
+    def test_extreme_cross_track_does_not_change_report_verdict_or_assessment_status(self) -> None:
+        base = {
+            "verdict": "PASS",
+            "evaluation": {"assessment_status": "NOT_EVALUABLE"},
+            "acceptance": {"cross_track_error_p95_m": 0.1},
+        }
+        nominal = json.loads(json.dumps(base))
+        extreme = json.loads(json.dumps(base))
+        nominal["acceptance"]["cross_track_error_p95_m"] = 0.1
+        extreme["acceptance"]["cross_track_error_p95_m"] = 9999.0
+
+        report._annotate_tracking_diagnostics(nominal)
+        report._annotate_tracking_diagnostics(extreme)
+
+        self.assertEqual(
+            (nominal["verdict"], nominal["evaluation"]["assessment_status"]),
+            (extreme["verdict"], extreme["evaluation"]["assessment_status"]),
+        )
 
     def test_temporary_bypass_can_never_render_as_certification_pass(self) -> None:
         result = _evaluation(
@@ -821,7 +938,7 @@ rog_map:
 
         self.assertEqual(result["overall"], "FAIL")
         self.assertEqual(result["gates"]["mission"], "N/A")
-        self.assertEqual(result["gates"]["cross_track"], "N/A")
+        self.assertEqual(result["gates"]["cross_track"], "INFO")
         self.assertEqual(result["gates"]["collision"], "N/A")
 
     def test_unavailable_waypoint_evidence_is_not_a_failed_gate(self) -> None:

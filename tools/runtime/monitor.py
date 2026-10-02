@@ -19,6 +19,7 @@ import time
 from typing import Any, Callable
 
 from evidence_writer import EvidenceWriter
+from stats import percentile as _percentile
 
 
 # Gazebo simulation time starts near zero. PX4 can briefly publish wall-clock
@@ -35,13 +36,6 @@ PX4_SIMULATION_STREAMS = frozenset({
     "px4_thrust_setpoint",
     "px4_actuator_motors",
 })
-
-
-def _percentile(values: list[float], fraction: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    return ordered[min(len(ordered) - 1, max(0, round((len(ordered) - 1) * fraction)))]
 
 
 def _finite(value: Any) -> float | None:
@@ -120,6 +114,9 @@ class StreamStats:
     invalid_source_timestamp_count: int = 0
     stale_events: int = 0
     stale_event_times_ns: list[int] = field(default_factory=list)
+    source_stale_events: int = 0
+    source_stale_event_times_ns: list[int] = field(default_factory=list)
+    source_gap_event_count: int = 0
     arrival_gap_event_times_ns: list[int] = field(default_factory=list)
     arrival_gap_events: list[dict[str, int | float]] = field(default_factory=list)
     maximum_arrival_gap_ms: float = 0.0
@@ -136,6 +133,7 @@ class StreamStats:
     publisher_count: int = 0
     subscriber_count: int = 0
     _stale_reported: bool = False
+    _source_stale_reported: bool = False
 
     def update(
         self,
@@ -210,6 +208,12 @@ class StreamStats:
                 else:
                     delta_ms = (stamp_ns - self.maximum_stamp_ns) / 1e6
                     self.maximum_source_gap_ms = max(self.maximum_source_gap_ms, delta_ms)
+                    if delta_ms > self.stale_after_s * 1000.0:
+                        self.source_gap_event_count += 1
+                        self.source_stale_events += 1
+                        self.source_stale_event_times_ns.append(
+                            self.maximum_stamp_ns + int(self.stale_after_s * 1e9)
+                        )
                     if self.interval_history_enabled:
                         self.intervals_ms.append(delta_ms)
                         if self.interval_history_limit > 0:
@@ -226,6 +230,7 @@ class StreamStats:
         self.invalid_quaternions += int(invalid_quaternion)
         self.invalid_covariances += int(invalid_covariance)
         self._stale_reported = False
+        self._source_stale_reported = False
         now_s = arrival_ns / 1e9
         if len(self.arrival_times_s) >= 2:
             start = self.arrival_times_s[0]
@@ -235,7 +240,7 @@ class StreamStats:
                 self.window_rates_hz = self.window_rates_hz[-512:]
         return True
 
-    def check_stale(self, now_ns: int) -> None:
+    def check_stale(self, now_ns: int, source_now_ns: int | None = None) -> None:
         # A single first sample is not yet an active stream. Startup can
         # deliver that sample before the following burst; rate and timestamp
         # checks still catch a stream that never becomes active, while stale
@@ -251,6 +256,14 @@ class StreamStats:
                     self.last_arrival_ns + int(self.stale_after_s * 1e9)
                 )
                 self._stale_reported = True
+        if (source_now_ns is not None and self.received >= 2 and
+                source_now_ns - self.last_stamp_ns > int(self.stale_after_s * 1e9) and
+                not self._source_stale_reported):
+            self.source_stale_events += 1
+            self.source_stale_event_times_ns.append(
+                self.last_stamp_ns + int(self.stale_after_s * 1e9)
+            )
+            self._source_stale_reported = True
 
     def as_dict(self) -> dict[str, Any]:
         elapsed_s = (self.last_stamp_ns - self.first_stamp_ns) / 1e9 if self.first_stamp_ns else 0.0
@@ -266,6 +279,10 @@ class StreamStats:
                 if self.interval_history_enabled else None
             ),
             "maximum_gap_ms": self.maximum_source_gap_ms,
+            "source_gap_event_count": self.source_gap_event_count,
+            "source_stale_event_count": self.source_stale_events,
+            "source_stale_event_times_ns": self.source_stale_event_times_ns,
+            "maximum_source_gap_ms": self.maximum_source_gap_ms,
             "stale_event_count": self.stale_events,
             "stale_event_times_ns": self.stale_event_times_ns,
             "arrival_gap_event_count": self.arrival_gap_event_total,
@@ -887,8 +904,14 @@ class RuntimeMonitor:
 
     def _tick(self) -> None:
         now_ns = time.time_ns()
+        clock_payload = self.latest.get("simulation_clock", {})
+        source_now_ns = (
+            _integer_value(clock_payload.get("stamp_ns"))
+            if self.workflow == "sim" and isinstance(clock_payload, dict)
+            else None
+        )
         for stats in self.streams.values():
-            stats.check_stale(now_ns)
+            stats.check_stale(now_ns, source_now_ns)
         if now_ns - self._last_graph_query_ns >= self._graph_query_period_ns:
             self._last_graph_query_ns = now_ns
             for stats in self.streams.values():

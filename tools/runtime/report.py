@@ -25,9 +25,17 @@ from planner_trace import (
     planner_trace_summary,
 )
 from evaluation import evaluate_session, load_evaluation_inputs
+from stats import percentile as _p
+from tracking_diagnostics import annotate_tracking_report
+from waypoint_acceptance import parse_waypoint_acceptance
 
 
 VERDICTS = {"PASS", "FAIL", "BLOCKED", "NOT_RUN", "OBSERVATION_COMPLETE"}
+
+
+def _annotate_tracking_diagnostics(report: dict[str, Any]) -> dict[str, Any]:
+    """Keep the report-owned name stable for runtime contract tests."""
+    return annotate_tracking_report(report)
 _REQUIRED_EVALUATION_DIMENSIONS = (
     "mission", "safety", "tracking", "motion_quality", "evidence",
 )
@@ -113,13 +121,6 @@ def _number(value: Any, default: float = 0.0) -> float:
 def _dedupe_reasons(reasons: list[str]) -> list[str]:
     """Preserve first-seen report reasons without repeating the same finding."""
     return list(dict.fromkeys(str(reason) for reason in reasons))
-
-
-def _p(values: list[float], fraction: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    return ordered[min(len(ordered) - 1, round((len(ordered) - 1) * fraction))]
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -747,18 +748,9 @@ def _mission_acceptance(
     accepted_indices: list[int] = []
     if isinstance(raw_acceptance_events, list):
         for event in raw_acceptance_events:
-            if isinstance(event, dict):
-                if event.get("waypoint_accepted") is False:
-                    continue
-                value = event.get("accepted_waypoint_index")
-            else:
-                # Keep the parser tolerant of a compact artifact representation
-                # while retaining acceptance events as the sole authority.
-                value = event
-            try:
-                accepted_indices.append(int(value))
-            except (TypeError, ValueError):
-                continue
+            status, value = parse_waypoint_acceptance(event)
+            if status == "ACCEPTED" and value is not None:
+                accepted_indices.append(value)
     result["waypoint_acceptance_indices"] = accepted_indices
     valid_acceptance_indices = accepted_indices == expected_indices or (
         allow_initial_skip and bool(expected_indices) and accepted_indices == expected_indices[1:]
@@ -976,6 +968,10 @@ def _rate_row(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
         "maximum_gap_ms": _number(row.get("maximum_gap_ms")),
         "stale_event_count": int(row.get("stale_event_count", 0)),
         "stale_event_times_ns": list(row.get("stale_event_times_ns", [])),
+        "source_stale_event_count": int(row.get("source_stale_event_count", 0)),
+        "source_stale_event_times_ns": list(row.get("source_stale_event_times_ns", [])),
+        "source_gap_event_count": int(row.get("source_gap_event_count", 0)),
+        "maximum_source_gap_ms": _number(row.get("maximum_source_gap_ms")),
         "timestamp_regression_count": int(row.get("timestamp_regression_count", 0)),
         "timestamp_epoch_discard_count": int(row.get("timestamp_epoch_discard_count", 0)),
         "invalid_source_timestamp_count": int(row.get("invalid_source_timestamp_count", 0)),
@@ -3727,6 +3723,7 @@ def _build_complete_report(session: Path, workflow: str, config_path: Path, work
         report["map"] = descriptor
     evaluation_inputs = load_evaluation_inputs(session, config)
     report["evaluation"] = evaluate_session(evaluation_inputs)
+    annotate_tracking_report(report)
     evaluation_guard_reasons = _versioned_evaluation_guard(report["evaluation"])
     evaluator = report["evaluation"] if isinstance(report["evaluation"], dict) else {}
     # Runtime outcome, C0-SW eligibility, and C0-IFP eligibility are separate

@@ -17,10 +17,12 @@ import math
 from pathlib import Path
 import statistics
 from typing import Any, Iterable
+from stats import percentile as _percentile
 
 from evidence_contract import build_evidence_contract
 from command_diagnostics import join_execution_diagnostics
 from planner_trace import collect_planner_trace_records, planner_trace_summary
+from waypoint_acceptance import parse_waypoint_acceptance
 
 
 EVALUATION_SCHEMA_VERSION = 2
@@ -93,14 +95,6 @@ def _vector(value: Any, size: int = 3) -> tuple[float, ...] | None:
 
 def _norm(value: Iterable[float]) -> float:
     return math.sqrt(sum(float(item) * float(item) for item in value))
-
-
-def _percentile(values: list[float], fraction: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * fraction)))
-    return ordered[index]
 
 
 def _summary(values: list[float], *, unit: str | None = None) -> dict[str, Any]:
@@ -1839,9 +1833,18 @@ def build_execution_segments(inputs: dict[str, Any], max_gap_s: float = DEFAULT_
     }
 
 
-def _bracket(samples: list[dict[str, Any]], target_ns: int, max_gap_s: float) -> tuple[dict[str, Any], dict[str, Any], float] | None:
+def _prepare_bracketing_stream(
+    samples: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[int]]:
     ordered = sorted(samples, key=lambda item: int(item["source_stamp_ns"]))
-    stamps = [int(item["source_stamp_ns"]) for item in ordered]
+    return ordered, [int(item["source_stamp_ns"]) for item in ordered]
+
+
+def _bracket(
+    samples: list[dict[str, Any]], target_ns: int, max_gap_s: float,
+    prepared: tuple[list[dict[str, Any]], list[int]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], float] | None:
+    ordered, stamps = prepared if prepared is not None else _prepare_bracketing_stream(samples)
     index = bisect.bisect_left(stamps, target_ns)
     if index < len(ordered) and stamps[index] == target_ns:
         return ordered[index], ordered[index], 0.0
@@ -1907,8 +1910,9 @@ def _tracking_pair(
     gaps: list[float] = []
     matched_stamps: list[int] = []
     matched = 0
+    prepared_measured = _prepare_bracketing_stream(measured)
     for command in reference:
-        bracket = _bracket(measured, int(command["source_stamp_ns"]), max_gap_s)
+        bracket = _bracket(measured, int(command["source_stamp_ns"]), max_gap_s, prepared_measured)
         if bracket is None:
             continue
         measured_position = _interpolate_vector(bracket, "position")
@@ -2096,10 +2100,32 @@ def _frame_witness(
     }
 
 
+def _select_evaluation_window(
+    samples: list[dict[str, Any]], inputs: dict[str, Any]
+) -> tuple[list[dict[str, Any]], tuple[int, int] | None, str | None]:
+    window = inputs.get("evaluation_window")
+    if not isinstance(window, dict):
+        return list(samples), None, "COVERAGE_WINDOW_UNAVAILABLE"
+    start = _integer(window.get("start_ns", window.get("source_start_ns")))
+    end = _integer(window.get("end_ns", window.get("source_end_ns")))
+    if start is None or end is None or end <= start:
+        return list(samples), None, "COVERAGE_WINDOW_INVALID"
+    selected = [
+        item for item in samples
+        if (
+            (stamp := _integer(item.get("source_stamp_ns"))) is not None
+            and start <= stamp <= end
+        )
+    ]
+    return selected, (start, end), None
+
+
 def _tracking_coverage(
     reference: list[dict[str, Any]],
     matched_stamps: list[int],
     inputs: dict[str, Any],
+    evaluation_window: tuple[int, int] | None,
+    window_error: str | None,
 ) -> tuple[dict[str, Any], list[str]]:
     policy = inputs.get("tracking_coverage_policy")
     required = ("min_coverage_ratio", "max_uncovered_interval_s", "max_pairing_gap_s")
@@ -2138,23 +2164,14 @@ def _tracking_coverage(
             "uncovered_intervals": [], "status": "NOT_EVALUABLE",
             "reason": "TRACKING_COVERAGE_POLICY_INVALID",
         }, ["TRACKING_COVERAGE_POLICY_INVALID"]
-    window = inputs.get("evaluation_window")
-    if not isinstance(window, dict):
+    if evaluation_window is None:
         return {
             "required_duration_s": None, "valid_duration_s": None,
             "coverage_ratio": None, "longest_uncovered_interval_s": None,
             "uncovered_intervals": [], "status": "NOT_EVALUABLE",
-            "reason": "COVERAGE_WINDOW_UNAVAILABLE",
-        }, ["COVERAGE_WINDOW_UNAVAILABLE"]
-    start = _integer(window.get("start_ns", window.get("source_start_ns")))
-    end = _integer(window.get("end_ns", window.get("source_end_ns")))
-    if start is None or end is None or end <= start:
-        return {
-            "required_duration_s": None, "valid_duration_s": None,
-            "coverage_ratio": None, "longest_uncovered_interval_s": None,
-            "uncovered_intervals": [], "status": "NOT_EVALUABLE",
-            "reason": "COVERAGE_WINDOW_INVALID",
-        }, ["COVERAGE_WINDOW_INVALID"]
+            "reason": window_error or "COVERAGE_WINDOW_UNAVAILABLE",
+        }, [window_error or "COVERAGE_WINDOW_UNAVAILABLE"]
+    start, end = evaluation_window
     pairing_gap = maximum_pairing_gap * 1e9
     valid = sorted({
         stamp for stamp in matched_stamps if start <= stamp <= end
@@ -2239,6 +2256,9 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
         reference, policy=SourceTimestampPolicy.STRICTLY_INCREASING)
     reference_time_reasons = sorted(set(reference_time_reasons + heartbeat_reasons))
     reference_time_valid = reference_time_valid and not heartbeat_reasons
+    evaluation_reference, evaluation_window, window_error = _select_evaluation_window(
+        reference, inputs
+    )
     lineage_valid, lineage_reasons = _reference_lineage_status(inputs, raw_reference)
     policy = inputs.get("tracking_coverage_policy")
     pairing_gap = (
@@ -2294,9 +2314,15 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
             reasons.extend(metric_reasons)
             continue
         position_errors, velocity_errors, matched, gaps, matched_stamps = _tracking_pair(
-            reference, measured, diagnostic_gap, frame_transform
+            evaluation_reference, measured, diagnostic_gap, frame_transform
         )
-        coverage, coverage_reasons = _tracking_coverage(reference, matched_stamps, inputs)
+        coverage, coverage_reasons = _tracking_coverage(
+            evaluation_reference,
+            matched_stamps,
+            inputs,
+            evaluation_window,
+            window_error,
+        )
         source_time_valid = (
             reference_time_valid and measured_time_valid and clock_relation_valid
         )
@@ -2312,7 +2338,7 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
         metrics[name] = _metric_from_errors(
             position_errors, unit="m", source="published_navigation_command",
             time_basis="command_source_stamp", frame=frame, matched=matched,
-            total=len(reference), max_gap_s=max(gaps, default=None),
+            total=len(evaluation_reference), max_gap_s=max(gaps, default=None),
         )
         coverage_status = coverage.get("status")
         coverage_reason = coverage.get("reason")
@@ -2321,7 +2347,7 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
         metrics[name]["coverage_reason"] = coverage_reason
         metrics[name]["status"] = "AVAILABLE" if matched else "NOT_EVALUABLE"
         metrics[name]["matched_sample_ratio"] = (
-            matched / len(reference) if reference else None
+            matched / len(evaluation_reference) if evaluation_reference else None
         )
         metrics[name]["qualification_checks"] = {
             "source_time_valid": source_time_valid,
@@ -2337,7 +2363,7 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
         metrics[name + ".velocity"] = _metric_from_errors(
             velocity_errors, unit="m/s", source="published_navigation_command",
             time_basis="command_source_stamp", frame=frame, matched=matched,
-            total=len(reference), max_gap_s=max(gaps, default=None),
+            total=len(evaluation_reference), max_gap_s=max(gaps, default=None),
         )
         metrics[name + ".velocity"].update(coverage)
         metrics[name + ".velocity"]["coverage_status"] = coverage_status
@@ -2724,11 +2750,15 @@ def _px4_state_use_timing(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _ate_rpe(estimate: list[dict[str, Any]], truth: list[dict[str, Any]], max_gap_s: float) -> dict[str, Any]:
+def _ate_rpe(
+    estimate: list[dict[str, Any]], truth: list[dict[str, Any]], max_gap_s: float,
+    prepared_truth: tuple[list[dict[str, Any]], list[int]] | None = None,
+) -> dict[str, Any]:
+    prepared = prepared_truth if prepared_truth is not None else _prepare_bracketing_stream(truth)
     errors: list[float] = []
     pairs: list[tuple[int, tuple[float, float, float], tuple[float, float, float]]] = []
     for item in estimate:
-        bracket = _bracket(truth, int(item["source_stamp_ns"]), max_gap_s)
+        bracket = _bracket(truth, int(item["source_stamp_ns"]), max_gap_s, prepared)
         if bracket is None:
             continue
         expected = _interpolate_vector(bracket, "position")
@@ -2746,18 +2776,19 @@ def _ate_rpe(estimate: list[dict[str, Any]], truth: list[dict[str, Any]], max_ga
 def evaluate_localization(inputs: dict[str, Any]) -> dict[str, Any]:
     truth = inputs.get("streams", {}).get("ground_truth_odometry", [])
     outputs: dict[str, Any] = {}
+    prepared_truth = _prepare_bracketing_stream(truth)
     for name in ("corrected_odometry", "propagated_odometry"):
         estimate = inputs.get("streams", {}).get(name, [])
         rows: list[dict[str, Any]] = []
         for item in estimate:
-            bracket = _bracket(truth, int(item["source_stamp_ns"]), DEFAULT_MAX_MATCH_GAP_S)
+            bracket = _bracket(truth, int(item["source_stamp_ns"]), DEFAULT_MAX_MATCH_GAP_S, prepared_truth)
             if bracket is None:
                 continue
             truth_position = _interpolate_vector(bracket, "position")
             estimate_position = _vector(item.get("position"))
             if truth_position is not None and estimate_position is not None:
                 rows.append(dict(item, estimate_position=list(estimate_position)))
-        outputs[name] = _ate_rpe(rows, truth, DEFAULT_MAX_MATCH_GAP_S)
+        outputs[name] = _ate_rpe(rows, truth, DEFAULT_MAX_MATCH_GAP_S, prepared_truth)
         outputs[name]["source"] = name
     return {
         "streams": outputs,
@@ -3064,9 +3095,9 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
     outcome = scenario.get("outcome")
     expected_indices = list(range(len(inputs.get("waypoints", []))))
     accepted_indices = [
-        _integer(item.get("accepted_waypoint_index"))
-        for item in scenario.get("waypoint_acceptance_events", [])
-        if isinstance(item, dict) and item.get("waypoint_accepted") is True
+        index for event in scenario.get("waypoint_acceptance_events", [])
+        for status, index in [parse_waypoint_acceptance(event)]
+        if status == "ACCEPTED" and index is not None
     ]
     if (scenario.get("mission_complete_observed") is True and
             outcome == "COMPLETE" and expected_indices and
@@ -3274,7 +3305,11 @@ def evaluate_session(inputs: dict[str, Any]) -> dict[str, Any]:
         mission_reasons.append("WAYPOINT_ACCEPTANCE_EVIDENCE_MISSING")
     if scenario.get("waypoint_acceptance_events") is not None:
         expected = list(range(int(_number(scenario.get("mission_waypoint_count")) or 0)))
-        accepted = [int(item.get("accepted_waypoint_index")) for item in scenario.get("waypoint_acceptance_events", []) if isinstance(item, dict) and item.get("waypoint_accepted", True) and _integer(item.get("accepted_waypoint_index")) is not None]
+        accepted = [
+            index for event in scenario.get("waypoint_acceptance_events", [])
+            for status, index in [parse_waypoint_acceptance(event)]
+            if status == "ACCEPTED" and index is not None
+        ]
         if expected and accepted != expected:
             mission_reasons.append("WAYPOINT_ACCEPTANCE_INCOMPLETE")
     mission_status = "PASS" if mission_complete and not mission_reasons else "NOT_EVALUABLE" if not mission_complete else "FAIL"
