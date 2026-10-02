@@ -2540,6 +2540,17 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertTrue(failures)
             killpg.assert_not_called()
 
+    def test_cleanup_postcheck_reports_orphan_after_stop(self) -> None:
+        class FakeSession:
+            def live_records(self) -> list[dict[str, object]]:
+                return [{"role": "orphan", "pid": 1234, "pgid": 1234}]
+
+            def write_state(self, _values: dict[str, object]) -> None:
+                return None
+
+        failures = process_group.cleanup_failures_after_stop(FakeSession(), [])
+        self.assertEqual(failures, ["process remains after stop: orphan (1234)"])
+
     def test_stop_rejects_invalid_grace_period(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = process_group.Session(Path(temporary) / "session")

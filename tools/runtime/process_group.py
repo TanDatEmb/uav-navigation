@@ -304,6 +304,16 @@ class Session:
         self.write_state({"status": "STOPPED", "stop_reason": reason, "stopped": True})
 
 
+def cleanup_failures_after_stop(session: Session, failures: list[str]) -> list[str]:
+    """Include any process still live after the registered stop sequence."""
+    result = list(failures)
+    for record in session.live_records():
+        result.append(f"process remains after stop: {record.get('role', 'unknown')} ({record.get('pid', 'unknown')})")
+    if result:
+        session.write_state({"cleanup": "FAIL", "cleanup_failures": result})
+    return result
+
+
 def resolve_latest(root: Path) -> Path:
     resolved_root = root.resolve()
     latest = (resolved_root / "latest").resolve()
@@ -325,4 +335,4 @@ def update_latest(root: Path, directory: Path) -> None:
     temporary.replace(latest)
 
 
-__all__ = ["Session", "resolve_latest", "update_latest"]
+__all__ = ["Session", "cleanup_failures_after_stop", "resolve_latest", "update_latest"]

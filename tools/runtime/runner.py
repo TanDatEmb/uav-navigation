@@ -26,7 +26,7 @@ import xml.etree.ElementTree as ET
 
 import yaml
 
-from process_group import Session, resolve_latest, update_latest
+from process_group import Session, cleanup_failures_after_stop, resolve_latest, update_latest
 import report
 from build_provenance import sha256_file, source_fingerprint, validate_manifest
 from runtime_environment import (
@@ -2594,7 +2594,7 @@ def _stop_and_report(session: Session, workflow: str, config_path: Path, *, px4_
     # timer can otherwise report a final stale event after its publishers have
     # intentionally begun shutting down.
     _write_runtime(session, observation_finished_wall_ns=time.time_ns())
-    cleanup_failures = session.stop()
+    cleanup_failures = cleanup_failures_after_stop(session, session.stop())
     world_gate_validation = _validate_world_observation_gate(session)
     if world_gate_validation is not None:
         failures = _load_runtime_failures(session)
