@@ -1,6 +1,6 @@
 # A4 — Reducer tách từ `runCycle` / `planner_fsm` / `ExecutionAuthority`
 
-Baseline `main @ 7e0b850`. Input: WP-A4-R1 (`decision_table.csv` 327 rule, `predicates.csv` 45, `state_vars.csv` 59, `lifecycle_enums.md`) và WP-A5-R1 (adapter/bridge, 99 rule).
+Baseline `main @ 7e0b850`. Input: WP-A4-R1 (`decision_table.csv` 327 rule, `predicates.csv` 45, `state_vars.csv` 59, `lifecycle_enums.md`) và W3-B6 predicate coverage (adapter/bridge, 99 rule; xem `docs/refactor/W3-B6/REPORT.md`).
 
 ## 0. Trạng thái oracle: A4-R1 **chưa phải** bảng quyết định ngữ nghĩa
 
@@ -19,7 +19,7 @@ Kiến trúc sư tự đo lại `decision_table.csv` của A4-R1:
 - A4-R1 là một **index đầy đủ các exit site** của runtime: mọi return và mọi call site có side effect đều có ID. Checker PASS vì nó chỉ kiểm phủ.
 - Guard lại là số dòng. Vì vậy bảng này không trả lời được câu hỏi "trong điều kiện nào thì effect gì", và **không dùng được làm oracle ngữ nghĩa cho P4**.
 
-Ngược lại, A5-R1 (adapter/bridge) có 99/99 guard dạng `pred:<name>()` và 94 predicate. Bảng này **dùng được** làm oracle cho P6.
+Ngược lại, W3-B6 đã ghi nhận 99/99 guard adapter/bridge dạng `pred:<name>()` và 94 predicate. Bằng chứng coverage này **dùng được** làm oracle cho P6.
 
 **Quyết định (đi vào D4 của ADR-017):** không mở vòng R2 để viết văn xuôi cho 327 guard. Oracle của P4 gồm ba lớp:
 1. **Exit-site index** (A4-R1). Mỗi `RT-*` phải được map tới một transition đích (§5) hoặc được đánh dấu `DELETED` kèm lý do. Checker CI kiểm việc này.

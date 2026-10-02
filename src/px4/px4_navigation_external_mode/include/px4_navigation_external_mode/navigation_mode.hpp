@@ -45,6 +45,9 @@
 
 namespace px4_navigation_external_mode {
 
+[[nodiscard]] bool shouldRepeatPx4HoldHandover(
+    bool failure_reported, bool terminal_hold_unrepresentable) noexcept;
+
 class NavigationMode final : public px4_ros2::ModeBase {
  public:
   explicit NavigationMode(rclcpp::Node& node);
@@ -112,7 +115,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
       const navigation_contracts::msg::NavigationCommand& command);
   [[nodiscard]] bool plannerRecoveryEpisodeMatchesLocked(
       const navigation_contracts::msg::NavigationCommand& command) const noexcept;
-  void safetyStopNavigation(const char* reason);
+  void safetyStopNavigation(const char* reason,
+                            bool terminal_hold_unrepresentable = false);
   void failNavigation(const char* reason);
   void logRuntimeMetrics(const rclcpp::Time& now);
   [[nodiscard]] Px4InputTraceRecord makePx4InputTraceRecord(

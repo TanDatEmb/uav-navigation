@@ -1,6 +1,6 @@
 # Schema chung cho bảng quyết định
 
-Schema này là hợp đồng dữ liệu cho WP-A4, WP-A5 và các reducer spec tiếp
+Schema này là hợp đồng dữ liệu cho WP-A4, W3-B6 và các reducer spec tiếp
 theo. WP-A4-R1 là revision đầu tiên commit schema vào repository; các WP sau
 chỉ đọc và dùng cùng tên cột.
 

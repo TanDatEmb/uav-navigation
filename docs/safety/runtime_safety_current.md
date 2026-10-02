@@ -483,3 +483,15 @@ These labeled summaries are the only retained record of the legacy decisions.
   GREEN/14 seed tests/optimizer31/Release23/85 fresh CTests/Python389 PASS (one GUI skip); failed oracle/namespace runs retained. Native readiness pending; no completion/performance claim.
 - Verify unequal/reversed/multiple-junction oracle, cap/corner negatives, backend/full
   regression and Release. Lineage DEC-20260828-089; current action/evidence.<br>**2026-09-23 Core mission handoff repair:** owner Core `NavigationRuntimeNode` for mission/publication and PX4 adapter for local admission; scope first mission-authority cut; safety impact: retain only the exact certified executing predecessor across desired PASS gate advance, use 200 ms ModeStatus freshness only to establish activation, continue exact finite adapter admission and unchanged 100 ms command/200 ms adapter/500 ms runtime leases, world/certificate/localization checks and Hold; evidence: pre-fix H4/H5 plus `publishCommand()` stack, component tests and focused diagnostic SITL in `artifacts/repair_core_mission_liveness/`; removal condition: revert if exact execution identity, adapter-local admission, or finite predecessor lease cannot be proven; verify Release build, focused package/Python tests, mission-authority guard, SITL parity/lease fence, `python3 tools/validate_runtime_safety_ledger.py` and `git diff --check`. Targeted history and limitations.<br>**2026-09-24 diagnostic state transport timing trace:** owner FastLIO publisher, PX4 adapter ingress and SITL evidence monitor; scope default-OFF, explicit simulated-time SITL/test sideband sequence/source/steady/callback/lock/accepted-receive witnesses, separate >50 ms `/clock` arrival diagnostics and read-only rosbag clock-gap recovery. Safety impact: no control or health decision consumes the best-effort trace; monitor 500 ms stale assessment, 200 ms state boundary, command lease and Hold unchanged; missing trace is missing evidence. Evidence: pinned A2, natural pilot 3 and ten-run cohort in `artifacts/qualification_gate_recovery/20260924T082427Z-4d184896/`; remove when causal attribution closes or enabled-trace load perturbs control. Verify trace scope guard, Release/component/SITL, ledger validator and `git diff --check`. Lineage.
+
+## N15: preserve PX4 Hold handover when the terminal hold is unrepresentable
+
+- Owner/scope: PX4 external-mode adapter terminal stationary-setpoint path. If its latched
+  safety hold position is not representable by PX4, repeat the existing Hold callback even
+  after the preceding stationary-setpoint attempt set the safety-failure latch.
+- Safety impact: closes a lost-handover path; no fallback controller, timeout, threshold,
+  authority, lease, or UNKNOWN-policy change. `schedulePx4Hold` remains the sole requester.
+- Evidence: RED predicate and GREEN callback path. Focused build/test is blocked because
+  `/usr/bin/python3` cannot import `ament_package`; this is not acceptance evidence.
+- Removal/verification: revert if focused and Release/regression tests show a handover or
+  repeated-failure regression; run the focused test, ledger validator, and `git diff --check`.

@@ -1985,22 +1985,36 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
               static_cast<unsigned long>(admission_rejections_by_stage[7]));
 }
 
-void NavigationMode::safetyStopNavigation(const char* reason) {
+bool shouldRepeatPx4HoldHandover(
+    bool failure_reported, bool terminal_hold_unrepresentable) noexcept {
+  return failure_reported && terminal_hold_unrepresentable;
+}
+
+void NavigationMode::safetyStopNavigation(
+    const char* reason, bool terminal_hold_unrepresentable) {
+  bool repeat_hold_handover = false;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    if (failure_reported_) return;
-    if (odometry_.has_value()) {
-      const auto& point = odometry_->pose.pose.position;
-      const Eigen::Vector3d measured{point.x, point.y, point.z};
-      if (measured.allFinite()) safety_hold_position_ = measured;
+    if (failure_reported_) {
+      repeat_hold_handover = shouldRepeatPx4HoldHandover(
+          failure_reported_, terminal_hold_unrepresentable);
+      if (!repeat_hold_handover) return;
+    } else {
+      if (odometry_.has_value()) {
+        const auto& point = odometry_->pose.pose.position;
+        const Eigen::Vector3d measured{point.x, point.y, point.z};
+        if (measured.allFinite()) safety_hold_position_ = measured;
+      }
+      failure_reported_ = true;
+      handover_requested_ = true;
+      navigation_command_ = transitionCertifiedCommand(
+          navigation_command_, std::nullopt, CertifiedCommandTransition::kInvalidate);
     }
-    failure_reported_ = true;
-    handover_requested_ = true;
-    navigation_command_ = transitionCertifiedCommand(
-        navigation_command_, std::nullopt, CertifiedCommandTransition::kInvalidate);
   }
-  publishStatus(navigation_contracts::msg::NavigationModeStatus::PAUSED,
-                navigation_contracts::msg::NavigationModeStatus::SAFETY_STOP);
+  if (!repeat_hold_handover) {
+    publishStatus(navigation_contracts::msg::NavigationModeStatus::PAUSED,
+                  navigation_contracts::msg::NavigationModeStatus::SAFETY_STOP);
+  }
   RCLCPP_ERROR(node().get_logger(), "%s; safety hold then handover to PX4 Hold", reason);
   if (px4_hold_handover_) {
     px4_hold_handover_();
@@ -2261,7 +2275,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       last_velocity_command_enu_.setZero();
     }
     if (stationary_position_unrepresentable) {
-      safetyStopNavigation("terminal hold position is not representable by PX4");
+      safetyStopNavigation("terminal hold position is not representable by PX4", true);
     }
     return;
   }
