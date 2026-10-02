@@ -6,6 +6,7 @@
 #include <cmath>
 #include <exception>
 #include <limits>
+#include <map>
 #include <iomanip>
 #include <mutex>
 #include <sstream>
@@ -13,6 +14,7 @@
 #include <string_view>
 #include <thread>
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <diagnostic_msgs/msg/key_value.hpp>
 
@@ -21,6 +23,8 @@
 #include <navigation_contracts/command_safety_contract.hpp>
 #include <navigation_contracts/navigation_command_contract.hpp>
 #include <navigation_contracts/execution_state_freshness.hpp>
+#include <nav_safety_profile/generated/profile.hpp>
+#include <nav_safety_profile/witness.hpp>
 #include <px4_ros2/components/node_with_mode.hpp>
 #include <px4_ros2/utils/frame_conversion.hpp>
 #include <px4_ros2/utils/message_version.hpp>
@@ -42,6 +46,26 @@ namespace {
 
 constexpr char kModeName[] = "Avoidance Mission";
 constexpr char kTrajectoryFailureReason[] = "navigation trajectory unavailable or stale";
+
+void logSafetyProfileWitness(
+    rclcpp::Node& node,
+    const std::map<std::string, nav_safety_profile::Scalar>& effective_values) {
+  try {
+    const auto default_path = ament_index_cpp::get_package_share_directory(
+        "nav_safety_profile") + "/config/sitl_current_as_is.yaml";
+    const auto path = node.declare_parameter<std::string>("safety_profile.path", default_path);
+    const auto loaded = nav_safety_profile::load(path);
+    if (loaded) {
+      const auto line = nav_safety_profile::witness_line(
+          *loaded.value, "px4_navigation_external_mode", effective_values);
+      RCLCPP_INFO(node.get_logger(), "%s", line.c_str());
+      return;
+    }
+  } catch (const std::exception&) {
+  }
+  RCLCPP_ERROR(node.get_logger(),
+      "SAFETY_PROFILE_LOAD_ERROR reason=unavailable");
+}
 
 void logTrackingRejection(
     const rclcpp::Logger& logger,
@@ -239,6 +263,17 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
   stale_after_ns_ = *stale_after_ns;
   state_stale_after_ns_ = *state_stale_after_ns;
   planner_recovery_wait_timeout_ns_ = *planner_recovery_wait_timeout_ns;
+  logSafetyProfileWitness(node, {
+      {"timing.safety_stop_speed_mps", 0.15},
+      {"timing.adapter_stationary_velocity_gate_mps", 0.15},
+      {"timing.trajectory_wait_timeout_s", trajectory_wait_timeout_s_},
+      {"timing.planner_recovery_wait_timeout_s", planner_recovery_wait_timeout_s_},
+      {"freshness.external_state_age_s", state_stale_after_s_},
+      {"freshness.trajectory_stale_after_s", stale_after_s_},
+      {"freshness.state_stale_after_s", state_stale_after_s_},
+      {"envelope.adapter_airborne_height_gate_m", 0.5},
+      {"envelope.adapter_diagnostics_wait_cap_s", 0.5},
+  });
   RCLCPP_INFO(node.get_logger(),
               "External Mode timing contract: command_stream=%.2fs state_age=%.2fs "
               "initial_hold=%.1fs stopped_recovery=%.1fs",
