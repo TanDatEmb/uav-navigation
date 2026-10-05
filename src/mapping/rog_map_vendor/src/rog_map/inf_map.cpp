@@ -1,0 +1,488 @@
+/**
+* This file is part of ROG-Map
+*
+* Copyright 2024 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
+* Developed by Yunfan REN <renyf at connect dot hku dot hk>
+* for more information see <https://github.com/hku-mars/ROG-Map>.
+* If you use this code, please cite the respective publications as
+* listed on the above website.
+*
+* ROG-Map is free software: you can redistribute it and/or modify
+* it under the terms of the GNU Lesser General Public License as published by
+* the Free Software Foundation, either version 3 of the License, or
+* (at your option) any later version.
+*
+* ROG-Map is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU Lesser General Public License
+* along with ROG-Map. If not, see <http://www.gnu.org/licenses/>.
+*/
+
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+
+#include <rog_map/inf_map.h>
+using namespace color_text;
+using namespace navigation_math;
+
+namespace rog_map {
+    InflatedPlanningGridExport InfMap::exportPlanningGrid() const {
+        InflatedPlanningGridExport output;
+        output.layout.resolution_m = sc_.resolution;
+        output.layout.global_min_index = local_map_origin_i_ - sc_.half_map_size_i;
+        output.layout.dimensions = sc_.map_size_i;
+        output.layout.local_center_m = local_map_origin_d_;
+        output.layout.local_size_m = sc_.map_size_i.cast<double>() * sc_.resolution;
+        output.occupied.resize(static_cast<std::size_t>(sc_.map_vox_num));
+        if (cfg_.unk_inflation_en) {
+            output.unknown.resize(static_cast<std::size_t>(sc_.map_vox_num));
+        }
+
+        std::size_t logical_offset = 0;
+        const Vec3i global_max = output.layout.global_min_index + sc_.map_size_i;
+        const auto logical_coordinate = [this](int global, int axis) {
+            int local = global % sc_.map_size_i(axis);
+            if (local > sc_.half_map_size_i(axis)) local -= sc_.map_size_i(axis);
+            if (local < -sc_.half_map_size_i(axis)) local += sc_.map_size_i(axis);
+            return local + sc_.half_map_size_i(axis);
+        };
+        std::vector<int> hash_x(static_cast<std::size_t>(sc_.map_size_i.x()));
+        std::vector<int> hash_y(static_cast<std::size_t>(sc_.map_size_i.y()));
+        for (int i = 0; i < sc_.map_size_i.x(); ++i) {
+            hash_x[static_cast<std::size_t>(i)] =
+                logical_coordinate(output.layout.global_min_index.x() + i, 0) *
+                sc_.map_size_i.y() * sc_.map_size_i.z();
+        }
+        for (int i = 0; i < sc_.map_size_i.y(); ++i) {
+            hash_y[static_cast<std::size_t>(i)] =
+                logical_coordinate(output.layout.global_min_index.y() + i, 1) * sc_.map_size_i.z();
+        }
+        const int logical_z_start = logical_coordinate(output.layout.global_min_index.z(), 2);
+        const std::size_t first_z_count = static_cast<std::size_t>(
+            std::min(sc_.map_size_i.z(), sc_.map_size_i.z() - logical_z_start));
+        const std::size_t second_z_count =
+            static_cast<std::size_t>(sc_.map_size_i.z()) - first_z_count;
+        for (int x = output.layout.global_min_index.x(), xi = 0; x < global_max.x(); ++x, ++xi) {
+            for (int y = output.layout.global_min_index.y(), yi = 0; y < global_max.y(); ++y, ++yi) {
+                const int hash_xy = hash_x[static_cast<std::size_t>(xi)] +
+                                    hash_y[static_cast<std::size_t>(yi)];
+                const auto emit_z_segment = [&](const int source_z_start,
+                                                const std::size_t count) {
+                    for (std::size_t index = 0; index < count; ++index) {
+                        const int hash = hash_xy + source_z_start + static_cast<int>(index);
+                        output.occupied[logical_offset] =
+                            imd_.occ_inflate_cnt[hash] > 0 ? 1U : 0U;
+                        if (cfg_.unk_inflation_en) {
+                            output.unknown[logical_offset] =
+                                imd_.unk_inflate_cnt[hash] > 0 ? 1U : 0U;
+                        }
+                        ++logical_offset;
+                    }
+                };
+                emit_z_segment(logical_z_start, first_z_count);
+                if (second_z_count != 0U) emit_z_segment(0, second_z_count);
+            }
+        }
+        return output;
+    }
+
+    InflatedPlanningGridExport InfMap::exportPlanningGridRegion(
+        const Vec3f& region_min, const Vec3f& region_max) const {
+        InflatedPlanningGridExport output;
+        output.layout.resolution_m = sc_.resolution;
+        output.layout.local_center_m = local_map_origin_d_;
+        output.layout.local_size_m = sc_.map_size_i.cast<double>() * sc_.resolution;
+        if (!region_min.allFinite() || !region_max.allFinite() ||
+            (region_max.array() < region_min.array()).any()) {
+            return output;
+        }
+
+        Vec3i requested_min;
+        Vec3i requested_max;
+        posToGlobalIndex(region_min, requested_min);
+        posToGlobalIndex(region_max, requested_max);
+        const Vec3i map_min = local_map_origin_i_ - sc_.half_map_size_i;
+        const Vec3i map_max = map_min + sc_.map_size_i - Vec3i::Ones();
+        const Vec3i patch_min = requested_min.cwiseMax(map_min);
+        const Vec3i patch_max = requested_max.cwiseMin(map_max);
+        if ((patch_max.array() < patch_min.array()).any()) return output;
+
+        output.layout.global_min_index = patch_min;
+        output.layout.dimensions = patch_max - patch_min + Vec3i::Ones();
+        std::size_t count = 1U;
+        for (int axis = 0; axis < 3; ++axis) {
+            const auto dimension = static_cast<std::size_t>(output.layout.dimensions[axis]);
+            if (count > std::numeric_limits<std::size_t>::max() / dimension) return {};
+            count *= dimension;
+        }
+        output.occupied.resize(count);
+        if (cfg_.unk_inflation_en) output.unknown.resize(count);
+
+        const auto logical_coordinate = [this](int global, int axis) {
+            int local = global % sc_.map_size_i(axis);
+            if (local > sc_.half_map_size_i(axis)) local -= sc_.map_size_i(axis);
+            if (local < -sc_.half_map_size_i(axis)) local += sc_.map_size_i(axis);
+            return local + sc_.half_map_size_i(axis);
+        };
+        std::vector<int> hash_x(static_cast<std::size_t>(output.layout.dimensions.x()));
+        std::vector<int> hash_y(static_cast<std::size_t>(output.layout.dimensions.y()));
+        for (int i = 0; i < output.layout.dimensions.x(); ++i) {
+            hash_x[static_cast<std::size_t>(i)] =
+                logical_coordinate(patch_min.x() + i, 0) *
+                sc_.map_size_i.y() * sc_.map_size_i.z();
+        }
+        for (int i = 0; i < output.layout.dimensions.y(); ++i) {
+            hash_y[static_cast<std::size_t>(i)] =
+                logical_coordinate(patch_min.y() + i, 1) * sc_.map_size_i.z();
+        }
+
+        std::size_t offset = 0U;
+        for (int x = patch_min.x(), xi = 0; x <= patch_max.x(); ++x, ++xi) {
+            for (int y = patch_min.y(), yi = 0; y <= patch_max.y(); ++y, ++yi) {
+                const int hash_xy = hash_x[static_cast<std::size_t>(xi)] +
+                                    hash_y[static_cast<std::size_t>(yi)];
+                for (int z = patch_min.z(); z <= patch_max.z(); ++z) {
+                    const int hash = hash_xy + logical_coordinate(z, 2);
+                    output.occupied[offset] = imd_.occ_inflate_cnt[hash] > 0 ? 1U : 0U;
+                    if (cfg_.unk_inflation_en) {
+                        output.unknown[offset] = imd_.unk_inflate_cnt[hash] > 0 ? 1U : 0U;
+                    }
+                    ++offset;
+                }
+            }
+        }
+        return output;
+    }
+
+    std::size_t InfMap::estimatePlanningGridRegionCellCount(
+        const Vec3f& region_min, const Vec3f& region_max) const {
+        if (!region_min.allFinite() || !region_max.allFinite() ||
+            (region_max.array() < region_min.array()).any()) return 0U;
+        Vec3i requested_min;
+        Vec3i requested_max;
+        posToGlobalIndex(region_min, requested_min);
+        posToGlobalIndex(region_max, requested_max);
+        const Vec3i map_min = local_map_origin_i_ - sc_.half_map_size_i;
+        const Vec3i map_max = map_min + sc_.map_size_i - Vec3i::Ones();
+        const Vec3i patch_min = requested_min.cwiseMax(map_min);
+        const Vec3i patch_max = requested_max.cwiseMin(map_max);
+        if ((patch_max.array() < patch_min.array()).any()) return 0U;
+        const Vec3i dimensions = patch_max - patch_min + Vec3i::Ones();
+        std::size_t count = 1U;
+        for (int axis = 0; axis < 3; ++axis) {
+            const auto dimension = static_cast<std::size_t>(dimensions[axis]);
+            if (dimension == 0U ||
+                count > std::numeric_limits<std::size_t>::max() / dimension) return 0U;
+            count *= dimension;
+        }
+        return count;
+    }
+
+    // Public Query Function ========================================================================
+    bool InfMap::isOccupiedInflate(const Vec3f& pos) const {
+        if (!insideLocalMap(pos)) return false;
+        if (cfg_.virtual_ground_ceiling_en && pos.z() > cfg_.virtual_ceil_height) return true;
+        if (cfg_.virtual_ground_ceiling_en && pos.z() < cfg_.virtual_ground_height) return true;
+        return imd_.occ_inflate_cnt[getHashIndexFromPos(pos)] > 0;
+    }
+
+    bool InfMap::isOccupiedInflate(const Vec3i& id_g) const {
+        if (!insideLocalMap(id_g)) return false;
+        if (cfg_.virtual_ground_ceiling_en && id_g.z() > cfg_.inf_virtual_ceil_height_id_g) return true;
+        if (cfg_.virtual_ground_ceiling_en && id_g.z() < cfg_.inf_virtual_ground_height_id_g) return true;
+        return imd_.occ_inflate_cnt[getHashIndexFromGlobalIndex(id_g)] > 0;
+    }
+
+    bool InfMap::isKnownFreeInflate(const Vec3f& pos) const {
+        if (!cfg_.unk_inflation_en) {
+            return !isOccupiedInflate(pos);
+        }
+        else {
+            return (!isOccupiedInflate(pos) && !isUnknownInflate(pos));
+        }
+    }
+
+
+    bool InfMap::isUnknownInflate(const Vec3f& pos) const {
+        if (!cfg_.unk_inflation_en) {
+            throw std::runtime_error(
+                "Unknown inflation is not enabled, but the isUnknownInflate API is called, which should not happen.");
+        }
+        // 1. check virtual ceil and ground
+        if (cfg_.virtual_ground_ceiling_en &&
+            (pos.z() >= cfg_.virtual_ceil_height - cfg_.inflation_resolution ||
+             pos.z() <= cfg_.virtual_ground_height + cfg_.inflation_resolution)) {
+            return false;
+        }
+        return imd_.unk_inflate_cnt[getHashIndexFromPos(pos)] > 0;
+    }
+
+/*=====================================================*/
+
+    void InfMap::infMapGlobalIndexToPos(const Vec3i& id_g, Vec3f& pos) const {
+        globalIndexToPos(id_g, pos);
+    }
+
+    void InfMap::infMapPosToGlobalIndex(const Vec3f& pos, Vec3i& id) const {
+        posToGlobalIndex(pos, id);
+    }
+
+    InfMap::InfMap(rog_map::Config& cfg) {
+        cfg_ = cfg;
+        int max_step = cfg_.inflation_step;
+        if (cfg_.unk_inflation_en) {
+            max_step = std::max(max_step, cfg_.unk_inflation_step);
+        }
+
+        initCounterMap(cfg.half_map_size_i,
+                       cfg.resolution,
+                       cfg.inflation_resolution,
+                       max_step,
+                       cfg.map_sliding_en,
+                       cfg.map_sliding_thresh,
+                       cfg.fix_map_origin,
+                       cfg.unk_thresh);
+
+        posToGlobalIndex(cfg.visualization_range, sc_.visualization_range_i);
+
+        imd_.occ_inflate_cnt.resize(sc_.map_vox_num);
+        imd_.occ_neighbor_num = cfg.inf_spherical_neighbor.size();
+        if (cfg.unk_inflation_en) {
+            imd_.unk_neighbor_num = cfg.unk_inf_spherical_neighbor.size();
+            // Considering the all grids are unknown at the beginning
+            // the unk inf cnt should be the size of inflation queue
+            imd_.unk_inflate_cnt.resize(sc_.map_vox_num);
+        }
+        posToGlobalIndex(cfg.visualization_range, sc_.visualization_range_i);
+
+        resetLocalMap();
+        cfg_ = cfg;
+        std::cout << GREEN << " -- [InfMap] Init successfully -- ." << RESET << std::endl;
+        printMapInformation();
+    }
+
+    void InfMap::getInflationNumAndTime(double& inf_n, double& inf_t) {
+        inf_n = inf_num_;
+        inf_num_ = 0;
+        inf_t = inf_t_;
+        inf_t_ = 0;
+    }
+
+    void InfMap::writeMapInfoToLog(std::ofstream& log_file) {
+        log_file << "[InfMap]" << std::endl;
+        log_file << "\tresolution: " << sc_.resolution << std::endl;
+        log_file << "\tmap_size_i: " << sc_.map_size_i.transpose() << std::endl;
+        log_file << "\tmap_size_d: " << (sc_.map_size_i.cast<double>() * sc_.resolution).transpose() << std::endl;
+    }
+
+    void
+    InfMap::boxSearch(const Vec3f& box_min, const Vec3f& box_max, const GridType& gt, vec_E<Vec3f>& out_points) const {
+        out_points.clear();
+        if (map_empty_) {
+            std::cout << YELLOW << " -- [ROG] Map is empty, cannot perform box search." << RESET << std::endl;
+            return;
+        }
+        Vec3i box_min_id_g, box_max_id_g;
+        posToGlobalIndex(box_min, box_min_id_g);
+        posToGlobalIndex(box_max, box_max_id_g);
+        Vec3i box_size = box_max_id_g - box_min_id_g;
+        if (gt == UNKNOWN) {
+            if (!cfg_.unk_inflation_en) {
+                out_points.clear();
+                std::cout << YELLOW << " -- [ROG] Unknown inflation is not enabled, cannot perform box search." << RESET
+                    << std::endl;
+                return;
+            }
+            out_points.reserve(box_size.prod());
+            for (int i = box_min_id_g.x(); i <= box_max_id_g.x(); i++) {
+                for (int j = box_min_id_g.y(); j <= box_max_id_g.y(); j++) {
+                    for (int k = box_min_id_g.z(); k <= box_max_id_g.z(); k++) {
+                        Vec3i id_g(i, j, k);
+                        if (isUnknown(id_g)) {
+                            Vec3f pos;
+                            globalIndexToPos(id_g, pos);
+                            out_points.push_back(pos);
+                        }
+                    }
+                }
+            }
+        }
+        else if (gt == OCCUPIED) {
+            out_points.reserve(box_size.prod() / 3);
+            for (int i = box_min_id_g.x(); i <= box_max_id_g.x(); i++) {
+                for (int j = box_min_id_g.y(); j <= box_max_id_g.y(); j++) {
+                    for (int k = box_min_id_g.z(); k <= box_max_id_g.z(); k++) {
+                        Vec3i id_g(i, j, k);
+                        if (isOccupiedInflate(id_g)) {
+                            Vec3f pos;
+                            globalIndexToPos(id_g, pos);
+                            out_points.push_back(pos);
+                        }
+                    }
+                }
+            }
+        }
+        else {
+            throw std::runtime_error(" -- [ROG-Map] Box search does not support KNOWN_FREE.");
+        }
+    }
+
+
+    void InfMap::resetLocalMap() {
+        std::cout << YELLOW << " -- [Inf-Map] Clear all local map." << RESET << std::endl;
+        std::fill(md_.unknown_cnt.begin(), md_.unknown_cnt.end(), md_.sub_grid_num);
+        std::fill(md_.occupied_cnt.begin(), md_.occupied_cnt.end(), 0);
+        std::fill(imd_.occ_inflate_cnt.begin(), imd_.occ_inflate_cnt.end(), 0);
+        if (cfg_.unk_inflation_en) {
+            std::fill(imd_.unk_inflate_cnt.begin(), imd_.unk_inflate_cnt.end(), imd_.unk_neighbor_num);
+        }
+    }
+
+    void InfMap::updateInflation(const Vec3i& id_g, const bool is_hit) {
+        TimeConsuming tc("updateInflation", false);
+        for (const auto& nei : cfg_.inf_spherical_neighbor) {
+            const Vec3i& id_shift = id_g + nei;
+#ifdef COUNTER_MAP_DEBUG
+            if (!insideLocalMap(id_shift)) {
+                throw std::runtime_error(" -- [IM] inflation out of map.");
+            }
+#endif
+            inf_num_++;
+            const int& addr = getHashIndexFromGlobalIndex(id_shift);
+            if (is_hit) {
+                imd_.occ_inflate_cnt[addr]++;
+            }
+            else {
+                imd_.occ_inflate_cnt[addr]--;
+            }
+
+#ifdef COUNTER_MAP_DEBUG
+            if (imd_.occ_inflate_cnt[addr] < 0 || imd_.occ_inflate_cnt[addr] > imd_.occ_neighbor_num) {
+                imd_.occ_inflate_cnt[addr] = 0;
+                throw std::runtime_error(" -- [IM] Negative occupancy counter, which should not happened.!");
+            }
+#endif
+        }
+        inf_t_ += tc.stop();
+    }
+
+    void InfMap::updateUnkInflation(const Vec3i& id_g, const bool is_add) {
+        TimeConsuming tc("updateInflation", false);
+        if (!cfg_.unk_inflation_en) {
+            std::cout << YELLOW << "Cannot updateUnkInflation of InfMap when unk_inflation_en is false." << RESET
+                << std::endl;
+            return;
+        }
+
+        for (const auto& nei : cfg_.unk_inf_spherical_neighbor) {
+            const Vec3i& id_shift = id_g + nei;
+#ifdef COUNTER_MAP_DEBUG
+            if (!insideLocalMap(id_shift)) {
+                throw std::runtime_error(" -- [IM] Unknown inflation out of map.");
+            }
+#endif
+            inf_num_++;
+            const int& addr = getHashIndexFromGlobalIndex(id_shift);
+            if (is_add) {
+                imd_.unk_inflate_cnt[addr]++;
+            }
+            else {
+                imd_.unk_inflate_cnt[addr]--;
+            }
+
+#ifdef COUNTER_MAP_DEBUG
+            // only for bug report
+            if (imd_.unk_inflate_cnt[addr] < 0 || imd_.unk_inflate_cnt[addr] > imd_.unk_neighbor_num) {
+                std::cout << "unk_inflate_cnt: " << imd_.unk_inflate_cnt[addr] << " unk_neighbor_num: "
+                          << imd_.unk_neighbor_num << std::endl;
+                throw std::runtime_error(" -- [IM] Negative occupancy counter, which should not happened.!");
+            }
+#endif
+        }
+        inf_t_ += tc.stop();
+    }
+
+    void InfMap::triggerJumpingEdge(const rog_map::Vec3i& id_g,
+                                    const rog_map::GridType& from_type,
+                                    const rog_map::GridType& to_type) {
+        // Keep the classification transition counter out of this hot path.
+        // Taking a before/after snapshot of every inflated neighbor here adds
+        // an allocation, an O(N^2) de-duplication loop and global/local index
+        // conversions for every occupied-cell transition.  With the product
+        // inflation_step this made probabilisticMapFromCache dominate mapping
+        // latency and caused latest-only cloud replacement.  Exact inflated
+        // transition telemetry remains unavailable until it can be collected
+        // without changing the map update cost.
+        if (from_type == GridType::OCCUPIED) {
+            updateInflation(id_g, false);
+        }
+        if (to_type == GridType::OCCUPIED) {
+            updateInflation(id_g, true);
+        }
+        if (cfg_.unk_inflation_en) {
+            if (from_type == GridType::UNKNOWN) {
+                updateUnkInflation(id_g, false);
+            }
+            if (to_type == GridType::UNKNOWN) {
+                updateUnkInflation(id_g, true);
+            }
+        }
+    }
+
+    void InfMap::resetOneCell(const int& hash_id) {
+        GridType cur_grid_type = CounterMap::getGridType(hash_id);
+        if (cur_grid_type != GridType::UNKNOWN) {
+            Vec3i id_g;
+            hashIdToGlobalIndex(hash_id, id_g);
+            triggerJumpingEdge(id_g, cur_grid_type, GridType::UNKNOWN);
+        }
+    }
+
+    GridType InfMap::getGridType(const Vec3i& id_g) const {
+        if (!insideLocalMap(id_g)) {
+            return OUT_OF_MAP;
+        }
+        Vec3i id_l;
+        globalIndexToLocalIndex(id_g, id_l);
+        int addr = getLocalIndexHash(id_l);
+        // The Occupied is defined by inflation layer
+        if (imd_.occ_inflate_cnt[addr] > 0) {
+            return OCCUPIED;
+        }
+        else if (cfg_.unk_inflation_en && imd_.unk_inflate_cnt[addr] > 0) {
+            return UNKNOWN;
+        }
+        else {
+            return KNOWN_FREE;
+        }
+    }
+
+    GridType InfMap::getBaseGridType(const Vec3i& id_g) const {
+        if (!insideLocalMap(id_g)) {
+            return OUT_OF_MAP;
+        }
+        Vec3i id_l;
+        globalIndexToLocalIndex(id_g, id_l);
+        return CounterMap::getGridType(getLocalIndexHash(id_l));
+    }
+
+    GridType InfMap::getGridType(const Vec3f& pos) const {
+        Vec3i id_g, id_l;
+        if (!pos.allFinite() || !insideLocalMap(pos)) {
+            return OUT_OF_MAP;
+        }
+        // 1. check virtual ceil and ground
+        if (cfg_.virtual_ground_ceiling_en &&
+            (pos.z() >= cfg_.virtual_ceil_height - cfg_.inflation_resolution * (1 + cfg_.inflation_step) ||
+             pos.z() <= cfg_.virtual_ground_height + cfg_.inflation_resolution * (1 + cfg_.inflation_step))) {
+            return OCCUPIED;
+        }
+        posToGlobalIndex(pos, id_g);
+        // 2. get true grid type
+        return getGridType(id_g);
+    }
+}

@@ -1,0 +1,1020 @@
+#!/usr/bin/env python3
+"""One ROS monitor for dataset and PX4 runtime sessions.
+
+The monitor deliberately observes product topics and one compact diagnostics
+surface.  It never treats a topic name in the graph as evidence that data is
+healthy: every stream is measured by samples, timestamps, gaps and validity.
+"""
+
+from __future__ import annotations
+
+import argparse
+from collections import deque
+from dataclasses import dataclass, field
+import json
+import math
+from pathlib import Path
+import signal
+import time
+from typing import Any, Callable
+
+from evidence_writer import EvidenceWriter
+from stats import percentile as _percentile
+
+
+# Gazebo simulation time starts near zero. PX4 can briefly publish wall-clock
+# timestamps before its simulation clock is active; those samples must not
+# poison the sim health-rate/regression statistics.
+SIMULATION_TIMESTAMP_MAX_NS = 1_000_000_000_000_000
+PX4_SIMULATION_STREAMS = frozenset({
+    "px4_odometry",
+    "vehicle_status",
+    "local_position",
+    "estimator_status_flags",
+    "px4_local_position_setpoint",
+    "px4_attitude_setpoint",
+    "px4_thrust_setpoint",
+    "px4_actuator_motors",
+})
+
+
+def _finite(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _integer(value: Any) -> int:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return int.from_bytes(bytes(value), byteorder="little", signed=False)
+    return int(value)
+
+
+def _time_ns(value: Any) -> int:
+    if value is None:
+        return 0
+    if hasattr(value, "sec") and hasattr(value, "nanosec"):
+        return int(value.sec) * 1_000_000_000 + int(value.nanosec)
+    if hasattr(value, "nanoseconds"):
+        return int(value.nanoseconds)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _message_stamp_ns(message: Any) -> int:
+    header = getattr(message, "header", None)
+    if header is not None:
+        stamp = _time_ns(getattr(header, "stamp", None))
+        if stamp:
+            return stamp
+    for name, scale in (("timestamp_sample", 1_000), ("timestamp", 1_000)):
+        value = getattr(message, name, 0)
+        if value:
+            return int(value) * scale
+    clock = getattr(message, "clock", None)
+    return _time_ns(clock)
+
+
+def _recursive_nonfinite(value: Any) -> int:
+    if isinstance(value, float):
+        return int(not math.isfinite(value))
+    if isinstance(value, (list, tuple)):
+        return sum(_recursive_nonfinite(item) for item in value)
+    if isinstance(value, dict):
+        return sum(_recursive_nonfinite(item) for item in value.values())
+    return 0
+
+
+@dataclass
+class StreamStats:
+    name: str
+    topic: str
+    expected_hz: float | None = None
+    stale_after_s: float = 1.0
+    timestamp_upper_bound_ns: int | None = None
+    interval_history_enabled: bool = True
+    interval_history_limit: int = 4096
+    diagnostic_gap_threshold_s: float | None = None
+    received: int = 0
+    first_stamp_ns: int = 0
+    last_stamp_ns: int = 0
+    maximum_stamp_ns: int = 0
+    last_arrival_ns: int = 0
+    intervals_ms: list[float] = field(default_factory=list)
+    maximum_source_gap_ms: float = 0.0
+    arrival_times_s: deque[float] = field(default_factory=lambda: deque(maxlen=512))
+    window_rates_hz: list[float] = field(default_factory=list)
+    timestamp_duplicates: int = 0
+    timestamp_regressions: int = 0
+    timestamp_epoch_discard_count: int = 0
+    invalid_source_timestamp_count: int = 0
+    stale_events: int = 0
+    stale_event_times_ns: list[int] = field(default_factory=list)
+    source_stale_events: int = 0
+    source_stale_event_times_ns: list[int] = field(default_factory=list)
+    source_gap_event_count: int = 0
+    arrival_gap_event_times_ns: list[int] = field(default_factory=list)
+    arrival_gap_events: list[dict[str, int | float]] = field(default_factory=list)
+    maximum_arrival_gap_ms: float = 0.0
+    maximum_observed_arrival_gap_ms: float = 0.0
+    diagnostic_gap_events: list[dict[str, int | float]] = field(default_factory=list)
+    diagnostic_gap_event_total: int = 0
+    arrival_gap_event_total: int = 0
+    arrival_gap_event_overflow: int = 0
+    nonfinite_messages: int = 0
+    sampled_nonfinite_points: int = 0
+    invalid_quaternions: int = 0
+    invalid_covariances: int = 0
+    frame_ids: set[str] = field(default_factory=set)
+    publisher_count: int = 0
+    subscriber_count: int = 0
+    _stale_reported: bool = False
+    _source_stale_reported: bool = False
+
+    def update(
+        self,
+        stamp_ns: int,
+        arrival_ns: int,
+        *,
+        frame_id: str = "",
+        nonfinite: int = 0,
+        sampled_nonfinite_points: int = 0,
+        invalid_quaternion: bool = False,
+        invalid_covariance: bool = False,
+    ) -> bool:
+        if (
+            stamp_ns > 0
+            and self.timestamp_upper_bound_ns is not None
+            and stamp_ns > self.timestamp_upper_bound_ns
+        ):
+            self.timestamp_epoch_discard_count += 1
+            return False
+        previous_arrival_ns = self.last_arrival_ns
+        previous_stamp_ns = self.last_stamp_ns
+        if previous_arrival_ns > 0:
+            gap_ns = arrival_ns - previous_arrival_ns
+            self.maximum_observed_arrival_gap_ms = max(
+                self.maximum_observed_arrival_gap_ms, gap_ns / 1e6
+            )
+            diagnostic_threshold_ns = (
+                int(self.diagnostic_gap_threshold_s * 1e9)
+                if self.diagnostic_gap_threshold_s is not None else 0
+            )
+            if diagnostic_threshold_ns > 0 and gap_ns > diagnostic_threshold_ns:
+                self.diagnostic_gap_event_total += 1
+                if len(self.diagnostic_gap_events) < 1024:
+                    self.diagnostic_gap_events.append({
+                        "previous_arrival_wall_ns": previous_arrival_ns,
+                        "arrival_wall_ns": arrival_ns,
+                        "gap_ms": gap_ns / 1e6,
+                        "previous_source_stamp_ns": previous_stamp_ns,
+                        "source_stamp_ns": stamp_ns,
+                    })
+            threshold_ns = int(self.stale_after_s * 1e9)
+            # Exact equality remains valid, matching the freshness contract.
+            if threshold_ns > 0 and gap_ns > threshold_ns:
+                event_ns = previous_arrival_ns + threshold_ns
+                self.arrival_gap_event_total += 1
+                if len(self.arrival_gap_events) < 1024:
+                    self.arrival_gap_event_times_ns.append(event_ns)
+                    self.arrival_gap_events.append({
+                        "event_wall_ns": event_ns,
+                        "previous_arrival_wall_ns": previous_arrival_ns,
+                        "arrival_wall_ns": arrival_ns,
+                        "gap_ms": gap_ns / 1e6,
+                        "previous_source_stamp_ns": previous_stamp_ns,
+                        "source_stamp_ns": stamp_ns,
+                    })
+                else:
+                    self.arrival_gap_event_overflow += 1
+                self.maximum_arrival_gap_ms = max(
+                    self.maximum_arrival_gap_ms, gap_ns / 1e6
+                )
+        self.received += 1
+        self.last_arrival_ns = arrival_ns
+        self.arrival_times_s.append(arrival_ns / 1e9)
+        if stamp_ns <= 0:
+            self.invalid_source_timestamp_count += 1
+        else:
+            if self.maximum_stamp_ns:
+                if stamp_ns == self.maximum_stamp_ns:
+                    self.timestamp_duplicates += 1
+                elif stamp_ns < self.maximum_stamp_ns:
+                    self.timestamp_regressions += 1
+                else:
+                    delta_ms = (stamp_ns - self.maximum_stamp_ns) / 1e6
+                    self.maximum_source_gap_ms = max(self.maximum_source_gap_ms, delta_ms)
+                    if delta_ms > self.stale_after_s * 1000.0:
+                        self.source_gap_event_count += 1
+                        self.source_stale_events += 1
+                        self.source_stale_event_times_ns.append(
+                            self.maximum_stamp_ns + int(self.stale_after_s * 1e9)
+                        )
+                    if self.interval_history_enabled:
+                        self.intervals_ms.append(delta_ms)
+                        if self.interval_history_limit > 0:
+                            del self.intervals_ms[:-self.interval_history_limit]
+            if not self.first_stamp_ns:
+                self.first_stamp_ns = stamp_ns
+            if stamp_ns > self.maximum_stamp_ns:
+                self.maximum_stamp_ns = stamp_ns
+                self.last_stamp_ns = stamp_ns
+        if frame_id:
+            self.frame_ids.add(frame_id)
+        self.nonfinite_messages += int(nonfinite > 0)
+        self.sampled_nonfinite_points += max(0, int(sampled_nonfinite_points))
+        self.invalid_quaternions += int(invalid_quaternion)
+        self.invalid_covariances += int(invalid_covariance)
+        self._stale_reported = False
+        self._source_stale_reported = False
+        now_s = arrival_ns / 1e9
+        if len(self.arrival_times_s) >= 2:
+            start = self.arrival_times_s[0]
+            elapsed = now_s - start
+            if elapsed > 0:
+                self.window_rates_hz.append((len(self.arrival_times_s) - 1) / elapsed)
+                self.window_rates_hz = self.window_rates_hz[-512:]
+        return True
+
+    def check_stale(self, now_ns: int, source_now_ns: int | None = None) -> None:
+        # A single first sample is not yet an active stream. Startup can
+        # deliver that sample before the following burst; rate and timestamp
+        # checks still catch a stream that never becomes active, while stale
+        # events describe a stream that has already established a cadence.
+        if self.received >= 2 and not self._stale_reported:
+            age_s = (now_ns - self.last_arrival_ns) / 1e9
+            if age_s > self.stale_after_s:
+                self.stale_events += 1
+                # Own the deterministic threshold crossing, not the timer's
+                # possibly delayed dispatch time. Otherwise an executor stall
+                # can move an active outage past the observation boundary.
+                self.stale_event_times_ns.append(
+                    self.last_arrival_ns + int(self.stale_after_s * 1e9)
+                )
+                self._stale_reported = True
+        if (source_now_ns is not None and self.received >= 2 and
+                source_now_ns - self.last_stamp_ns > int(self.stale_after_s * 1e9) and
+                not self._source_stale_reported):
+            self.source_stale_events += 1
+            self.source_stale_event_times_ns.append(
+                self.last_stamp_ns + int(self.stale_after_s * 1e9)
+            )
+            self._source_stale_reported = True
+
+    def as_dict(self) -> dict[str, Any]:
+        elapsed_s = (self.last_stamp_ns - self.first_stamp_ns) / 1e9 if self.first_stamp_ns else 0.0
+        mean_rate = (self.received - 1) / elapsed_s if elapsed_s > 0 and self.received > 1 else 0.0
+        return {
+            "topic": self.topic,
+            "expected_hz": self.expected_hz,
+            "received": self.received,
+            "mean_rate_hz": mean_rate,
+            "minimum_window_rate_hz": min(self.window_rates_hz, default=0.0),
+            "p95_interval_ms": (
+                _percentile(self.intervals_ms, 0.95)
+                if self.interval_history_enabled else None
+            ),
+            "maximum_gap_ms": self.maximum_source_gap_ms,
+            "source_gap_event_count": self.source_gap_event_count,
+            "source_stale_event_count": self.source_stale_events,
+            "source_stale_event_times_ns": self.source_stale_event_times_ns,
+            "maximum_source_gap_ms": self.maximum_source_gap_ms,
+            "stale_event_count": self.stale_events,
+            "stale_event_times_ns": self.stale_event_times_ns,
+            "arrival_gap_event_count": self.arrival_gap_event_total,
+            "arrival_gap_event_record_count": len(self.arrival_gap_events),
+            "arrival_gap_event_overflow_count": self.arrival_gap_event_overflow,
+            "arrival_gap_event_times_ns": self.arrival_gap_event_times_ns,
+            "arrival_gap_events": self.arrival_gap_events,
+            "maximum_arrival_gap_ms": self.maximum_arrival_gap_ms,
+            "maximum_observed_arrival_gap_ms": self.maximum_observed_arrival_gap_ms,
+            "diagnostic_gap_event_count": self.diagnostic_gap_event_total,
+            "diagnostic_gap_event_record_count": len(self.diagnostic_gap_events),
+            "diagnostic_gap_events": self.diagnostic_gap_events,
+            "timestamp_duplicate_count": self.timestamp_duplicates,
+            "timestamp_regression_count": self.timestamp_regressions,
+            "timestamp_epoch_discard_count": self.timestamp_epoch_discard_count,
+            "invalid_source_timestamp_count": self.invalid_source_timestamp_count,
+            "nonfinite_message_count": self.nonfinite_messages,
+            "sampled_nonfinite_point_count": self.sampled_nonfinite_points,
+            "invalid_quaternion_count": self.invalid_quaternions,
+            "invalid_covariance_count": self.invalid_covariances,
+            "frame_ids": sorted(self.frame_ids),
+            "publisher_count": self.publisher_count,
+            "subscriber_count": self.subscriber_count,
+            "last_stamp_ns": self.last_stamp_ns,
+            "last_age_s": ((time.time_ns() - self.last_arrival_ns) / 1e9)
+            if self.last_arrival_ns
+            else None,
+        }
+
+
+def _odom_payload(message: Any) -> dict[str, Any]:
+    pose = getattr(message, "pose", None)
+    pose = getattr(pose, "pose", pose)
+    twist = getattr(message, "twist", None)
+    twist = getattr(twist, "twist", twist)
+    position = getattr(pose, "position", None)
+    orientation = getattr(pose, "orientation", None)
+    linear = getattr(twist, "linear", None)
+    angular = getattr(twist, "angular", None)
+    return {
+        "stamp_ns": _message_stamp_ns(message),
+        "source_clock": "ros_time",
+        "frame_id": str(getattr(getattr(message, "header", None), "frame_id", "")),
+        "child_frame_id": str(getattr(message, "child_frame_id", "")),
+        "position": [_finite(getattr(position, name, None)) for name in ("x", "y", "z")],
+        "q_xyzw": [_finite(getattr(orientation, name, None)) for name in ("x", "y", "z", "w")],
+        "linear_velocity": [_finite(getattr(linear, name, None)) for name in ("x", "y", "z")],
+        "angular_velocity": [_finite(getattr(angular, name, None)) for name in ("x", "y", "z")],
+    }
+
+
+def _propagated_odom_payload(message: Any) -> dict[str, Any]:
+    """Decode the typed propagated-state envelope for stream accounting."""
+    payload = _odom_payload(message.odometry)
+    payload["localization_epoch"] = _integer(message.localization_epoch)
+    payload["sequence"] = _integer(message.sequence)
+    return payload
+
+
+def _odometry_transport_trace_payload(message: Any) -> dict[str, Any]:
+    fields = (
+        "phase", "disposition", "localization_epoch", "sequence",
+        "source_stamp_ros_ns", "expected_publish_source_ns",
+        "last_published_source_ns", "worker_estimate_ready_steady_ns",
+        "publisher_enter_steady_ns", "publisher_publish_call_steady_ns",
+        "publisher_exit_steady_ns", "callback_enter_ros_ns",
+        "callback_enter_steady_ns", "lock_requested_steady_ns",
+        "lock_acquired_steady_ns", "accepted_receive_ros_ns",
+        "accepted_receive_steady_ns",
+    )
+    payload = {field: int(getattr(message, field)) for field in fields}
+    payload["stamp_ns"] = payload["source_stamp_ros_ns"]
+    payload["source_clock"] = "ros_time"
+    return payload
+
+
+def _px4_odom_payload(message: Any) -> dict[str, Any]:
+    return {
+        "timestamp_us": int(getattr(message, "timestamp", 0)),
+        "timestamp_sample_us": int(getattr(message, "timestamp_sample", 0)),
+        "pose_frame": int(getattr(message, "pose_frame", 0)),
+        "velocity_frame": int(getattr(message, "velocity_frame", 0)),
+        "position": [_finite(value) for value in getattr(message, "position", [])],
+        "q_wxyz": [_finite(value) for value in getattr(message, "q", [])],
+        "velocity": [_finite(value) for value in getattr(message, "velocity", [])],
+        "angular_velocity": [_finite(value) for value in getattr(message, "angular_velocity", [])],
+        "position_variance": [_finite(value) for value in getattr(message, "position_variance", [])],
+        "orientation_variance": [_finite(value) for value in getattr(message, "orientation_variance", [])],
+        "velocity_variance": [_finite(value) for value in getattr(message, "velocity_variance", [])],
+        "reset_counter": int(getattr(message, "reset_counter", 0)),
+        "quality": int(getattr(message, "quality", 0)),
+    }
+
+
+def _px4_local_position_setpoint_payload(message: Any) -> dict[str, Any]:
+    """Decode PX4's post-controller local-position setpoint telemetry.
+
+    This is intentionally a diagnostic stream.  It shows what PX4's position
+    controller received after the external-mode adapter, which lets the
+    report distinguish an adapter/reference mismatch from controller tracking
+    or vehicle-model saturation.
+    """
+    return {
+        "timestamp_us": int(getattr(message, "timestamp", 0)),
+        "position_ned": [_finite(getattr(message, name, None)) for name in ("x", "y", "z")],
+        "velocity_ned": [_finite(getattr(message, name, None)) for name in ("vx", "vy", "vz")],
+        "acceleration_ned": [_finite(value) for value in getattr(message, "acceleration", [])],
+        "thrust_ned": [_finite(value) for value in getattr(message, "thrust", [])],
+        "yaw": _finite(getattr(message, "yaw", None)),
+        "yawspeed": _finite(getattr(message, "yawspeed", None)),
+    }
+
+
+def _px4_attitude_setpoint_payload(message: Any) -> dict[str, Any]:
+    return {
+        "timestamp_us": int(getattr(message, "timestamp", 0)),
+        "yaw_sp_move_rate": _finite(getattr(message, "yaw_sp_move_rate", None)),
+        "q_d_wxyz": [_finite(value) for value in getattr(message, "q_d", [])],
+        "thrust_body": [_finite(value) for value in getattr(message, "thrust_body", [])],
+    }
+
+
+def _px4_thrust_setpoint_payload(message: Any) -> dict[str, Any]:
+    return {
+        "timestamp_us": int(getattr(message, "timestamp", 0)),
+        "timestamp_sample_us": int(getattr(message, "timestamp_sample", 0)),
+        "thrust_body": [_finite(value) for value in getattr(message, "xyz", [])],
+    }
+
+
+def _px4_actuator_motors_payload(message: Any) -> dict[str, Any]:
+    controls = [_finite(value) for value in getattr(message, "control", [])]
+    finite_controls = [value for value in controls if value is not None]
+    return {
+        "timestamp_us": int(getattr(message, "timestamp", 0)),
+        "timestamp_sample_us": int(getattr(message, "timestamp_sample", 0)),
+        "controls": controls,
+        "finite_control_min": min(finite_controls, default=None),
+        "finite_control_max": max(finite_controls, default=None),
+        "saturated_control_count": sum(
+            value is not None and abs(value) >= 0.999 for value in controls
+        ),
+    }
+
+
+def _pointcloud_payload(
+    message: Any, *, metadata_only: bool = False
+) -> tuple[dict[str, Any], int]:
+    payload: dict[str, Any] = {
+        "stamp_ns": _message_stamp_ns(message),
+        "frame_id": str(getattr(getattr(message, "header", None), "frame_id", "")),
+        "width": int(getattr(message, "width", 0)),
+        "height": int(getattr(message, "height", 0)),
+        "is_dense": bool(getattr(message, "is_dense", False)),
+    }
+    if metadata_only:
+        payload["point_payload_checked"] = False
+        payload["point_payload_validity"] = "NOT_CHECKED"
+        return payload, 0
+    nonfinite_points = 0
+    try:
+        from sensor_msgs_py import point_cloud2
+
+        samples: list[list[float]] = []
+        for index, point in enumerate(
+            point_cloud2.read_points(message, field_names=("x", "y", "z"), skip_nans=False)
+        ):
+            values = [float(value) for value in point]
+            if any(not math.isfinite(value) for value in values):
+                nonfinite_points += 1
+            elif index % 16 == 0:
+                samples.append(values)
+            if index >= 4096:
+                break
+        payload["sampled_finite_points"] = len(samples)
+        payload["sampled_nonfinite_points"] = nonfinite_points
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        payload["point_decode"] = "NOT_AVAILABLE"
+    return payload, nonfinite_points
+
+
+def _registered_scan_payload(message: Any) -> dict[str, Any]:
+    """Capture bounded identity/payload evidence at the mapping ingress.
+
+    The monitor observes this typed handoff; it does not decode or copy the
+    cloud.  Counts and source stamps are sufficient to distinguish a missing
+    FAST-LIO registration from a mapping-side admission/update gap.
+    """
+    header = getattr(message, "header", None)
+    points = getattr(message, "points", None)
+    free_space = getattr(message, "free_space_endpoints", None)
+    points_header = getattr(points, "header", None)
+    free_space_header = getattr(free_space, "header", None)
+    sensor_origin = getattr(message, "sensor_origin_pose", None)
+    origin_position = getattr(sensor_origin, "position", None)
+    return {
+        "stamp_ns": _time_ns(getattr(header, "stamp", None)),
+        "frame_id": str(getattr(header, "frame_id", "")),
+        "localization_epoch": int(getattr(message, "localization_epoch", 0)),
+        "scan_sequence": int(getattr(message, "scan_sequence", 0)),
+        "body_frame_id": str(getattr(message, "body_frame_id", "")),
+        "points_stamp_ns": _time_ns(getattr(points_header, "stamp", None)),
+        "points_frame_id": str(getattr(points_header, "frame_id", "")),
+        "point_count": int(getattr(points, "width", 0)) * int(getattr(points, "height", 0)),
+        "free_space_stamp_ns": _time_ns(getattr(free_space_header, "stamp", None)),
+        "free_space_frame_id": str(getattr(free_space_header, "frame_id", "")),
+        "free_space_point_count": int(getattr(free_space, "width", 0)) * int(getattr(free_space, "height", 0)),
+        "sensor_origin_valid": bool(getattr(message, "sensor_origin_valid", False)),
+        "sensor_origin_position": [
+            _finite(getattr(origin_position, name, None))
+            for name in ("x", "y", "z")
+        ],
+        "visibility_observation_present": bool(
+            getattr(message, "visibility_observation_present", False)
+        ),
+        "visibility_source_ray_count": int(
+            getattr(message, "visibility_source_ray_count", 0)
+        ),
+        "visibility_no_return_count": int(
+            getattr(message, "visibility_no_return_count", 0)
+        ),
+        "visibility_selected_no_return_count": int(
+            getattr(message, "visibility_selected_no_return_count", 0)
+        ),
+        "visibility_detected_no_return_count": int(
+            getattr(message, "visibility_detected_no_return_count", 0)
+        ),
+        "visibility_sampling_cap": int(
+            getattr(message, "visibility_sampling_cap", 0)
+        ),
+        "visibility_sampling_policy": str(
+            getattr(message, "visibility_sampling_policy", "")
+        ),
+        "visibility_provenance_error": str(
+            getattr(message, "visibility_provenance_error", "")
+        ),
+        "visibility_stamp_skew_ns": int(
+            getattr(message, "visibility_stamp_skew_ns", 0)
+        ),
+    }
+
+
+def _pointcloud_nonfinite_message(
+    payload: dict[str, Any], sampled_nonfinite_points: int
+) -> bool:
+    """Return whether nonfinite points contradict the cloud density contract."""
+    return bool(payload.get("is_dense", False)) and sampled_nonfinite_points > 0
+
+
+def _diagnostic_payload(message: Any) -> dict[str, Any]:
+    statuses: list[dict[str, Any]] = []
+    values: dict[str, Any] = {}
+    for status in getattr(message, "status", []):
+        item_values: dict[str, Any] = {}
+        for item in getattr(status, "values", []):
+            value: Any = item.value
+            if value.lower() in {"true", "false"}:
+                value = value.lower() == "true"
+            else:
+                try:
+                    value = float(value) if any(c in value for c in ".eE") else int(value)
+                except ValueError:
+                    pass
+            item_values[item.key] = value
+            values[item.key] = value
+        statuses.append({
+            "name": status.name,
+            "level": _integer(status.level),
+            "message": status.message,
+            "values": item_values,
+        })
+    return {"stamp_ns": _message_stamp_ns(message), "statuses": statuses, "values": values}
+
+
+@dataclass
+class TopicSpec:
+    name: str
+    topic: str
+    message_type: Any
+    formatter: Callable[[Any], dict[str, Any]]
+
+
+def _observer_qos_contract(
+    workflow: str, config: dict[str, Any], stream_name: str
+) -> tuple[str, int]:
+    default_depth = int(config.get("runtime", {}).get("monitor_queue_depth", 100))
+    if workflow != "dataset" or stream_name not in {"imu", "lidar"}:
+        return "best_effort", default_depth
+    product_runtime = (
+        config.get("fast_lio", {}).get("ros__parameters", {}).get("runtime", {})
+    )
+    capacity_key = "imu_queue_capacity" if stream_name == "imu" else "lidar_queue_capacity"
+    depth = int(product_runtime.get(capacity_key, 0))
+    if depth <= 0:
+        raise ValueError(f"dataset observer requires positive {capacity_key}")
+    return "reliable", depth
+
+
+class RuntimeMonitor:
+    """ROS node used by all runtime workflows."""
+
+    def __init__(self, output: Path, workflow: str, config: dict[str, Any],
+                 *, state_transport_trace: bool = False) -> None:
+        import rclpy
+        from rclpy.node import Node
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+
+        self.output = output
+        self.workflow = workflow
+        self.config = config
+        self.state_transport_trace = state_transport_trace
+        self.output.mkdir(parents=True, exist_ok=True)
+        self.samples_path = output / "samples.jsonl"
+        self.latest_path = output / "monitor.json"
+        self._sample_stream = None  # retained only for isolated legacy tests
+        runtime_config = config.get("runtime", {})
+        self.pointcloud_metadata_only = str(
+            runtime_config.get("pointcloud_payload_mode", "metadata_only")
+        ).lower() == "metadata_only"
+        self._evidence_writer = EvidenceWriter(
+            self.samples_path,
+            capacity=int(runtime_config.get("monitor_evidence_queue_capacity", 4096)),
+            batch_size=int(runtime_config.get("monitor_evidence_batch_size", 128)),
+        )
+        self._last_graph_query_ns = 0
+        self._last_snapshot_wall_ns = 0
+        self._graph_query_period_ns = 2_000_000_000
+        self._snapshot_period_ns = 1_000_000_000
+        self._rclpy = rclpy
+        self.node = Node("uav_navigation_runtime_monitor")
+        thresholds = config.get("runtime", {}).get("thresholds", {})
+        self.streams: dict[str, StreamStats] = {}
+        self.latest: dict[str, dict[str, Any]] = {}
+        self.diagnostics: dict[str, Any] = {"values": {}, "statuses": [], "state": "STARTUP"}
+        self.blocked_topics: dict[str, str] = {}
+        self.specs = self._specs()
+        for spec in self.specs:
+            stream_config = config.get("runtime", {}).get("streams", {}).get(spec.name, {})
+            self.streams[spec.name] = StreamStats(
+                spec.name,
+                spec.topic,
+                stream_config.get("expected_hz"),
+                float(stream_config.get("stale_after_s", thresholds.get("stale_after_s", 1.0))),
+                timestamp_upper_bound_ns=(
+                    SIMULATION_TIMESTAMP_MAX_NS
+                    if self.workflow == "sim" and spec.name in PX4_SIMULATION_STREAMS
+                    else None
+                ),
+                interval_history_enabled=spec.name != "simulation_clock",
+                diagnostic_gap_threshold_s=(0.05 if spec.name == "simulation_clock" else None),
+            )
+            try:
+                reliability, depth = _observer_qos_contract(
+                    self.workflow, self.config, spec.name
+                )
+                qos = QoSProfile(
+                    depth=depth,
+                    reliability=(ReliabilityPolicy.RELIABLE
+                                 if reliability == "reliable"
+                                 else ReliabilityPolicy.BEST_EFFORT),
+                )
+                self.node.create_subscription(
+                    spec.message_type,
+                    spec.topic,
+                    self._callback(spec),
+                    qos,
+                )
+            except (ImportError, AttributeError, RuntimeError, TypeError) as error:
+                self.blocked_topics[spec.topic] = str(error)
+        self._timer = self.node.create_timer(0.2, self._tick)
+        self._tick()
+
+    def _specs(self) -> list[TopicSpec]:
+        from diagnostic_msgs.msg import DiagnosticArray
+        from nav_msgs.msg import Odometry
+        from navigation_contracts.msg import PropagatedOdometry
+        from navigation_contracts.msg import RegisteredScan
+        from rosgraph_msgs.msg import Clock
+        from sensor_msgs.msg import Imu, PointCloud2
+
+        specs = [
+            TopicSpec("imu", str(self.config["fast_lio"]["ros__parameters"]["input"]["imu_topic"]), Imu, lambda m: {
+                "stamp_ns": _message_stamp_ns(m),
+                "frame_id": str(m.header.frame_id),
+                "angular_velocity": [_finite(m.angular_velocity.x), _finite(m.angular_velocity.y), _finite(m.angular_velocity.z)],
+                "linear_acceleration": [_finite(m.linear_acceleration.x), _finite(m.linear_acceleration.y), _finite(m.linear_acceleration.z)],
+            }),
+            TopicSpec("lidar", str(self.config["fast_lio"]["ros__parameters"]["input"]["lidar_topic"]), PointCloud2, lambda m: _pointcloud_payload(m, metadata_only=self.pointcloud_metadata_only)[0]),
+            TopicSpec("corrected_odometry", "/lio/odometry_corrected", Odometry, _odom_payload),
+            TopicSpec(
+                "propagated_odometry",
+                "/lio/odometry_propagated",
+                PropagatedOdometry,
+                _propagated_odom_payload,
+            ),
+            TopicSpec(
+                "registered_scan", "/lio/mapping_observation", RegisteredScan,
+                _registered_scan_payload,
+            ),
+            TopicSpec("diagnostics", "/lio/diagnostics", DiagnosticArray, _diagnostic_payload),
+            TopicSpec("mapping_diagnostics", "/navigation/diagnostics", DiagnosticArray, _diagnostic_payload),
+        ]
+        if self.state_transport_trace:
+            from navigation_contracts.msg import OdometryTransportTrace
+            specs.extend([
+                TopicSpec("odometry_producer_trace", "/lio/odometry_transport_trace",
+                          OdometryTransportTrace, _odometry_transport_trace_payload),
+                TopicSpec("odometry_adapter_ingress_trace", "/navigation/odometry_ingress_trace",
+                          OdometryTransportTrace, _odometry_transport_trace_payload),
+            ])
+        if self.workflow != "dataset":
+            # Observe the product simulation clock as a first-class stream.
+            # Wall-arrival gaps here distinguish a GZ->ROS transport stall
+            # from an estimator-only pause; the clock value remains the
+            # authoritative source timestamp.
+            specs.append(TopicSpec(
+                "simulation_clock", "/clock", Clock,
+                lambda m: {"stamp_ns": _time_ns(m.clock)},
+            ))
+            # Gazebo's OdometryPublisher is the independent simulator truth.
+            # It is ENU/FLU and must remain a separate stream; comparing an
+            # estimate to a bridge output derived from that same estimate
+            # would only prove that the bridge copied its own numbers.
+            specs.append(TopicSpec(
+                "ground_truth_odometry", "/sim/ground_truth/odometry", Odometry, _odom_payload
+            ))
+        try:
+            from tf2_msgs.msg import TFMessage
+            specs.append(TopicSpec("tf", "/tf", TFMessage, lambda m: {"transform_count": len(m.transforms)}))
+            specs.append(TopicSpec("tf_static", "/tf_static", TFMessage, lambda m: {"transform_count": len(m.transforms)}))
+        except ImportError:
+            self.blocked_topics["/tf"] = "tf2_msgs unavailable"
+        if self.workflow != "dataset":
+            try:
+                # Keep the core PX4 telemetry contract usable across PX4
+                # message revisions.  EstimatorStatusFlags and
+                # EstimatorInnovations are optional in older px4_msgs; one
+                # missing diagnostic message must not suppress odometry,
+                # local-position, status and attitude streams needed by the
+                # mission benchmark.
+                from px4_msgs.msg import (
+                    ActuatorMotors,
+                    EstimatorStatus,
+                    VehicleAttitude,
+                    VehicleAttitudeSetpoint,
+                    VehicleLocalPosition,
+                    VehicleLocalPositionSetpoint,
+                    VehicleOdometry,
+                    VehicleStatus,
+                    VehicleThrustSetpoint,
+                )
+                specs.extend([
+                    TopicSpec("external_odometry", "/fmu/in/vehicle_visual_odometry", VehicleOdometry, _px4_odom_payload),
+                    TopicSpec("px4_odometry", "/fmu/out/vehicle_odometry", VehicleOdometry, _px4_odom_payload),
+                    TopicSpec("vehicle_status", "/fmu/out/vehicle_status_v1", VehicleStatus, lambda m: {
+                        "timestamp_us": int(m.timestamp), "arming_state": int(m.arming_state),
+                        "nav_state": int(m.nav_state), "failsafe": bool(m.failsafe),
+                    }),
+                    TopicSpec("local_position", "/fmu/out/vehicle_local_position_v1", VehicleLocalPosition, lambda m: {
+                        "timestamp_us": int(m.timestamp), "timestamp_sample_us": int(m.timestamp_sample),
+                        "x_ned_m": _finite(m.x), "y_ned_m": _finite(m.y), "z_ned_m": _finite(m.z),
+                        "vx_ned_m_s": _finite(m.vx), "vy_ned_m_s": _finite(m.vy), "vz_ned_m_s": _finite(m.vz),
+                        "heading_ned_rad": _finite(m.heading), "xy_valid": bool(m.xy_valid),
+                        "z_valid": bool(m.z_valid), "v_xy_valid": bool(m.v_xy_valid), "v_z_valid": bool(m.v_z_valid),
+                        "dead_reckoning": bool(m.dead_reckoning),
+                    }),
+                    TopicSpec("vehicle_attitude", "/fmu/out/vehicle_attitude", VehicleAttitude, lambda m: {
+                        "timestamp_us": int(m.timestamp), "q_wxyz": [_finite(v) for v in m.q],
+                    }),
+                    TopicSpec("estimator_status", "/fmu/out/estimator_status", EstimatorStatus, lambda m: {
+                        "timestamp_us": int(m.timestamp), "control_mode_flags": int(m.control_mode_flags),
+                        "filter_fault_flags": int(m.filter_fault_flags), "control_status_flags": int(m.control_mode_flags),
+                        "reset_count_pos_ne": int(m.reset_count_pos_ne), "reset_count_vel_ne": int(m.reset_count_vel_ne),
+                        "reset_count_quat": int(m.reset_count_quat),
+                    }),
+                    TopicSpec(
+                        "px4_local_position_setpoint",
+                        "/fmu/out/vehicle_local_position_setpoint",
+                        VehicleLocalPositionSetpoint,
+                        _px4_local_position_setpoint_payload,
+                    ),
+                    TopicSpec(
+                        "px4_attitude_setpoint",
+                        "/fmu/out/vehicle_attitude_setpoint",
+                        VehicleAttitudeSetpoint,
+                        _px4_attitude_setpoint_payload,
+                    ),
+                    TopicSpec(
+                        "px4_thrust_setpoint",
+                        "/fmu/out/vehicle_thrust_setpoint",
+                        VehicleThrustSetpoint,
+                        _px4_thrust_setpoint_payload,
+                    ),
+                    TopicSpec(
+                        "px4_actuator_motors",
+                        "/fmu/out/actuator_motors",
+                        ActuatorMotors,
+                        _px4_actuator_motors_payload,
+                    ),
+                ])
+                try:
+                    from px4_msgs.msg import EstimatorStatusFlags
+                except ImportError as error:
+                    self.blocked_topics["/fmu/out/estimator_status_flags"] = f"optional px4_msgs message unavailable: {error}"
+                else:
+                    specs.append(TopicSpec("estimator_status_flags", "/fmu/out/estimator_status_flags", EstimatorStatusFlags, lambda m: {
+                        # PX4 calls these control-status flags.  They are useful
+                        # telemetry but not proof that a particular EV sample
+                        # fused, so the report labels them as observations only.
+                        "timestamp_us": int(m.timestamp), "cs_ev_pos": bool(m.cs_ev_pos),
+                        "cs_ev_vel": bool(m.cs_ev_vel), "cs_ev_yaw": bool(m.cs_ev_yaw),
+                        "cs_inertial_dead_reckoning": bool(m.cs_inertial_dead_reckoning),
+                        "fs_bad_hdg": bool(m.fs_bad_hdg), "reject_hor_pos": bool(m.reject_hor_pos),
+                        "reject_hor_vel": bool(m.reject_hor_vel), "reject_yaw": bool(m.reject_yaw),
+                    }))
+                try:
+                    from px4_msgs.msg import EstimatorInnovations
+                except ImportError as error:
+                    self.blocked_topics["/fmu/out/estimator_innovations"] = f"optional px4_msgs message unavailable: {error}"
+                else:
+                    specs.append(TopicSpec("estimator_innovations", "/fmu/out/estimator_innovations", EstimatorInnovations, lambda m: {
+                        "timestamp_us": int(m.timestamp), "timestamp_sample_us": int(m.timestamp_sample),
+                        "gps_hpos": [_finite(v) for v in m.gps_hpos], "gps_vpos": _finite(m.gps_vpos),
+                        "ev_hpos": [_finite(v) for v in m.ev_hpos], "ev_vpos": _finite(m.ev_vpos),
+                        "ev_vel": [_finite(v) for v in m.ev_vel], "heading": _finite(m.heading),
+                    }))
+            except ImportError as error:
+                self.blocked_topics["/fmu/out/estimator_status_flags"] = f"px4_msgs unavailable: {error}"
+        return specs
+
+    def _callback(self, spec: TopicSpec) -> Callable[[Any], None]:
+        def callback(message: Any) -> None:
+            arrival_steady_ns = time.monotonic_ns()
+            arrival_ns = time.time_ns()
+            sampled_nonfinite_points = 0
+            try:
+                if spec.name == "lidar":
+                    payload, sampled_nonfinite_points = _pointcloud_payload(
+                        message, metadata_only=self.pointcloud_metadata_only
+                    )
+                else:
+                    payload = spec.formatter(message)
+            except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+                payload = {"decode_error": str(error), "stamp_ns": _message_stamp_ns(message)}
+            stamp_ns = int(payload.get("stamp_ns", _message_stamp_ns(message)))
+            frame_id = str(payload.get("frame_id", ""))
+            # PointCloud2 uses is_dense=false to explicitly permit NaN/Inf
+            # points (for example a simulated lidar ray with no return). Keep
+            # that count as diagnostic evidence, but reject it as a malformed
+            # message only when the producer claimed a dense cloud.
+            dense_cloud_with_nonfinite = (
+                spec.name == "lidar"
+                and _pointcloud_nonfinite_message(payload, sampled_nonfinite_points)
+            )
+            nonfinite = _recursive_nonfinite(payload) + int(dense_cloud_with_nonfinite)
+            q = payload.get("q_xyzw") or payload.get("q_wxyz")
+            invalid_q = False
+            if q:
+                values = [value for value in q if value is not None]
+                invalid_q = len(values) != 4 or abs(math.sqrt(sum(value * value for value in values)) - 1.0) > 0.05
+            covariance_values = payload.get("position_variance") or payload.get("covariance")
+            invalid_covariance = bool(covariance_values) and _recursive_nonfinite(covariance_values) > 0
+            stats = self.streams[spec.name]
+            accepted_by_monitor = stats.update(
+                stamp_ns,
+                arrival_ns,
+                frame_id=frame_id,
+                nonfinite=nonfinite,
+                sampled_nonfinite_points=sampled_nonfinite_points,
+                invalid_quaternion=invalid_q,
+                invalid_covariance=invalid_covariance,
+            )
+            if accepted_by_monitor:
+                self.latest[spec.name] = payload
+            if spec.name == "diagnostics":
+                self._update_diagnostic_state(payload)
+            sample = {
+                "kind": "sample",
+                "stream": spec.name,
+                "arrival_wall_ns": arrival_ns,
+                "arrival_steady_ns": arrival_steady_ns,
+                "timestamp_ns": stamp_ns,
+                "payload": payload,
+                "accepted_by_monitor": accepted_by_monitor,
+            }
+            # `/clock` is high-rate transport evidence. Its callback-owned
+            # counters and exact consecutive gap events live in monitor.json;
+            # serializing every normal tick would perturb the scheduler being
+            # measured. Other streams retain full sample history.
+            if spec.name != "simulation_clock":
+                writer = getattr(self, "_evidence_writer", None)
+                if writer is not None:
+                    writer.enqueue(sample, observer_record_steady_ns=arrival_steady_ns)
+                elif getattr(self, "_sample_stream", None) is not None:
+                    # Compatibility for the isolated no-ROS unit-test fixture.
+                    self._sample_stream.write(
+                        json.dumps(sample, sort_keys=True, allow_nan=False) + "\n"
+                    )
+
+        return callback
+
+    def _update_diagnostic_state(self, payload: dict[str, Any]) -> None:
+        estimator_values: dict[str, Any] | None = None
+        for status in payload.get("statuses", []):
+            if str(status.get("name", "")).endswith("/estimator"):
+                candidate = status.get("values", {})
+                if isinstance(candidate, dict):
+                    estimator_values = candidate
+                break
+        if estimator_values is None:
+            return
+        values = estimator_values
+        state = values.get("state", values.get("status", self.diagnostics.get("state", "STARTUP")))
+        self.diagnostics["state"] = str(state)
+        self.diagnostics["navigation_valid"] = bool(values.get("navigation_valid", False))
+        self.diagnostics["last_failure_code"] = str(values.get("last_failure_code", values.get("last_update_failure_class", "NONE")))
+        self.diagnostics["last_failure_reason"] = str(values.get("last_failure_reason", payload.get("message", "")))
+        self.diagnostics["values"] = values
+
+    def _tick(self) -> None:
+        now_ns = time.time_ns()
+        clock_payload = self.latest.get("simulation_clock", {})
+        clock_stamp = clock_payload.get("stamp_ns") if isinstance(clock_payload, dict) else None
+        source_now_ns = (
+            _integer(clock_stamp)
+            if self.workflow == "sim" and clock_stamp is not None
+            else None
+        )
+        for stats in self.streams.values():
+            stats.check_stale(now_ns, source_now_ns)
+        if now_ns - self._last_graph_query_ns >= self._graph_query_period_ns:
+            self._last_graph_query_ns = now_ns
+            for stats in self.streams.values():
+                try:
+                    stats.publisher_count = len(self.node.get_publishers_info_by_topic(stats.topic))
+                    stats.subscriber_count = len(self.node.get_subscriptions_info_by_topic(stats.topic))
+                except (AttributeError, RuntimeError):
+                    pass
+        if (
+            self._last_snapshot_wall_ns
+            and now_ns - self._last_snapshot_wall_ns < self._snapshot_period_ns
+        ):
+            return
+        self._last_snapshot_wall_ns = now_ns
+        self._write_snapshot()
+
+    def _write_snapshot(self) -> None:
+        snapshot = self.snapshot()
+        temporary = self.latest_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(snapshot, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+        temporary.replace(self.latest_path)
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "workflow": self.workflow,
+            "updated_at": time.time(),
+            "streams": {name: stats.as_dict() for name, stats in self.streams.items()},
+            "latest": self.latest,
+            "diagnostics": self.diagnostics,
+            "blocked_topics": self.blocked_topics,
+            "evidence_writer": self._evidence_writer.stats().as_dict()
+            if hasattr(self, "_evidence_writer") else {},
+            "capture_complete": False,
+        }
+
+    def close(self) -> None:
+        self._tick()
+        writer = getattr(self, "_evidence_writer", None)
+        if writer is not None:
+            stats = writer.close()
+            snapshot = self.snapshot()
+            snapshot["evidence_writer"] = stats.as_dict()
+            snapshot["capture_complete"] = bool(stats.capture_complete)
+            temporary = self.latest_path.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps(snapshot, indent=2, sort_keys=True, allow_nan=False) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(self.latest_path)
+        elif getattr(self, "_sample_stream", None) is not None:
+            self._sample_stream.close()
+        self.node.destroy_node()
+        self._rclpy.try_shutdown()
+
+
+def run_monitor(output: Path, workflow: str, config_path: Path,
+                *, state_transport_trace: bool = False) -> int:
+    import yaml
+    import rclpy
+
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        raise ValueError(f"runtime config must be a mapping: {config_path}")
+    common_path = config_path.parent / "common.yaml"
+    if common_path.is_file():
+        common = yaml.safe_load(common_path.read_text(encoding="utf-8"))
+        if isinstance(common, dict):
+            config["runtime"] = dict(common.get("runtime", {}))
+            config["runtime"].update(config.get("runtime_overrides", {}))
+    rclpy.init(args=[])
+    if state_transport_trace and workflow != "sim":
+        raise ValueError("state transport trace is SITL only")
+    monitor = RuntimeMonitor(output, workflow, config,
+                             state_transport_trace=state_transport_trace)
+    stopping = False
+
+    def stop(_signum: int, _frame: Any) -> None:
+        nonlocal stopping
+        stopping = True
+        rclpy.shutdown()
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+    try:
+        while rclpy.ok() and not stopping:
+            rclpy.spin_once(monitor.node, timeout_sec=0.2)
+    finally:
+        monitor.close()
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--workflow", choices=("dataset", "sim"), required=True)
+    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--state-transport-trace", action="store_true",
+                        help="default-off SITL-only producer/adapter sideband")
+    args = parser.parse_args()
+    return run_monitor(args.output, args.workflow, args.config,
+                       state_transport_trace=args.state_transport_trace)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

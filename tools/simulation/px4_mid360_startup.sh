@@ -1,0 +1,51 @@
+#!/bin/sh
+# Project-owned PX4 SITL startup wrapper. Keep the pinned PX4 rcS intact and
+# apply only the simulation harness contract after the airframe is initialized.
+set +e
+. "${R}etc/init.d-posix/rcS"
+
+# This harness controls PX4 through XRCE-DDS and intentionally has no GCS or
+# MAVLink ground station. The x500 default NAV_DLL_ACT=2 otherwise rejects
+# every arm request even when the OFFBOARD signal and estimator are healthy.
+param set NAV_DLL_ACT "${PX4_NAV_DLL_ACT:-0}"
+
+# The selected PX4 SITL release does not publish the board-only system_power topic in this
+# standalone profile. Keep the power circuit breaker scoped to simulation;
+# real hardware must use the authoritative board power checks.
+param set CBRK_SUPPLY_CHK "${PX4_PARAM_CBRK_SUPPLY_CHK:-894281}"
+
+# The launcher exports these before rcS, so its parameter override loop applies
+# them before Gazebo bridge and EKF2 start.  Print the effective values into
+# px4_gazebo.log for every run; they are an audit trail, not a new data source.
+echo "PX4 navigation SITL profile: ${PX4_NAVIGATION_SITL_PROFILE:-default}"
+echo "PX4 multisensor + external-vision contract (ground truth odometry disabled):"
+param show SIM_GZ_EN_ODOM
+param show SIM_GZ_EN_GPS
+param show SIM_GZ_EN_BARO
+param show EKF2_EV_CTRL
+param show EKF2_HGT_REF
+param show EKF2_GPS_CTRL
+param show EKF2_BARO_CTRL
+param show EKF2_RNG_CTRL
+param show EKF2_MAG_TYPE
+param show COM_RC_IN_MODE
+param show UXRCE_DDS_SYNCT
+param show MPC_YAWRAUTO_MAX
+param show MPC_YAWRAUTO_ACC
+param show MC_YAWRATE_MAX
+# Capture the position-controller and actuator limits used by this run.  These
+# are observations for post-run ownership analysis; the harness deliberately
+# does not tune them implicitly.
+param show MPC_XY_P
+param show MPC_Z_P
+param show MPC_XY_VEL_MAX
+param show MPC_Z_VEL_MAX_UP
+param show MPC_Z_VEL_MAX_DN
+param show MPC_ACC_HOR
+param show MPC_ACC_HOR_MAX
+param show MPC_ACC_UP_MAX
+param show MPC_ACC_DOWN_MAX
+param show MPC_TILTMAX_AIR
+param show MPC_THR_HOVER
+param show MPC_THR_MIN
+param show MPC_THR_MAX

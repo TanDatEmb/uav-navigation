@@ -1,0 +1,33 @@
+# Diagnostic-only timing witness. Never consumed by navigation admission.
+uint8 PRODUCER_PUBLISHED=1
+uint8 ADAPTER_CALLBACK=2
+uint8 phase
+
+uint8 NOT_APPLICABLE=0
+uint8 ACCEPTED=1
+uint8 INVALID_MESSAGE=2
+uint8 HEALTH_NOT_READY=3
+uint8 HEALTH_INVALID=4
+uint8 LOCALIZATION_EPOCH_MISMATCH=5
+uint8 SEQUENCE_NON_INCREASING=6
+uint8 SOURCE_TIMESTAMP_INVALID=7
+uint8 SOURCE_TIMESTAMP_NON_INCREASING=8
+uint8 disposition
+
+uint64 localization_epoch
+uint64 sequence
+int64 source_stamp_ros_ns
+int64 expected_publish_source_ns
+int64 last_published_source_ns
+
+int64 worker_estimate_ready_steady_ns
+int64 publisher_enter_steady_ns
+int64 publisher_publish_call_steady_ns
+int64 publisher_exit_steady_ns
+
+int64 callback_enter_ros_ns
+int64 callback_enter_steady_ns
+int64 lock_requested_steady_ns
+int64 lock_acquired_steady_ns
+int64 accepted_receive_ros_ns
+int64 accepted_receive_steady_ns

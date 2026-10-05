@@ -1,0 +1,468 @@
+# Runtime Safety Current Contract
+
+## Purpose and target architecture
+
+This is the authoritative safety contract. Ownership remains:
+`FAST-LIO estimator -> product-owned ROG-backed WorldModel -> SUPER MAIN plus
+certified BACKUP -> immutable committed bundle -> trajectory controller/OMMPC
+-> PX4 ROS 2 External Mode`.
+Registration is not a planning map; WorldModel owns UNKNOWN/OUT_OF_MAP semantics.
+A failed candidate never mutates the committed generation. Core mission-progress ownership is specified in [the authority cut](mission_authority_cut.md).
+
+Baseline note: history before 2026-10-01 was dropped; the 2026-10-05 reset
+retains subsequent Git lineage in the owner-approved local code backup. The former decision index, the lossless archive, the
+compatibility ledger path and all linked evidence reports and artifacts were
+removed. `DEC-*`, `HG-*` and `TB-*` identifiers below are legacy labels with no
+retrievable record; evidence references to removed artifacts are not
+re-verifiable and must not be cited as qualification. The retired
+`pre_main_gate` and PR-scoped static guards (`tools/check_*`, except the
+active `check_mission_authority_cut.py` CTest) were removed with that history.
+
+## Mandatory reading rule
+
+Before modifying estimation, mapping, planning, control, PX4 integration,
+runtime budgets, safety gates, bypasses, or validation thresholds, read this
+file.
+
+Historical Git lineage is in the local backup; use current `git log` for new changes and
+do not infer supersession, ownership or qualification from legacy labels.
+
+## Contract interpretation
+
+- `IMPLEMENTED` means a source path exists, not qualification.
+- `QUALIFIED` requires declared evidence; component/replay/partial integration is not flight acceptance.
+- `DIAGNOSTIC_ONLY` and `EXPERIMENT` are not product authority or qualification.
+- `BLOCKED`, `INCONCLUSIVE`, `NOT_EVALUABLE`, missing/ambiguous evidence is not PASS;
+  safety decisions remain fail-closed.
+- History is verbatim; the index uses `UNRESOLVED`, never invented supersession,
+  ownership or qualification without source proof.
+
+## Non-negotiable invariants
+
+1. Missing or ambiguous source time, frame, identity, reset epoch, freshness,
+   world revision, certificate, or lifecycle witness is not evaluable; it is
+   never converted to zero, observer time, partial coverage, or a default PASS.
+2. `UNKNOWN` and `OUT_OF_MAP` remain non-traversable for certified BACKUP.
+   Planner-only `allow_unknown` and any relaxed visibility profile are
+   diagnostic-only and cannot authorize flight or qualification.
+3. A candidate is executable only after atomic goal, localization, command
+   lease, latest-world, continuous corridor, dynamics/flatness, and swept-world
+   checks. Newer world identity invalidates an older candidate.
+4. The committed command remains authoritative until a valid successor is
+   atomically committed, a certified measured-state brake is activated, or
+   PX4 Hold is requested through the existing fail-closed boundary.
+5. Waypoint progress is measured and ordered. A planned endpoint does not prove
+   waypoint acceptance or terminal completion.
+6. External Mode receives finite, frame-correct, temporally continuous P/V/A
+   setpoints. PX4 tracking and physical limits remain distinct from planner
+   nominal limits; jerk is not an executed PX4 setpoint.
+7. Every retained MAIN/BACKUP/emergency command remains bounded by its existing
+   lease, tracking, timing, world, and role certificate. A retry or fallback
+   may not silently become product authority.
+8. Hardware Mid-360 visibility remains blocked until an immutable visibility
+   certificate and runtime verifier exist.
+9. Threshold changes require distributions from repeated SITL and
+   representative recorded data. A single smoke/SITL result, component test,
+   partial motion, or dataset shadow result cannot close a hard gate.
+10. Documentation cleanup must not change thresholds, planner/controller
+    configuration, UNKNOWN policy, command ownership, deadlines, or runtime
+    behavior. Any bypass must name owner, scope, impact, evidence, removal
+    condition, and verification command in the same change. Validation-scope record (2026-10-05): owner tools/gate.sh; scope full product ROS closure, matching tools/runtime/build.py exclusion of upstream example_*_cpp and existing G1 attachment-only px4_ros2_cpp; safety impact no product test skipped, no threshold or runtime behavior relaxed; evidence 35-package diagnostic FAIL retained, root-selection negative controls and full product gate; removal condition review product scope if an upstream example becomes a runtime dependency; verify root-gate tests and full product gate. Tracking-selector record: owner is `tools/runtime/runner.py`/Make; SITL diagnostic only; runner/Make default is `off`, while explicit `TRACKING_EXPERIMENT_MODE=relaxed` selects the existing diagnostic suppression path. `relaxed` suppresses finite tracking braking and fresh estimator-health responses, leaving stale/missing-state, identity, lease, world, collision and terminal contracts intact; elevated collision risk means no qualification claim. Evidence: `_tracking_experiment_payload()`, explicit default/off contract tests, and DEC-20260909-008 (history); removal requires reviewed retirement of the diagnostic workflow and artifact dependency. Verify with `python3 -m unittest tools.runtime.tests.test_runtime_contract -v`, inspect run `metadata.json`/`scenario_config.yaml`, `python3 tools/validate_runtime_safety_ledger.py`, and `git diff --check`. Physical-envelope record: owner is navigation planning/runtime and PX4 integration; scope is BACKUP/EMERGENCY acceleration plus Hold handover only; `back_traj.max_acc=9.0 m/s^2` is a configuration ceiling below the nominal PX4 45-degree tilt-derived bound, but the resulting 0.81 m/s^2 difference is not a complete thrust/weight, vertical-acceleration, or attitude-ramp margin. It does not claim that 9.0 m/s² is continuously realizable in 3-D braking. AUTO_LOITER handover is bounded to three attempts; explicit handover intent reports a run-condition failure even after a valid COMPLETE receipt, retaining only the stationary stream while PX4 `checkModeFallback` owns runnable-mode selection. Exhausting the bound never enables another retry. Safety impact is fail-closed physical authority and removal of an unbounded retry; evidence is the product-config/planning tests, PX4 handover policy test, and source-level PX4 fallback inspection. Removal requires a reviewed PX4 capability/thrust record and repeated distribution evidence; verify with the targeted C++ tests, package build/test, this ledger validator, and `git diff --check`.
+
+## Status model
+
+These dimensions are independent. Historical free-form wording is not rewritten
+to fit them; the index records `UNRESOLVED` when a mapping is not proven.
+
+| Dimension | Allowed current values | Meaning |
+|---|---|---|
+| Lifecycle | `ACTIVE`, `SUPERSEDED`, `REVERTED`, `REMOVED`, `REJECTED`, `UNRESOLVED` | Whether a decision still has current lifecycle authority. |
+| Implementation | `NOT_IMPLEMENTED`, `IMPLEMENTED`, `UNRESOLVED` | Source/config implementation only; never qualification. |
+| Evidence | `UNVERIFIED`, `UNIT_VERIFIED`, `COMPONENT_VERIFIED`, `INTEGRATION_PARTIAL`, `INTEGRATION_VERIFIED`, `QUALIFIED`, `BLOCKED`, `NOT_EVALUABLE`, `UNRESOLVED` | Evidence boundary, with fail-closed meanings preserved. |
+| Authority | `PRODUCT`, `DIAGNOSTIC_ONLY`, `EXPERIMENT`, `UNRESOLVED` | Whether behavior can define the product contract. |
+
+## Active hard gates
+
+The following IDs are active or require closure. Values are concise current
+authority; full owner, derivation, false-accept/false-reject analysis, evidence,
+and closure commands were in the legacy gate register, which was not retained. `ACTIVE` does not
+mean `CERTIFIED`.
+
+| ID | Current contract | Gate state |
+|---|---|---|
+| HG-001 | SUPER absolute budget: A* attempt 20 ms, A* total 40 ms, solve 80 ms, future-state lead 200 ms. The 40 ms A* stage plus 40 ms finalization reserve must fit inside the 80 ms solve deadline. | ACTIVE / PROVISIONAL |
+| HG-002 | Independent continuous normalized corridor-plane violation limit: 0.01 m. | ACTIVE / PROVISIONAL |
+| HG-004 | Physical/BACKUP envelope 12/9/30; MAIN nominal envelope 5/5/8; `9 m/s²` is a bounded horizontal certificate input, not proof of sustained PX4 capability. The `0.81 m/s²` arithmetic gap to the nominal 45° tilt-derived value excludes thrust/weight (about 1.36 at 42.5°), vertical acceleration, 3-D braking, and the attitude-rate ramp; those limits remain separately owned. | ACTIVE / PROVISIONAL / U4′ NOT_MEASURED |
+| HG-005 | Product planning radius sum: 0.50 + 0.227 + 0.05 + 0.173 + 0.05 = 1.00 m; the 0.227 m tracking term is derived and remains provisional pending U1′. | ACTIVE / PROVISIONAL / U1′ NOT_MEASURED |
+| HG-006 | Typed observation freshness maximum age 0.5 s; exact timestamp pairing at ingress. | ACTIVE / PROVISIONAL |
+| HG-007 | Retained suffix uses the planner tracking budget and `kCommandAnchorErrorLimitM = 0.75 m` as an execution-anchor rejection boundary. This boundary is reject-only; tracking/anchor pressure never authorizes an emergency brake, which requires the `INV-12` clearance witness and current `KNOWN_FREE` state. | ACTIVE / PROVISIONAL |
+| HG-008 | Planner watchdog: 1.0 s. | ACTIVE / PROVISIONAL |
+| HG-009 | Shared 3-D completion/connectivity tolerance: 0.20 m. | ACTIVE / PROVISIONAL |
+| HG-010 | Retained-suffix sweep: spatial step 0.5 inflated-map resolution; time step 2–50 ms. | ACTIVE / PROVISIONAL |
+| HG-011 | Hardware Mid-360 visibility is blocked until immutable certification and verification. | ACTIVE / CERTIFIED BLOCK |
+| HG-012 | CIRI overlap/seed tolerances and seed clearance remain named safety inputs; no retuning by cleanup. | ACTIVE / PROVISIONAL |
+| HG-013 | BACKUP uses the same independent continuous corridor-plane certificate as EXP. | ACTIVE / PROVISIONAL |
+| HG-014 | Typed estimator health requires tracking plus navigation/covariance/observability/correction/propagation validity and advancing source time. | ACTIVE / PROVISIONAL |
+| HG-015 | Each guide-owned SFC retains its collision-checked vertical min/max envelope and inflated-map voxel. | ACTIVE / PROVISIONAL |
+| HG-016 | Boundary overspeed can only reduce inherited speed and must recover on the physics-derived bounded suffix. | ACTIVE / PROVISIONAL |
+| HG-017 | Pass-through suffix transfer requires exact goal identity, measured transition, lease, world, and finite end. | ACTIVE / PROVISIONAL |
+| HG-018 | Corner route window is stopping/replan/receding distance bounded by certified outgoing route and horizon. | ACTIVE / PROVISIONAL |
+| HG-019 | Polyline-aware route regression checks incoming and outgoing arcs at the optimizer-pinned junction. | ACTIVE / PROVISIONAL |
+| HG-020 | Cruise pass-through window uses the mission maximum velocity and remains bounded by route/horizon. | ACTIVE / PROVISIONAL |
+| HG-021 | Tracking divergence uses bounded hot-stitch/restart rules; no reverse connector is admitted. | ACTIVE / PROVISIONAL |
+| HG-022 | Pass-through fillet switches progress at the closest valid junction inside the acceptance ball. | ACTIVE / PROVISIONAL |
+| HG-023 | A valid certified command is retained across failed replacement solves while its certificates remain valid. | ACTIVE / PROVISIONAL |
+| HG-024 | Every pass-through boundary corridor has an optimizable in-ball junction. | ACTIVE / PROVISIONAL |
+| HG-025 | Pass-through boundary corridor is conservatively intersected with the acceptance-region cube. | ACTIVE / PROVISIONAL |
+| HG-027 | Deterministic-seed PVAJ equality uses a coefficient-derived representation bound, not a mixed fixed tolerance. | ACTIVE / PROVISIONAL |
+| HG-028 | Terminal suppression/hold is STOP-only; PASS_THROUGH restarts from measured PVA. | ACTIVE / PROVISIONAL |
+| HG-029 | A* validates one active inflated search layer and only the distinct evidence/probability layer when required. | ACTIVE / PROVISIONAL |
+| HG-030 | Remote goals may use only a valid immutable forward route backbone and bounded executable prefix. | ACTIVE / PROVISIONAL |
+| HG-031 | A measured-state emergency brake is one-shot per recovery episode; no planner-tick re-arm. | ACTIVE / PROVISIONAL |
+| HG-032 | Feasibility-only dynamic penalty activation may repair a violated hard gradient without changing its hard limit. | ACTIVE / PROVISIONAL |
+| HG-033 | A* prunes CLOSED/reverse edges and non-traversable endpoints before continuous edge queries. | ACTIVE / PROVISIONAL |
+| HG-034 | Local visibility horizon has a 14 m floor and a 20 m cap matching the bounded local window; speed-derived expansion remains bounded and the executed minimum-snap support gate may reject before solve. | ACTIVE / PROVISIONAL / U9′ NOT_EVALUABLE |
+| HG-035 | A moving MAIN command requires a certified positive BACKUP suffix. | ACTIVE / PROVISIONAL |
+| HG-036 | Repeated guide timestamps are distributed between finite neighboring anchors; invalid timing fails closed. | ACTIVE / PROVISIONAL |
+
+HG-003 (vertical guide envelope) is `REMOVED`; HG-026 (curved MAIN backup
+reachability experiment) is `REJECTED/REVERTED`. Their records were not retained and they are not active rows here.
+
+## Active temporary bypasses
+
+| ID | Current scope and impact | Removal condition / verification |
+|---|---|---|
+| TB-003 | Current CIRI setting remains `1`; the two-pass reference is unpromoted. Owner: mapping/planning; a second pass may enlarge the corridor but can change candidate availability and compute tails. Budget/inflation/collision gates unchanged. | Keep assurance debt open until matched dense snapshot/dataset/SITL `1` vs `2` establishes complete-feasible rate and tails. The local two-pass trial failed `PlannerFacade.CruiseFutureAnchorDoesNotReturnToUnacceptedPassBoundary`; do not promote it from this isolated result. |
+| TB-006 | Root-commit whitespace check in `tools/gate.sh` skips upstream copies in `src/external/livox_ros_driver2`, `src/estimation/ikfom_vendor/vendor`, `src/estimation/ikd_tree_vendor/vendor` and `src/mapping/rog_map_vendor`. Owner: tooling. Scope: only the `git diff-tree --root --check` branch used when history has one commit; incremental diff checks, `src/external/px4_msgs`, `src/external/px4_ros2_interface_lib` and all first-party paths stay covered. Safety impact: none on runtime behavior, thresholds or authority; whitespace style of unmodified upstream code is not checked. Evidence: `test_root_commit_whitespace_check_*` in `tools/tests/test_gate.py`. | Remove when upstream copies are normalized or replaced by pinned submodules. Verify: `python3 -m unittest discover -s tools/tests -p 'test_gate.py'`; `tools/gate.sh static`. |
+
+TB-001, TB-002, TB-004, and TB-005 are removed historical compatibility or
+experiment switches. Their evidence and removal conditions are preserved; they
+must not be resurrected implicitly.
+
+## Active qualification and safety debt
+
+- MAIN is configured at 5/5/8 (`src/runtime/navigation_runtime/config/planner.yaml`);
+  physical/BACKUP limits are 12/9/30 (`planning_limits.hpp`). This is a
+  layer split, not a relaxation of the physical gate.
+- The 5 m/s multi-waypoint and completion/recovery matrices remain diagnostic or
+  blocked where their reports say so. They do not qualify smooth sustained
+  flight, hardware tracking, or full mission acceptance.
+- `TB-003` remains open. Do not turn a successful A/B or one SITL run into a
+  gate closure.
+- Hardware qualification remains blocked by HG-011.
+- Full provenance must bind scenario, route, speed, map/profile, fusion,
+  source/build identity, and artifact timestamps before a result is evaluable.
+
+## Current experimental and diagnostic modes
+
+- `tracking_experiment.mode=off` disables the SITL experiment regardless of
+  simulated time. `relaxed` explicitly retains diagnostic tracking/health
+  suppression (`qualification_eligible=false`). Core and adapter effective
+  startup witnesses must match the runner request before mission start; see
+  [Phase A decision, lineage and verification](runtime_config_truth_20260924.md).
+- `backup_allow_unknown`, nominal snapshot capture, terminal-state probes, and
+  offline replay are diagnostic/evidence paths. They cannot grant candidate,
+  command, world, or PX4 authority; offline world results are non-authoritative
+  unless the production role/body-support/commit certificate path is reproduced.
+
+## Recent effective changes
+
+These labeled summaries are the only retained record of the legacy decisions.
+
+| ID | Lifecycle | Implementation | Evidence | Authority | Effective summary |
+|---|---|---|---|---|---|
+| WP-P0.3-I1 | ACTIVE | IMPLEMENTED | UNIT_VERIFIED | PRODUCT | Removed the legacy MissionController library/API with no product call path change. |
+| WP-H2-R5-08 | ACTIVE | IMPLEMENTED | UNIT_VERIFIED | PRODUCT | Reject geometric continuity samples with dt ≤ 0 or 0 < dt < minimum_continuity_dt_s without replacing the trusted baseline; fail closed at the PX4 odometry publication gate. SITL evidence is NOT_EVALUABLE until P0.2. |
+| WP-H1-R01 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | DIAGNOSTIC_ONLY | Owner: runtime judge/tooling. Scope: `report.py` may exempt `external_odometry`/`propagated_odometry` stale events only when their wall-ns event time is at or after the scenario's first terminal handover marker; COMPLETE no longer waives the whole active window, and missing/unparseable markers waive nothing. Safety impact: the judge no longer hides a mid-mission stall; some earlier COMPLETE runs that reported PASS may correctly become FAIL. Evidence: R-01 regression plus focused (a)-(e) tests, including fail-closed PAUSED_SAFETY_STOP. Removal condition: replace this compatibility correction with the typed P2 judge after corpus parity is demonstrated. Verify: `python3 -m unittest discover -s tools/runtime/tests -p 'test_report_handover.py' -v`; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| W5-CP01 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: planning/runtime. Scope: resolve one canonical `DynamicLimits`/physical model, include all safety-relevant values in the fingerprint, and reject hashless runtime identity. Safety impact: prevents mission/config/path-only identity drift from authorizing a command under different dynamics. Evidence: planning contract fingerprint tests and runtime integration tests; qualification remains open. Removal condition: replace only after an equivalent typed SafetyProfile contract is adopted without duplicate sources. Verify: `make test`; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| W5-CP02 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: planning. Scope: enforce `d_stop` from the executed minimum-snap support bound plus `v*t_react + robot_r` against `min(sensing_horizon, visibility_cap)` before solve and again on the concrete candidate. Safety impact: a too-short known-free horizon rejects rather than trusting the optimistic jerk estimate; high-speed acceptance is not implied. Evidence: RED/GREEN horizon boundary tests and typed `kSensingHorizonInsufficient` telemetry; U9′ runtime distribution remains NOT_EVALUABLE. Removal condition: only after repeated U9′ evidence proves a less conservative profile and a reviewed design change. Verify: focused backend tests; `make test`; ledger validator; diff check. |
+| W5-CP03 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: planning. Scope: bound SimplifySFC input at 512 corridors and reserve 40 ms finalization after a 40 ms A* total budget inside the 80 ms solve deadline. Safety impact: prevents unbounded corridor work and deadline borrowing; timeout/rejection remains fail-closed. Evidence: bounded-input RED/GREEN test and config validation tests; no p99 qualification claimed. Removal condition: change only with a measured bounded replacement and reviewed timing budget. Verify: focused planning/backend tests; `make build`; `make test`. |
+| W5-CP04 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: PX4 integration. Scope: cap AUTO_LOITER handover at three attempts; explicit handover intent, including successful mission completion, releases External Mode without naming a target mode so PX4 `checkModeFallback` owns `POSCTL → ALTCTL → STAB → AUTO_LOITER → AUTO_RTL → AUTO_LAND → DESCEND`. Safety impact: preserves GPS-native RTL/LAND opportunities and avoids jumping directly to DESCEND. Evidence: external-mode progression tests and 2026-10-05 RED/GREEN valid-COMPLETE receipt versus handover run-condition regression; stationary-stream, inactive-mode and bounded-retry contracts retained; flight qualification is NOT_MEASURED. Removal condition: retain unless PX4 fallback contract is superseded by a reviewed native API. Verify: PX4 package tests; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| W5-CP05 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: planning/runtime. Scope: product envelope is `0.50+0.227+0.05+0.173+0.05=1.00 m`, inflation step 5, horizon floor/cap 14/20 m, with the tracking term explicitly provisional. Safety impact: aligns geometry and map inflation with the documented certificate while preventing the derived tracking term from being misread as measured capability. Evidence: config/facade tests and runtime config load; U1′/U4′/U9′ remain NOT_MEASURED or NOT_EVALUABLE. Removal condition: revise only from repeated representative data and a reviewed product-envelope decision. Verify: planner/backend/runtime tests; ledger validator; diff check. |
+| W5-CP06 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: runtime execution/planning. Scope: actual measured-state emergency-brake authorization now requires a fresh current vehicle state classified `KNOWN_FREE` in the inflated world; projected-anchor recovery already carried this witness. Safety impact: prevents tracking-error-only recovery from constructing a measured brake from an unknown or out-of-map boundary, preserving fail-closed Hold behavior when the witness is absent. Evidence: RED/GREEN `ActualAnchorRecoveryRequiresKnownFreeState` and full planner-FSM test; qualification remains open. Removal condition: only after a reviewed equivalent world certificate covers the measured boundary without weakening UNKNOWN/OUT_OF_MAP policy. Verify: `ctest --test-dir build/navigation_runtime -R '^test_planner_fsm$' --output-on-failure`; `make test`; ledger validator; `git diff --check`. |
+| W5-CP07 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: runtime execution/planning and PX4 adapter. Scope: a measured-state emergency brake may be authorized only by an attempted immutable `WORLD_SWEPT` validation that fails clearance, with fresh current state `KNOWN_FREE`; tracking, projected-anchor, and indeterminate pre-start error remain recovery/re-anchor signals only. The new typed wire reason is accepted by the velocity-only PX4 boundary. Safety impact: removes the D24-7 path where an empty corridor plus tracking error alone caused emergency braking, while retaining fail-closed behavior when world evidence or current known-free witness is absent. Evidence: RED `ActualAnchorRecoveryRequiresKnownFreeState`, GREEN planner-FSM predicate tests, typed message/adapter build path; SITL qualification remains NOT_EVALUABLE. Removal condition: replace only after a reviewed equivalent clearance certificate and repeated representative evidence prove the same authorization boundary. Verify: focused planner-FSM and PX4 external-mode tests; `make build`; `make test`; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| W5-CP08 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: planning backend. Scope: when BACKUP `YawTrajOpt` cannot hold heading because the incoming yaw-rate is non-zero, use the existing bounded minimum-snap yaw stop and rebuild the position stop at the exact same duration before combined flatness, KNOWN_FREE swept-world, and corridor checks. Safety impact: prevents a mismatched position/yaw suffix and rejects the candidate if the paired duration leaves any existing certificate. Evidence: RED compile test for the missing helper; GREEN focused backend test with non-zero yaw-rate and production helper; package build/test. Removal condition: only after a reviewed yaw trajectory contract supersedes this fallback with equivalent or stronger paired-duration/certificate guarantees. Verify: focused `test_trajectory` and planner backend tests; `make build`; `make test`; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| W5-CP09 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | DIAGNOSTIC_ONLY | Owner: PX4 integration. Scope: subscribe to `/fmu/out/estimator_ev_pos_bias` and retain only a typed, finite, timestamp-ordered, non-negative-variance/test-ratio observation for alignment witness telemetry; the observation is not applied to position, velocity, yaw, mode, or certificate decisions. Safety impact: exposes the required T3/U2′ source without turning a message definition or malformed sample into frame authority; invalid samples clear the diagnostic witness. Evidence: RED missing-header compile test; GREEN three focused validator tests; PX4 external-mode package build/test; runtime publication and U2′ distribution remain `NOT_MEASURED` until firmware/DDS emits the topic. Removal condition: replace this diagnostic-only bridge only after reviewed firmware/DDS provenance, repeated bias distribution, yaw/reset gates, and a product transform contract exist. Verify: `build/px4_navigation_external_mode/test_estimator_bias_observation --gtest_color=no`; `make build`; `make test`; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| W5-CP10 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | DIAGNOSTIC_ONLY | Owner: PX4 integration. Scope: compute and publish wrapped `yaw_LIO - heading_PX4` residual from the existing alignment witness when both orientations are valid; no threshold, transform, or yaw-alignment authority is added. Safety impact: makes B15/B20 drift observable without treating a missing/invalid quaternion or heading as zero or PASS. Evidence: RED pure-test compile; GREEN 4/4 local-frame tests; PX4 external-mode package build/test; product PVA path remains unchanged. Removal condition: supersede only with a reviewed canonical `yaw_align`/reset-counter contract and representative runtime evidence. Verify: `build/px4_navigation_external_mode/test_local_frame_alignment --gtest_color=no`; `make build`; `make test`; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| W5-CP11 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | DIAGNOSTIC_ONLY | Owner: PX4 integration. Scope: pure `FrameTransformContract` only; require `tau_s>=10`, finite monotonic source, innovation/reset recertification, frame-pressure budget, and sticky yaw/reset degradation; do not transform or publish product PVA. Safety impact: prevents a future T3 caller from treating stale, rejected, reset, or yaw-incoherent bias as authority; current latch/product path is unchanged. Evidence: RED missing-header/build failure followed by GREEN 9/9 pure contract tests, package build, and existing local-frame/bias tests. Removal condition: supersede only after reviewed firmware/DDS provenance, U2′ distribution, canonical `yaw_align`/reset contract, product wiring and representative qualification; until then keep diagnostic-only. Verify: `ctest --test-dir build/px4_navigation_external_mode -R '^(test_frame_transform_contract|test_local_frame_alignment|test_estimator_bias_observation)$' --output-on-failure`; `make build`; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| W5-CP37 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: runtime execution/planning and PX4 adapter. Scope: reconcile HG-007 wording with `INV-12`; retain `kCommandAnchorErrorLimitM = 0.75 m` as a reject-only execution-anchor boundary and do not let tracking/anchor pressure authorize emergency braking. Safety impact: prevents a reader or future call path from confusing command rejection with emergency authority; clearance plus current `KNOWN_FREE` remains mandatory. Evidence: source audit of `command_safety_contract.hpp`, retained-anchor call sites, and `measuredStateEmergencyMayReplaceCommittedCommand`; existing W5-CP06/W5-CP07 focused tests; validator/citation/diff checks. Removal condition: replace only with a reviewed equivalent boundary that preserves the same `INV-12` separation. Verify: `python3 tools/check_mission_authority_cut.py`; `python3 tools/check_dependency_direction.py`; `python3 tools/validate_runtime_safety_ledger.py`; `python3 tools/check_documentation.py . docs`; `git diff --check`. |
+| W5-CP38 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: PX4 integration. Scope: `checkArmingAndRunConditions()` now evaluates accepted propagated-odometry source age and steady receive age through the existing `evaluateExecutionStateFreshness()` contract, matching command admission and setpoint update; no lease/threshold change. Safety impact: prevents a delayed or future-stamped odometry sample that was recently received from falsely making External Mode runnable; missing or invalid time remains fail-closed under Invariant 1. Evidence: RED test with fresh receive/stale source, GREEN `test_navigation_mode_progression` 9/9 and package build. Removal condition: replace only with a reviewed single freshness authority preserving source/receive clock separation. Verify: `ctest --test-dir build/px4_navigation_external_mode -R '^test_navigation_mode_progression$' --output-on-failure`; `make build PACKAGES=px4_navigation_external_mode`; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| W5-CP40 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: runtime execution/planning and PX4 adapter. Scope: a fail-closed `STATUS_REJECTED` command retains the known External Mode activation identity for correct adapter classification; an executable sample rebinds that identity under the final publication lock; unknown activation remains zero and fail-closed, while the identity gate is unchanged. Safety impact: preserves session provenance without making a rejected or candidate-less command executable, preventing planner failure from being misclassified as a different session. Evidence: RED/GREEN runtime identity test, PX4 admission tests, mission-authority static fence, build, and post-rebuild artifact `.artifacts/runtime/external-mode-check-20261004T044038-493258/`; mission/liveness qualification remains NOT_EVALUABLE. Removal condition: replace only with an equivalent typed command-provenance boundary that preserves fail-closed identity handling. Verify: focused runtime/PX4 tests; `python3 tools/check_mission_authority_cut.py`; `make build`; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| W5-CP57 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: planning/runtime. Scope: `retained_position_heading_rebind` may retain position and change yaw only; it remains subject to the same MAIN route-regression certificate as nominal candidates. Safety impact: retires the local route-certificate bypass that could admit a retained suffix after a rejected forward-route renewal; no tolerance, tracking budget, emergency authority, lease, world, or Hold fallback is relaxed. Evidence: RED/GREEN `RetainedHeadingRebindCannotBypassRouteCertificate`, full `test_trajectory` 157/157, and source audit of `authorizeAndStage`; representative post-rebuild liveness artifact is still required before CP-W5-20 can close. Removal condition: replace only with a reviewed typed successor contract that proves equal-or-stronger route monotonicity and exact P/V/A/J/world/lease provenance. Verify: focused backend test; `make build`; `make test PACKAGES=navigation_planning_backend`; `python3 tools/check_mission_authority_cut.py`; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| W5-CP58 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: planning/runtime. Scope: retained heading-rebind is not staged when its inherited first BACKUP interval leaves less than the existing `kMinimumMainReserveS`; nominal planner retains successor ownership. Safety impact: prevents a doomed retained owner from reaching execution admission with `remaining=0.591` against `required=0.600`; no reserve, tracking, route, world, lease, emergency, or PX4 fallback contract is relaxed. Evidence: RED missing-helper build; GREEN reserve helper, focused trajectory/facade tests, and source guard in both heading paths; post-rebuild runtime evidence remains required for CP-W5-20. Removal condition: replace only with a reviewed typed successor that proves equal-or-stronger reserve and owner handoff. Verify: focused/full backend tests; `make build`; `make test PACKAGES=navigation_planning_backend`; `python3 tools/check_mission_authority_cut.py`; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| W5-CP32 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Owner: execution authority. Scope: `ExecutionAuthority::invalidate()` resets lifecycle facets together with active/staged identity to `InitialHold/InitialHold`, `Unavailable/Nominal/None`. Safety impact: prevents a command-less snapshot from retaining stale Tracking/Safety/restart authority; it does not create a publish path or replace explicit PX4 Hold fail-closed handling. Evidence: RED/GREEN `InvalidateResetsLifecycleWithCommandIdentity`; targeted `test_execution_authority` passed; qualification remains open. Removal condition: replace only with an equivalent reviewed P4 reducer transition and replay evidence. Verify: `ctest --test-dir build/navigation_execution -R '^test_execution_authority$' --output-on-failure` after sourcing ROS/install; `make build PACKAGES=navigation_execution`; `python3 tools/validate_runtime_safety_ledger.py`; `git diff --check`. |
+| DEC-20260917-007 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Couple overlap junction position and time to the continuous guide; retain existing certificates. |
+| DEC-20260917-006 | ACTIVE | IMPLEMENTED | INTEGRATION_PARTIAL | DIAGNOSTIC_ONLY | Reassess completion after the normalized-guide matrix; do not claim qualification from the matrix. |
+| DEC-20260917-005 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Normalize existing guide geometry/time/window boundaries without changing safety gates. |
+| DEC-20260917-004 | ACTIVE | IMPLEMENTED | INTEGRATION_PARTIAL | DIAGNOSTIC_ONLY | Reject nominal-only early return after completion-focused SITL; full bundle readiness remains required. |
+| DEC-20260917-003 | ACTIVE | IMPLEMENTED | INTEGRATION_PARTIAL | PRODUCT | Separate mandatory nominal readiness from optional objective shaping. |
+| DEC-20260917-002 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | DIAGNOSTIC_ONLY | Observe the exact propagated state used at PX4 update for evidence attribution. |
+| DEC-20260917-001 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | PRODUCT | Keep terminal STOP acceptance independent of pass-through projection. |
+| DEC-20260916-010 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | DIAGNOSTIC_ONLY | Preserve the first fully certified accepted MINCO iterate for replay/evidence. |
+| DEC-20260916-009 | ACTIVE | IMPLEMENTED | COMPONENT_VERIFIED | DIAGNOSTIC_ONLY | Resolve command-bundle ownership from export evidence; do not infer it from later telemetry. |
+| DEC-20260916-001 | ACTIVE | IMPLEMENTED | INTEGRATION_PARTIAL | PRODUCT | Bound frontier terminal speed by the final guide turn; current SITL evidence remains conditional. |
+| W3-A4-J1b.1 | ACTIVE | IMPLEMENTED | UNIT_VERIFIED | DIAGNOSTIC_ONLY | Owner runtime judge. `evaluation_window` selects position/velocity statistics, coverage, and `matched_sample_ratio`; no frame/threshold/authority change. RED exposed 100 m / 100 m/s out-of-window sample and a window-local ratio of 0.667; focused GREEN passed with ratio 1.0; SITL/rejudge `NOT_EVALUABLE`. Revisit only for distinct windows/typed evidence; verify focused Python, ledger, diff. Authority: owner decision 2026-09-30 R7-27: `evaluation_window` áp cho cả error statistics và coverage. |
+| W3-A4-J1b.3 | ACTIVE | IMPLEMENTED | UNIT_VERIFIED | DIAGNOSTIC_ONLY | Owner runtime judge/report. Only cross-track and non-gate metrics carry `authority=diagnostic`, `frame_status=diagnostic_frame_unverified`; truth-tracking p95/max remain the `tracking_status`/C0-IFP gate. Annotation operates on copies and does not mutate evaluator-owned qualification checks; cross-track is not a verdict gate; thresholds/safety gates unchanged. RED showed broad annotation of truth metrics and extreme cross-track changing legacy display verdict; focused verdict/metadata/HTML GREEN. Rejudge: 16 sessions, 0 errors, 0 verdict changes; SITL qualification remains `NOT_EVALUABLE`. Revisit after typed world-frame evidence; verify Python, ledger, diff. Authority: owner decision 2026-09-30 Q-XTRK: cross-track là report-only, không là verdict gate; R7-25/26 giữ OPEN. |
+## Baseline notes / unresolved inconsistencies
+
+- The active `HG-004` table and source use 12/9/30 for physical/BACKUP and
+  5/5/8 for MAIN; historical 12/12/30 is lineage only, not a current gate.
+- The 0.81 m/s² difference (`9.81 - 9.0`) is arithmetic distance to the nominal
+  tilt ceiling only. Sustaining 9.0 m/s² horizontally implies about 42.5° and
+  T/W about 1.36 before vertical, 3-D braking, or the approximately 190 ms
+  attitude ramp implied by 220°/s; U4′ still owns and has not verified these.
+- Legacy decisions did not prove explicit supersession. No supersession or
+  qualification was invented; treat such labels as `UNRESOLVED`.
+
+## Worktree experiment: retain a nominal incumbent without early return
+
+- Owner/status: nominal optimizer and complete-bundle planner; EXPERIMENT,
+  not qualified or approved for hardware deployment. This is a behavior
+  trial, not an authority-preserving refactor or the withdrawn ready-first
+  return policy.
+- Scope: retain immutable continuously certified accepted MINCO iterate before the existing refinement cutoff,
+  continue optimization, prefer valid final. At cutoff/final rejection select/revalidate only unrevoked incumbent.
+  Validator exception/cancellation/hard expiry fail closed; solver-local, not execution authority.
+  All yaw/BACKUP/latest-world/admission/activation gates remain.
+- Safety: no80ms/400ms, weights, dynamic/corridor/route/freshness/tracking/SAFE-FAST policy change.
+  Certificate work consumes complete-bundle time; nominal incumbent may lack viable SAFE BACKUP.
+- Evidence/removal: PRE replay332/333 exposes lost early nominal certificate, not completion fix.
+  Provisional until regression/full-bundle/SAFE-FAST2/5/9WP evidence; withdraw on completeness/progression/tail regression.
+  Keep all failures and qualification blocks. Verify incumbent/final-preference/revocation regressions,
+  frozen40/80ms replay, real-facade SAFE/FAST, `make test`, Release and sequential5m/s matrix.
+  Targeted history/outcomes.
+## Historical recovery trial: pre-START tracking (superseded)
+
+The former indeterminate pre-START recovery trial is historical only. CP07 and
+current invariant 7 supersede it: tracking pressure cannot authorize measured
+emergency; missing world evidence fails closed. Original trial/evidence remain
+in the verified code/docs backup, not an active safety permission.
+
+## Baseline migration review closures
+
+- Owner: existing planner/runtime/PX4/estimator/runtime-tools owners. Scope: reviewed baseline only; no flight threshold change or qualification. Build/test/gate are serialized under the build lock; package tests run sequentially to prevent validation orchestration from contending with the unchanged 80 ms product deadline. This is controlled component-test execution, not latency/distribution qualification. Explicit multi-line package lists are normalized so no package is silently omitted. External LIO reset service and interior optimizer retries are DEFERRED (923cdc1, a98d131, 8ab34d6): publication-fence/topic-prior lifecycle and deadline/cancellation proofs remain R0 debt; original patches are in backup. Existing core/worker reset helpers remain unqualified.
+- Paired BACKUP yaw duration must recheck exact position V/A/J and concrete support + existing reaction/radius horizon before world/corridor/flatness; inherited entry-overspeed allowance is unchanged. Each yaw attempt observes cancellation. Evidence: continuous-extrema counterexample and production regression; acceptance requires RED→GREEN/full gate. Removal: equivalent complete certifier with cancellation evidence. Verify: `ctest --test-dir build/navigation_planning_backend -R '^test_trajectory$' --output-on-failure`.
+- Runtime clearance authority requires an observed nontraversable cell, finite witness and matching generation/current immutable-world identity; missing validator, exception, identity mismatch or missing cell witness cannot authorize measured emergency. Evidence: negative controls distinguish missing/ambiguous evidence from real blocking. Removal: reviewed typed clearance certificate. Verify: `ctest --test-dir build/navigation_runtime -R '^test_planner_fsm$' --output-on-failure`.
+- U1 decomposition and U2 bias distributions are explicitly unavailable (`NOT_EVALUABLE`, empty summaries/false checks) pending witness identity/time/basis and ordered bounded-horizon policy. Background host telemetry is DEFERRED (`NOT_MEASURED`) until single-writer metadata + source-stamped RTF; raw Gazebo artifacts remain diagnostic. U4 identical events count once, conflicts reject. This tightens evidence classification, never relaxes product safety. Evidence: U1/U2/U4 negative tests RED→GREEN; no distribution qualification. Removal: R0/R1 reviewed repairs + counterexample tests and valid repeated data. Verify: `python3 -m unittest discover -s tools/runtime/tests -p test_evaluation.py`, `make test`, ledger validator and diff check.
+
+## Worktree boundary correction: canonical signed MAIN elapsed time
+
+- Owner/status: existing runtime retained-validation transaction; IMPLEMENTED,
+  COMPONENT_VERIFIED with v3 Full Release/regression complete; native
+  completion milestone FAILED (SAFE5WP0/3, FAST5WP1/3). No
+  new bypass, temporary gate, recovery trigger or command authority is added.
+- Scope: immutable state is loaded before a shared evaluation timestamp;
+  elapsed is checked signed nanosecond evaluation-minus-declared START, then
+  converted as a duration. Exact START is zero; genuine pre-START remains
+  negative, overflowing/malformed deltas remain unusable, END stays exclusive.
+  Independent dual-clock freshness, actual owner/world/lease/END checks and
+  source-aligned tracking support remain mandatory.
+- Safety impact: remove a false-negative caused by differently rounded
+  absolute seconds. No epsilon, zero fallback, grace, anchor retiming, threshold,
+  budget or SAFE/FAST UNKNOWN change. It does not invent a G SOURCE sample or
+  certify collision-free physical stopping. Backward-clock monitor entry is
+  reject-only, not a complete distributed reset/receiver proof.
+- Evidence/review condition: frozen SAFE5r2 G13 START/evaluation56092000000ns
+  yields legacy elapsed -7.1e-15s while raw .1483748m < .25m and all remaining
+  retention checks pass. Real factory controls are3 RED before correction;
+  actual Luna v2 monitor37/37 and FSM73/73 GREEN. The all-offset assertion is
+  strengthened after v2; final v3 Full Release/regression and monitor37/37,
+  FSM73/73, facade40/40 pass. Serial18 closes1 COMPLETE,14 PAUSED and3 component
+  failures, all cleanup/provenance valid; no performance tag or qualification.
+  Exact per-failure attribution remains a separate census, not implied by the
+  clock component PASS. Revisit if declared-time/source semantics change or independent
+  identity/reset/END controls fail; no component-only performance claim.
+- Verification/history: `test_navigation_runtime_terminal_monitor`,
+  `test_planner_fsm`, canonical Release/full regression/`make test`, separately
+  frozen serial SAFE/FAST x 2/5/9WP x 3; ledger validation and `git diff --check`.
+  DEC-20260909-007 preserves source-aligned tracking semantics. Exact native,
+  RED/GREEN provenance and limitations are in the
+  canonical closure.
+- Subsequent diagnostic discriminator (no product behavior change): v3 FAST9
+  first-loss samples have canonical elapsed0, not recurrence of the repaired
+  negative elapsed. G27 raw .9896m is beyond the existing outer cap; another
+  G27 raw .3654m attempts H preparation but does not obtain a candidate.
+  FAST9r2 actually retries PlanFromRest, not scheduler suppression. Root's
+  source-age-only draft controls fail their pressure precondition (.0344m,
+  below.25m) and are withdrawn with RED logs retained, not called product
+  failures or repaired by retiming/tuning. Existing Full Release/component
+  claims above remain bound to their frozen v3 source, not these draft controls.
+  Original H-leaf and closed-loop capture attribution remain open; details:
+  terminal/observer discrimination.
+
+## Worktree boundary correction: canonical planner ACK START ordering
+
+- Owner/status: existing backend `CmdTraj` ACK/history boundary; IMPLEMENTED,
+  COMPONENT_VERIFIED, Full Release/regression and frozen18-run native comparison
+  CLOSED; completion/performance acceptance remains NOT_MET.
+  The execution timeline remains the sole command authority; no bypass or
+  recovery permission is added by this correction.
+- Scope: precheck and commit use the same checked nanosecond START conversion
+  as executable export. Metadata must match the positional origin actually
+  stored. Same canonical START may differ in absolute-double rounding; a
+  genuinely older origin, malformed/negative/overflowing START and regressed
+  generation remain reject-only, before history mutation. Legacy unit API0
+  remains representable; yaw structural tolerance and original trajectory
+  origins are unchanged. Lost double precision at large epochs is not restored.
+- Safety impact: remove a false-negative at exact activation without epsilon,
+  clamp, rebase, grace, anchor retiming, budget/gate or SAFE/FAST UNKNOWN change.
+  Generation, epoch/request/world/role/dynamics/admission gates still apply.
+- Evidence/review condition: actual-factory G at83716000000ns with controlled
+  pressure has exact-START H preparation RED and matched+20ms GREEN. Four
+  direct guard controls are RED before correction. Actual Luna after correct
+  backend install/relink passes trajectory152/152 and monitor39/39; final relaxed/
+  observer-OFF controls pass monitor41/41. Full Release23 packages, full test14
+  packages,87 CTest targets and final FSM73/facade40 pass. Frozen native18/18 is
+  5 COMPLETE/12 PAUSED/1 FAILED_COMPONENT, SAFE5WP0/3 and FAST5WP2/3, all terminal
+  cleanup/provenance valid,0 report PASS and no qualification. Native buffered
+  cancellation reason is not unique, so original FAST9 H-leaf causality and
+  completion/performance improvement remain unproven. No performance tag or
+  experiment promotion. Revisit if declared START or history semantics change.
+- Verification/history: trajectory Ack/ordering/generation tests, actual
+  runtime monitor H preparation/admission/ACK/Episode receipts, canonical Full
+  Release/`make test`, frozen SAFE/FAST x2/5/9WP x3, ledger validation and
+  `git diff --check`. DEC-20260825-021, DEC-20260829-061,
+  DEC-20260831-021 and DEC-20260916-005 are legacy lineage labels.
+  RED/GREEN and provenance.
+  Native closure and evidence limits.
+
+## Worktree boundary trial: BACKUP construction preconditions
+
+- Owner/status: existing planner BACKUP construction; EXPERIMENT, focused
+  two sequential SAFE facade REDs followed by focused2/full facade42 GREEN;
+  strengthened same-candidate policy/blocked-world recertification also GREEN;
+  Full Release/regression and frozen18-run native verification CLOSED;
+  completion/performance acceptance NOT_MET; not promoted or qualified.
+  No new execution authority or parallel implementation is added.
+- Scope: remove the unused robot-radius visibility-seed retreat and its
+  minimum-chord rejection. The checked seed was overwritten before the switch
+  search; the visibility SFC no longer constructs the actual braking corridor.
+  Keep the existing finite visibility window, required MAIN reserve, absolute
+  deadline/cancellation, actual braking-SFC/full Bezier hull, continuous
+  corridor, dynamics/flatness, swept-world and final authorization boundaries.
+- Safety impact: admit construction attempts, not an uncertified command. SAFE
+  BACKUP remains KNOWN_FREE; explicit FAST may use UNKNOWN; both still reject
+  OCCUPIED and OUT_OF_MAP. Robot radius, clearance/inflation, budgets, leases,
+  sampling, anchors and waypoint acceptance values are unchanged. A second
+  controlled stage removes the actual-braking minimum net-chord precondition:
+  the existing geometry API owns finite short/point seeds and the entire
+  polynomial still requires its own corridor, hull and world certificates.
+- Evidence/removal condition: exact typed-core selected MAIN at requested
+  5m/s has a positive short stop with all existing offline certificates; SAFE
+  facade first fails before enumeration while explicit FAST passes. After
+  removing only that obsolete gate, ten seeds are feasible; seven longer
+  seeds reach world checks and fail, while the final short seed is rejected
+  at corridor construction before its mandatory checks. Last-known-free
+  diagnostics belong to earlier longer seeds, not that untested final seed.
+  The same MAIN's final short stop passes the independent offline checks.
+  This is a
+  controlled component RED, not attribution for the prior native failures.
+  Withdraw if full certificates, active retention, cancellation or timing tails
+  regress. Native matrix completes5/18 (6 component failures,7 safety pauses),
+  SAFE5WP2/3 and FAST5WP1/3: the proposed milestone is not met in both policies.
+  All18 remain qualification-ineligible; native completion improvement and
+  physical stopping/capture/cruise/tracking quality remain unproven. Six receiver
+  stale witnesses are not a MINCO/CIRI solver failure rate. Do not restore the
+  removed automatic mode re-entry as a completion workaround (DEC-20260909-004).
+- Verification/history: focused ShortFrontier facade tests, full Release and
+  regression/adversarial controls, then frozen SAFE/FAST x2/5/9WP x3 with every
+  failure retained; ledger validator and `git diff --check`. Targeted lineage:
+  DEC-20260828-005 actual braking hull; DEC-20260909-002 valid point seed;
+  DEC-20260902-041 complete baseline before optional refinement. Local diagnostic
+  artifacts for this entry were not retained.
+  Native closure, provenance and failure discrimination.
+
+## Worktree correction: stop authorization requires a concrete polynomial
+
+- Owner/scope: planner BACKUP/EMERGENCY builder and speed governor; source bugfix, component evidence only, not flight-qualified.
+- Contract/behavior: the shared PVAJ scalar is a search estimate, not stop authorization. Require a concrete minimum-snap stop, bounded extrema and polynomial support; corridor/world remain independent. Measured PVAJ and physical limits govern; nominal cruise cannot erase derivatives. Steady-cruise proposals use the existing polynomial's closed-form duration/support cap, then the concrete extrema validator. If conversion to the representable duration rounds below the exact A/J boundary, allow at most 32 upward representable corrections; the existing numerical-extrema tolerance does not relax the analytic physical A/J comparison. At a support boundary, allow at most eight downward representable candidate-speed corrections until the concrete stop support fits; this is not a widened feasibility or speed policy. Nonzero measured PVAJ retains bounded synthesis. Scalar support never replaces world/corridor checks.
+- Evidence/removal: native `PlannerBackupBraking`/`PlannerSpeedGovernor` counterexamples and positive-state tests, including a feasible speed below the old 1/16 grid floor and bounded-abort checks. Keep full-state stop, support and independent world authorization; extrema work is uninterruptible and no WCET is claimed. Integration/recorded-data evidence remains open; physical/nominal limits, tolerances, UNKNOWN policy and deadlines are unchanged. Lineage: DEC-20260903-001.
+
+## Diagnostic only: complete-baseline refinement opportunity
+
+- Owner/scope: planner-core diagnostic fixtures only, not execution authority. Finite all-known-free SAFE/FAST requests retain 80ms/400ms and every validator;
+  no production scheduling, policy, budget, bypass or observer change.
+- Evidence: actual Luna typed-core v3 has 12/12 complete initial baselines; early SAFE3/3 and FAST3/3 successors complete with matching STOP/rest and shorter planned
+  remaining bundle time. Six late requests fail before MINCO, not in the optimizer or native mission; attribution was root-reviewed.
+- Safety/removal: diagnostic only, not deployment/qualification evidence. Retain failures/pins; withdraw if native completion, quality or CPU/latency tails regress. Product change
+  needs controlled RED/GREEN, full Release/regression and frozen SAFE/FAST matrix. Scope, results and retention.
+
+## Experimental scheduling: one initial-baseline refinement after actual ACK
+
+- Owner/scope: existing serial navigation runtime planning worker. Unpromoted
+  working-tree experiment, not native acceptance. Only the first admitted
+  initial-stopped certified-seed MAIN+BACKUP for a localization/goal/request
+  tuple can open one otherwise-deferred quality attempt, after canonical active,
+  Episode and actual backend history generations agree. A queued ACK watermark
+  alone is insufficient. Route/dynamics/world-generation must match; same-G
+  recertification, seed successors and stopped recovery cannot rearm it.
+- Safety: preserve post-admission quiet tick and ordinary renewal/urgent rules;
+  never label quality a forced safety transition. Require healthy, exposed,
+  current-world MAIN and request/current-world revision agreement, no
+  pending/hot/restart/terminal hold. Consume only at a
+  valid future-anchor typed-request backend entry; failed/cancelled attempts
+  do not refund. Existing admission, retained validation, expiry, fail-closed,
+  SAFE known-free and FAST explicit-UNKNOWN policies remain authoritative.
+  No budget,400ms anchor, certificate, gate, publisher or observer change.
+- Evidence/status: matched legacy-gate RED v4 reaches actual initial runtime
+  admission/queued ACK and a valid future anchor, but never starts the early
+  successor. GREEN v2 passes four scheduling and two real-runtime synthetic
+  tests, including full successor staging/HEAD parity and post-solve failure
+  retaining validated MAIN without quality retry. Earlier compile, body-prefix
+  and insufficient future-lease fixture blockers are not product findings.
+  Full Release/regression and frozen18-run native execution are CLOSED;
+  completion/performance acceptance is NOT_MET (SAFE5WP2/3, FAST5WP1/3).
+  The18 cases close8 COMPLETE/9 PAUSED/1 component failure, all cleanup/provenance
+  valid and qualification-ineligible. Only two cases have a reason6 quality
+  opportunity; this is not an18-case successful-refinement ablation. Tracking
+  diagnostics exist, but reference-lineage/coverage eligibility and CPU tails
+  remain unproven. No performance tag or promotion is earned.
+- Removal/verification: withdraw if full-candidate readiness, completion,
+  tracking/settling or resource tails regress; no performance tag or promotion
+  from component evidence. Run focused BaselineRefinement FSM and real-runtime
+  tests, full Release/regression/adversarial controls, then frozen serial
+  SAFE/FAST x2/5/9WP x3; ledger validator and `git diff --check`.
+  Targeted lineage: DEC-20260901-053/054/055, DEC-20260902-041,
+  DEC-20260906-001 and DEC-20260909-021. Existing diagnostic failure injection
+  is used only in the test control and stays default OFF.
+  Canonical lifecycle evidence.
+  Full gates, native closure and limitations.
+
+## Worktree boundary correction: captured planning request coherence
+
+- Owner/status: existing serial runtime request builder; IMPLEMENTED,
+  COMPONENT_VERIFIED, full Release/regression/native18 CLOSED, completion NOT_MET;
+  unqualified; no new owner/trigger/bypass.
+- Scope: refresh only SOURCE/revision to match captured immutable inputs; never
+  rebase goal/epoch/request/route/dynamics/active-G/world-generation. Reject changed
+  owner/frame/pending/stale inputs before backend; anchor PVAJ/activation/world factual.
+- Safety:80ms/400ms, validators/leases/exposure limits, SAFE known-free/FAST explicit UNKNOWN unchanged; worker provenance, owned-key/latest-world admission retained.
+- Evidence:3 actual-runtime REDs + positive PASS -> initial6/6, monitor48/48,
+  existing FSM77/77, worker12/12 GREEN;7 tampered-key negatives do not solve,
+  mutate active/pending or latch failure. Moving4/4, monitor52/52, Release23 packages,
+ 85 fresh CTests, Python389 PASS/1 SKIP. Native18:5 COMPLETE/7 PAUSED/6 component,
+  SAFE5WP1/3, FAST5WP2/3; cleanup/provenance valid,0 report PASS. FAST5r2 conditional;
+  no performance/qualification claim; retention and pins in the report.
+- Review/verification: revisit request/history/promotion/producer semantics; moving/initial controls, full Release/regression/adversarial, frozen SAFE/FAST
+  x2/5/9WP x3, ledger validator/diff check. DEC-20260902-017 lineage.
+  Canonical RED/GREEN and provenance.
+## Worktree: shared immediate cutover and CIRI reference restoration
+
+- Owner/scope: IMPLEMENTED one immediate store/Episode/executing-goal delivery under loc->input->command;
+  prepared goal/validation outside, exact predecessor/final owner-freshness checks inside. ACK never replays; future stage unchanged.
+- Evidence: factory2 RED/1 positive ->3 focused/54 monitor GREEN (CIRI1); final CIRI2 Release23 packages/85 fresh CTests PASS. Native18 closes5 COMPLETE/9 PAUSED/4 component; SAFE5WP1/3, FAST5WP2/3,9WP0/3 each. No performance/qualification claim.
+- Planning: CIRI current1 (TB-003 two-pass reference not promoted), loader/config agree;80ms/400ms/dynamics/certificates/leases unchanged; SAFE known-free/FAST explicit UNKNOWN, both forbid OCCUPIED/OOM.
+- Removal/review: no new bypass; revert trial if complete readiness, progression/clearance or tails regress. Verify immediate/CIRI/supersession, Release/`make test`, SAFE/FAST2/5/9WPx3, dense dataset1/2 A/B; history/receipts.
+
+## Worktree correction: nonuniform corridor junction velocity
+
+- Owner/scope: existing deterministic seed builder; IMPLEMENTED, COMPONENT_VERIFIED.<br>**W5-CP77 command publication/source ordering:** Owner runtime execution/runtime-tools; scope final authorization boundary only; safety impact future state-source time rejects command exposure rather than clamping evidence, while planner/PX4 authority, leases, thresholds, fallback and U1′ qualification remain unchanged; evidence RED focused compile followed by GREEN runtime target/CTest, with U1′ still `DIAGNOSTIC_ONLY / NOT_EVALUABLE`; removal condition reviewed replacement of the source-time contract with equal-or-stronger fail-closed ordering; verify `ctest --test-dir build/navigation_runtime -R '^test_navigation_runtime_terminal_monitor$' --output-on-failure`, package build, ledger validator, citation check and `git diff --check`; history CP-W5-77 chain.
+  Opposite-duration normalized secant weights reproduce quadratic motion across unequal T.
+  A/J construction, interior speed cap, hull damping and immutable endpoint PVAJ remain.
+- Safety: no retiming, new bypass/owner, budget, gate, dynamics or SAFE/FAST change;
+  full continuous nominal/world/BACKUP/admission certificates remain mandatory.
+- Evidence: actual production-header analytic fixture RED; certificate stage5 is
+  DeterministicNominalSeedFailureStage::kDynamics, not builder coefficient failure.
+  GREEN/14 seed tests/optimizer31/Release23/85 fresh CTests/Python389 PASS (one GUI skip); failed oracle/namespace runs retained. Native readiness pending; no completion/performance claim.
+- Verify unequal/reversed/multiple-junction oracle, cap/corner negatives, backend/full
+  regression and Release. Lineage DEC-20260828-089; current action/evidence.<br>**2026-09-23 Core mission handoff repair:** owner Core `NavigationRuntimeNode` for mission/publication and PX4 adapter for local admission; scope first mission-authority cut; safety impact: retain only the exact certified executing predecessor across desired PASS gate advance, use 200 ms ModeStatus freshness only to establish activation, continue exact finite adapter admission and unchanged 100 ms command/200 ms adapter/500 ms runtime leases, world/certificate/localization checks and Hold; evidence: pre-fix H4/H5 plus `publishCommand()` stack, component tests and focused diagnostic SITL in `artifacts/repair_core_mission_liveness/`; removal condition: revert if exact execution identity, adapter-local admission, or finite predecessor lease cannot be proven; verify Release build, focused package/Python tests, mission-authority guard, SITL parity/lease fence, `python3 tools/validate_runtime_safety_ledger.py` and `git diff --check`. Targeted history and limitations.<br>**2026-09-24 diagnostic state transport timing trace:** owner FastLIO publisher, PX4 adapter ingress and SITL evidence monitor; scope default-OFF, explicit simulated-time SITL/test sideband sequence/source/steady/callback/lock/accepted-receive witnesses, separate >50 ms `/clock` arrival diagnostics and read-only rosbag clock-gap recovery. Safety impact: no control or health decision consumes the best-effort trace; monitor 500 ms stale assessment, 200 ms state boundary, command lease and Hold unchanged; missing trace is missing evidence. Evidence: pinned A2, natural pilot 3 and ten-run cohort in `artifacts/qualification_gate_recovery/20260924T082427Z-4d184896/`; remove when causal attribution closes or enabled-trace load perturbs control. Verify trace scope guard, Release/component/SITL, ledger validator and `git diff --check`. Lineage.<br>**W5-CP43 typed-health high-water mark:** owner/scope PX4 typed `/lio/health` ingress; safety impact no threshold/authority/fallback/frame change, newer-invalid still closes gate and rejected samples do not refresh `health_max_age_ns`; evidence RED compile then GREEN `test_external_lio_health` 3/3 plus diagnostic READY/gate-flap SITL audit; removal if source-time ordering contract changes or retention is shown unsafe; verify focused/full build-test, ledger validator, citation/diff checks and fresh artifact audit; history CP-W5-43 chain.

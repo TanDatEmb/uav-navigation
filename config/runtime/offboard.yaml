@@ -1,0 +1,14 @@
+scenario:
+  wall_timeout_s: 180.0
+  segments:
+    - {name: GROUND, duration_s: 3.0, position_ned: [0.0, 0.0, 0.0], yaw_rad: 0.0}
+    - {name: TAKEOFF, duration_s: 8.0, position_ned: [0.0, 0.0, -2.0], yaw_rad: 0.0}
+    - {name: HOVER_1, duration_s: 10.0, position_ned: [0.0, 0.0, -2.0], yaw_rad: 0.0}
+    - {name: TRANSLATE_X, duration_s: 5.0, position_ned: [3.0, 0.0, -2.0], yaw_rad: 0.0}
+    - {name: HOVER_2, duration_s: 5.0, position_ned: [3.0, 0.0, -2.0], yaw_rad: 0.0}
+    - {name: TRANSLATE_Y, duration_s: 5.0, position_ned: [3.0, 3.0, -2.0], yaw_rad: 0.0}
+    - {name: HOVER_3, duration_s: 5.0, position_ned: [3.0, 3.0, -2.0], yaw_rad: 0.0}
+    - {name: YAW, duration_s: 5.0, position_ned: [3.0, 3.0, -2.0], yaw_rad: 1.5707963267948966}
+    - {name: RETURN, duration_s: 8.0, position_ned: [0.0, 0.0, -2.0], yaw_rad: 1.5707963267948966}
+    - {name: LAND, duration_s: 8.0, position_ned: [0.0, 0.0, 0.0], yaw_rad: 1.5707963267948966}
+    - {name: DISARM, duration_s: 20.0, position_ned: [0.0, 0.0, 0.0], yaw_rad: 1.5707963267948966}
