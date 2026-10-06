@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -250,6 +251,55 @@ TEST(OutputPredictor, JitteryDtIsClamped) {
     const auto out = op.on_imu(Stationary(At(now + 1'000'000), 0.0));
     ASSERT_TRUE(out.has_value());
     EXPECT_NEAR(YawOf(out->q_world_imu), 0.5 * 1e-4 / 0.02 * 0.01, 1e-8);
+  }
+}
+
+// --- attitude correction window (third difference from PX4) ---------------------------------------
+
+TEST(OutputPredictor, HeldAttitudeCorrectionStopsAfterTheDelayWindow) {
+  // One applied 0.01 rad yaw correction (delay 50 ms), then 2 s of IMU with NO further corrections. The
+  // held delta-angle correction must act for one delay's worth of IMU steps only (removing ~0.5 of the
+  // error, PX4's per-delay share) and then stop: no false angular rate once corrections stop.
+  const double err = 0.01;
+  OutputPredictor op(Beta());
+  op.align(Snap(At(0)));
+  std::int64_t now = 0;
+  for (int k = 1; k <= 20; ++k) op.on_imu(Stationary(At(now += kImuNs)));
+  ASSERT_TRUE(op.on_correction(Snap(At(now - 50'000'000), Vector3d::Zero(), Vector3d::Zero(), Yaw(err))).has_value());
+  std::optional<OutputSample> out;
+  double yaw_at_1_5_s = 0.0;
+  for (int k = 1; k <= 400; ++k) {
+    out = op.on_imu(Stationary(At(now += kImuNs)));
+    ASSERT_TRUE(out.has_value());
+    if (k == 300) yaw_at_1_5_s = YawOf(out->q_world_imu);
+  }
+  const double yaw = YawOf(out->q_world_imu);
+  EXPECT_LE(yaw, 0.6 * err);
+  EXPECT_GE(yaw, 0.4 * err);
+  EXPECT_NEAR(yaw - yaw_at_1_5_s, 0.0, 1e-12) << "output still rotating after the correction window";
+}
+
+TEST(OutputPredictor, AttitudeTrackingDoesNotOvershootAtScanRate) {
+  // 200 Hz IMU, 10 Hz corrections of a constant 0.01 rad yaw error, delay 20 / 50 / 100 ms: the attitude
+  // error never exceeds the initial error by more than 20 % and is below 10 % of it within 2 s.
+  const double err = 0.01;
+  for (const std::int64_t delay_ns : {20'000'000LL, 50'000'000LL, 100'000'000LL}) {
+    OutputPredictor op(Beta());
+    op.align(Snap(At(0)));
+    double peak = 0.0;
+    double last = err;
+    for (std::int64_t k = 1; k <= 400; ++k) {
+      const auto out = op.on_imu(Stationary(At(k * kImuNs)));
+      ASSERT_TRUE(out.has_value());
+      last = out->q_world_imu.angularDistance(Yaw(err));
+      peak = std::max(peak, last);
+      if (k % 20 == 0) {
+        const auto r = op.on_correction(Snap(At(k * kImuNs - delay_ns), Vector3d::Zero(), Vector3d::Zero(), Yaw(err)));
+        ASSERT_TRUE(r.has_value()) << to_string(r.error());
+      }
+    }
+    EXPECT_LE(peak, 1.2 * err) << "delay " << delay_ns;
+    EXPECT_LT(last, 0.1 * err) << "delay " << delay_ns;
   }
 }
 
@@ -599,7 +649,10 @@ TEST(OutputPredictor, VerticalChannelCorrectsPositionThroughVelocity) {
   const auto out = op.on_imu(Stationary(At(now + kImuNs)));
   ASSERT_TRUE(out.has_value());
   EXPECT_EQ(out->v_world_mps.z(), 0.0);
-  EXPECT_GT(op.vertical_velocity_mps(), 0.0);
+  // PX4 vertical PD law: correction = vert_pos_err * pos_gain + vert_vel_err * vel_gain * 1.1, with
+  // vert_pos_err = 0.5 m, vert_vel_err = 0 and pos_gain = dt_corr_avg / tau_pos = 0.010 / 0.25 (first
+  // correction: the average still holds PX4's initial 0.010 s). Stationary IMU adds nothing after it.
+  EXPECT_NEAR(op.vertical_velocity_mps(), 0.5 * (0.010 / 0.25), 1e-12);
 }
 
 TEST(OutputPredictor, ReasonNames) {

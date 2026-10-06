@@ -24,6 +24,12 @@ struct LioConfig {
 /// degeneracy_translation_min_info 1.1e5, degeneracy_rotation_min_info 2.8e6,
 /// predictor_tau_vel_s 0.25 s, predictor_tau_pos_s 0.25 s (SYSTEM_DESIGN §3.3: τ_vel = τ_pos = 0.25 s).
 ///
+/// Effective predictor time constant: the vel/pos gain is dt_corr_avg / τ, and (as in PX4) the averaged
+/// correction interval is clamped to kPredictorDtMax = 0.03 s. At scan period T > 0.03 s the per-scan step
+/// is therefore ≈ 0.03 / τ · err, an effective time constant of about τ · T / 0.03 (≈ 0.83 s for τ = 0.25 s
+/// at 10 Hz), not τ. This keeps each correction step small (no visible jump). S1b chooses from SITL logs
+/// between this clamp and the literal τ.
+///
 /// Derivation of the two degeneracy thresholds (smallest eigenvalue of the translation / rotation block of
 /// the per-scan information matrix; see evaluate_degeneracy). Information from n points with weak-direction
 /// measurement noise sigma is about n / sigma^2:

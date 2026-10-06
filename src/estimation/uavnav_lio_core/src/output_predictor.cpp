@@ -18,6 +18,9 @@ constexpr double kIntegralGain = 0.1;         // PI integral term 0.1 * gain^2
 constexpr double kVerticalVelGain = 1.1;      // vertical channel: vel term * 1.1 (5 % overshoot tuning)
 constexpr double kMaxTauS = 10.0;             // gain = dt / constrain(tau, dt, 10)
 
+// Remaining hold time at or below this counts as expired (absorbs rounding of the clamped-dt countdown).
+constexpr double kHoldExpiredS = 1e-9;
+
 // A quaternion with a norm below this carries no rotation that can be recovered by normalising.
 constexpr double kMinQuaternionNorm = 1e-9;
 
@@ -87,6 +90,7 @@ void OutputPredictor::restart(const EstimatorSnapshot& s) noexcept {
   last_correction_t_.reset();
 
   delta_angle_corr_.setZero();
+  att_corr_remaining_s_ = 0.0;
   vel_err_integ_.setZero();
   pos_err_integ_.setZero();
   tracking_error_.setZero();
@@ -107,8 +111,11 @@ std::optional<OutputSample> OutputPredictor::on_imu(const ImuDelta& d) noexcept 
 
   Entry e = newest();
 
-  // PX4 calculateOutputStates: bias-corrected deltas plus the held attitude-tracking correction.
-  const Eigen::Vector3d delta_angle = d.delta_angle_rad - gyro_bias_ * d.dt_s + delta_angle_corr_;
+  // PX4 calculateOutputStates: bias-corrected deltas plus the held attitude-tracking correction, which
+  // acts only inside its window (third difference from PX4, see the header).
+  const bool correcting = att_corr_remaining_s_ > 0.0;
+  Eigen::Vector3d delta_angle = d.delta_angle_rad - gyro_bias_ * d.dt_s;
+  if (correcting) delta_angle += delta_angle_corr_;
   const Eigen::Vector3d delta_velocity = d.delta_velocity_mps - accel_bias_ * d.dt_s;
 
   e.out.q_world_imu = (e.out.q_world_imu * exp_rotation(delta_angle)).normalized();
@@ -134,6 +141,13 @@ std::optional<OutputSample> OutputPredictor::on_imu(const ImuDelta& d) noexcept 
   const double dt_clamped = clamp_dt(d.dt_s);
   dt_imu_avg_s_ = kAvgKeep * dt_imu_avg_s_ + kAvgNew * dt_clamped;
   imu_period_s_ = dt_clamped;
+  if (correcting) {
+    att_corr_remaining_s_ -= dt_clamped;
+    if (att_corr_remaining_s_ <= kHoldExpiredS) {
+      att_corr_remaining_s_ = 0.0;
+      delta_angle_corr_.setZero();
+    }
+  }
 
   push(e);
   return e.out;
@@ -174,13 +188,15 @@ Result<void, PredictorReason> OutputPredictor::on_correction(const EstimatorSnap
   accel_bias_ = s.accel_bias;
   gravity_world_ = s.gravity_world;
 
-  // Attitude: delta-angle correction held for the following IMU steps, gain adapted to the delay.
+  // Attitude: delta-angle correction held for the following `delay` seconds of IMU steps (so it removes
+  // ~0.5 of the observed error, as PX4's refreshed term does per delay), gain adapted to the delay.
   const Eigen::Quaterniond q_state = s.q_world_imu.normalized();
   const Eigen::Quaterniond q_error = (q_state.conjugate() * delayed.out.q_world_imu).normalized();
   const double scalar = (q_error.w() >= 0.0) ? -2.0 : 2.0;
   const Eigen::Vector3d delta_ang_error = scalar * q_error.vec();
   const double delay = std::max(time::to_seconds(newest().out.t - s.t), dt_imu_avg_s_);
   delta_angle_corr_ = delta_ang_error * (kAttitudeGain * dt_imu_avg_s_ / delay);
+  att_corr_remaining_s_ = delay;
   tracking_error_(0) = delta_ang_error.norm();
 
   // Complementary-filter gains.
@@ -248,6 +264,8 @@ ResetDelta OutputPredictor::reset_to(const EstimatorSnapshot& s) noexcept {
     gyro_bias_ = s.gyro_bias;
     accel_bias_ = s.accel_bias;
     gravity_world_ = s.gravity_world;
+    delta_angle_corr_.setZero();  // measured against the pre-reset attitude: stale after the shift
+    att_corr_remaining_s_ = 0.0;
   } else {
     restart(s);
   }
