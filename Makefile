@@ -2,7 +2,9 @@ SHELL := /bin/bash
 # ROS Jazzy's rclpy/ament modules are installed for the system interpreter.
 PYTHON ?= /usr/bin/python3
 # Packages built and tested by `make build` / `make test`; override with PKGS="...".
-PKGS ?= uavnav_core uavnav_interfaces
+PKGS ?= uavnav_core uavnav_interfaces fast_lio_core
+# Extra `colcon build` arguments, e.g. COLCON_EXTRA="--cmake-clean-cache" after a package moves.
+COLCON_EXTRA ?=
 
 ROS_ENV = source /opt/ros/jazzy/setup.bash;
 
@@ -22,7 +24,7 @@ setup:
 	@tools/setup.sh
 
 build:
-	@$(ROS_ENV) nice -n 10 env MAKEFLAGS=-j3 colcon build --packages-up-to $(PKGS) --parallel-workers 2 --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+	@$(ROS_ENV) nice -n 10 env MAKEFLAGS=-j3 colcon build --packages-up-to $(PKGS) --parallel-workers 2 $(COLCON_EXTRA) --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 test:
 	@$(ROS_ENV) if test -f install/setup.bash; then source install/setup.bash; fi; colcon test --packages-select $(PKGS) --parallel-workers 2 && rc=0 && for p in $(PKGS); do colcon test-result --verbose --test-result-base build/$$p || rc=1; done; exit $$rc

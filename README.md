@@ -40,8 +40,10 @@ make gate    # tools/uavnav/gate.sh all: static, python, ros; ends GATE_RESULT=P
 make clean   # prints what to remove (log/); deletes nothing
 ```
 
-`PKGS` defaults to `uavnav_core uavnav_interfaces`; override it with
-`make build PKGS="..."`. `tools/uavnav/gate.sh static|python|ros|all` runs a
+`PKGS` defaults to `uavnav_core uavnav_interfaces fast_lio_core`; override it
+with `make build PKGS="..."`. `COLCON_EXTRA` passes extra `colcon build`
+arguments, e.g. `COLCON_EXTRA="--cmake-clean-cache"` after a package moves.
+`tools/uavnav/gate.sh static|python|ros|all` runs a
 single stage. `build/` and `install/` are a shared incremental build and are
 kept.
 
@@ -64,7 +66,7 @@ the reference baseline only.
 
 The root [LICENSE](LICENSE) covers project-owned code only. Vendored and
 external components keep their own licenses and provenance, in
-`src/estimation/ikfom_vendor`, `src/estimation/ikd_tree_vendor`,
+`src/vendor/ikfom_vendor`, `src/vendor/ikd_tree_vendor`,
 `src/mapping/rog_map_vendor`, `src/planning/navigation_planning_backend` and
 `src/external/` (`UPSTREAM.md` and `LICENSE` files). Some are GPL-2.0; obtain a
 license review before distributing binaries or sources.

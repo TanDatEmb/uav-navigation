@@ -10,7 +10,6 @@
 
 #include "fast_lio_core/mapping/ikd_tree_registration_map.hpp"
 #include "fast_lio_core/mapping/local_map_manager.hpp"
-#include "fast_lio_core/mapping/map_insertion_policy.hpp"
 
 namespace uav::nav::lio {
 namespace {
@@ -143,21 +142,6 @@ TEST(RegistrationMapTest, GuardFreezesInsertionWhenCropCannotRecover) {
   EXPECT_TRUE(update.absolute_guard_recovery_failed);
   EXPECT_TRUE(update.insertion_frozen);
   EXPECT_FALSE(manager.insertionAllowed());
-}
-
-TEST(RegistrationMapTest, InsertionPolicyAcceptsUsableTerminalCorrection) {
-  MapInsertionPolicyConfig config;
-  config.minimum_point_count = 3;
-  MapInsertionPolicy policy(config);
-  MapInsertionContext context;
-  context.estimator_tracking = true;
-  context.lidar_update_successful = true;
-  context.correction_usable = true;
-  context.transform_finite = true;
-  context.filtered_point_count = 3;
-  EXPECT_TRUE(policy.permits(context));
-  context.correction_usable = false;
-  EXPECT_FALSE(policy.permits(context));
 }
 
 }  // namespace

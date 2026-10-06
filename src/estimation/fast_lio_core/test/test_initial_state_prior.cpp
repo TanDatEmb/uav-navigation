@@ -4,7 +4,6 @@
 
 #include "fast_lio_core/geometry/frame_ids.hpp"
 #include "fast_lio_core/initialization/initial_state_prior_applicator.hpp"
-#include "fast_lio_core/initialization/initial_state_prior_policy.hpp"
 
 namespace uav::nav::lio {
 namespace {
@@ -87,14 +86,6 @@ TEST(InitialStatePriorTest, VelocityUsesBaseTwistAndLeverArmAngularRate) {
   ASSERT_TRUE(applicator.apply(prior, makeImuState(Eigen::Quaterniond::Identity()), 0.2, output).ok());
   EXPECT_TRUE(output.velocity_odom_imu_m_s().isApprox(
       prior.linear_velocity_base_m_s.value() + prior.angular_velocity_base_rad_s->cross(lever_arm)));
-}
-
-TEST(InitialStatePriorTest, PolicyRejectsInFlightFallback) {
-  InitialStatePriorPolicy policy;
-  policy.source = InitialStatePriorSource::kTopic;
-  policy.context = InitialStatePriorContext::kInFlightReinitialization;
-  policy.ground_fallback = InitialPriorFallback::kZero;
-  EXPECT_EQ(policy.validate().code(), StatusCode::kInvalidArgument);
 }
 
 }  // namespace

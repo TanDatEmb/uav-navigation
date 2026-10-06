@@ -3,6 +3,7 @@
 #include <Eigen/Geometry>
 #include <Eigen/Eigenvalues>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -389,6 +390,91 @@ TEST(IkfomEstimatorTest, NumericalFailureRollsBackStateAndCovariance) {
   const auto recovery =
       estimator.predict(samples, Timestamp(1), Timestamp(10'000'001));
   ASSERT_TRUE(recovery.ok()) << recovery.status().message();
+}
+
+// Points on a 1.6 m x 1.6 m patch of each requested plane, 0.2 m spacing:
+// x = 5 (normal x), y = 5 (normal y), z = -2 (normal z), around the origin.
+enum class PlanePatch { kX5, kY5, kZMinus2 };
+
+std::vector<Eigen::Vector3d> samplePlanes(std::initializer_list<PlanePatch> patches) {
+  std::vector<Eigen::Vector3d> points;
+  for (const PlanePatch patch : patches) {
+    for (int u = -4; u <= 4; ++u) {
+      for (int v = -4; v <= 4; ++v) {
+        const double a = 0.2 * u;
+        const double b = 0.2 * v;
+        switch (patch) {
+          case PlanePatch::kX5: points.emplace_back(5.0, a, b); break;
+          case PlanePatch::kY5: points.emplace_back(a, 5.0, b); break;
+          case PlanePatch::kZMinus2: points.emplace_back(a, b, -2.0); break;
+        }
+      }
+    }
+  }
+  return points;
+}
+
+IkfomCorrectionResult correctAgainstPlanes(std::initializer_list<PlanePatch> patches) {
+  IkfomEstimatorConfig config;
+  ResidualBuilderConfig residual_config;
+  residual_config.correspondence_search.maximum_neighbor_distance_m = 1.0;
+  IkfomEstimator estimator(config, residual_config);
+  estimator.initialize(ManifoldState{});
+
+  IkdTreeRegistrationMapConfig map_config;
+  map_config.voxel_size_m = 0.02;
+  map_config.enable_asynchronous_rebuild = false;
+  IkdTreeRegistrationMap map(map_config);
+  const std::vector<Eigen::Vector3d> points = samplePlanes(patches);
+  EXPECT_GT(map.insert(points), 0U);
+  return estimator.correct(points, map);
+}
+
+double minEigenvalue(const Eigen::Matrix3d& block) {
+  return Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d>(block, Eigen::EigenvaluesOnly)
+      .eigenvalues()
+      .minCoeff();
+}
+
+double maxEigenvalue(const Eigen::Matrix3d& block) {
+  return Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d>(block, Eigen::EigenvaluesOnly)
+      .eigenvalues()
+      .maxCoeff();
+}
+
+TEST(IkfomEstimator, InformationMatrixFullRankForThreeOrthogonalPlanes) {
+  const IkfomCorrectionResult correction = correctAgainstPlanes(
+      {PlanePatch::kX5, PlanePatch::kY5, PlanePatch::kZMinus2});
+
+  ASSERT_TRUE(correction.information.has_value()) << correction.reason;
+  const Eigen::Matrix<double, 6, 6>& information = *correction.information;
+  ASSERT_TRUE(information.allFinite());
+  EXPECT_LT((information - information.transpose()).cwiseAbs().maxCoeff(), 1e-9);
+  EXPECT_GT(minEigenvalue(information.block<3, 3>(0, 0)), 0.0);
+  EXPECT_GT(minEigenvalue(information.block<3, 3>(3, 3)), 0.0);
+}
+
+TEST(IkfomEstimator, InformationMatrixDegenerateForSinglePlane) {
+  const IkfomCorrectionResult correction = correctAgainstPlanes({PlanePatch::kZMinus2});
+
+  // A degenerate scan still reports its information; the caller decides.
+  ASSERT_TRUE(correction.information.has_value()) << correction.reason;
+  const Eigen::Matrix3d translation = correction.information->block<3, 3>(0, 0);
+  ASSERT_GT(maxEigenvalue(translation), 0.0);
+  EXPECT_LT(minEigenvalue(translation), 1e-6 * maxEigenvalue(translation));
+}
+
+TEST(IkfomEstimator, InformationMatrixAbsentWithoutUsableRows) {
+  IkfomEstimatorConfig config;
+  config.minimum_accepted_residuals = 3;
+  IkfomEstimator estimator(config, ResidualBuilderConfig{});
+  estimator.initialize(ManifoldState{});
+  IkdTreeRegistrationMap empty_map;
+  const std::vector<Eigen::Vector3d> points{{1.0, 0.0, 0.0}};
+
+  const auto correction = estimator.correct(points, empty_map);
+
+  EXPECT_FALSE(correction.information.has_value());
 }
 
 }  // namespace

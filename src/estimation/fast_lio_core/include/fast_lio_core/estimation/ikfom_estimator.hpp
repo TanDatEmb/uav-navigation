@@ -1,7 +1,9 @@
 #pragma once
 
+#include <Eigen/Core>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -52,6 +54,13 @@ struct IkfomCorrectionResult {
   std::int64_t residual_build_runtime_us{0};
   std::int64_t ikfom_update_runtime_us{0};
   std::size_t observability_rejection_count{0};
+  // Sum over the accepted rows of the final iteration's measurement of
+  // H.leftCols<6>()^T * diag(1/variance) * H.leftCols<6>(), i.e. the 6x6
+  // top-left block of H^T R^-1 H that the filter consumed. Block (0:3,0:3) is
+  // translation (odom frame), block (3:6,3:6) is rotation (right-perturbation,
+  // IMU body frame). nullopt when the final iteration had no usable rows.
+  // Reported for rejected scans too, so degeneracy can be assessed every scan.
+  std::optional<Eigen::Matrix<double, 6, 6>> information;
 };
 
 class IkfomEstimator {
@@ -90,6 +99,7 @@ class IkfomEstimator {
   std::span<const Eigen::Vector3d> active_points_;
   const RegistrationMap* active_map_{nullptr};
   ResidualBuildDiagnostics last_residual_diagnostics_;
+  std::optional<Eigen::Matrix<double, 6, 6>> active_information_;
   std::size_t measurement_call_count_{0};
   std::size_t active_nearest_search_query_count_{0};
   std::int64_t active_nearest_search_runtime_us_{0};

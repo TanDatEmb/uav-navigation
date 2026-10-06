@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 #include <chrono>
@@ -132,6 +133,29 @@ namespace {
   output.set_gravity_odom_m_s2(state.grav.get_vect());
   output.normalize();
   return output;
+}
+
+// Pose block (translation, rotation) of H^T R^-1 H over the first `rows` rows.
+// Fixed-size accumulation: no heap allocation per row or per call.
+[[nodiscard]] std::optional<Eigen::Matrix<double, 6, 6>> accumulateInformation(
+    const Eigen::MatrixXd& jacobian, const Eigen::VectorXd& variance_m2,
+    const Eigen::Index rows) {
+  if (rows <= 0) {
+    return std::nullopt;
+  }
+  Eigen::Matrix<double, 6, 6> information = Eigen::Matrix<double, 6, 6>::Zero();
+  for (Eigen::Index row = 0; row < rows; ++row) {
+    const Eigen::Matrix<double, 6, 1> h =
+        jacobian.row(row).head<6>().transpose();
+    information.selfadjointView<Eigen::Lower>().rankUpdate(
+        h, 1.0 / variance_m2[row]);
+  }
+  const Eigen::Matrix<double, 6, 6> symmetric =
+      information.selfadjointView<Eigen::Lower>();
+  if (!symmetric.allFinite()) {
+    return std::nullopt;
+  }
+  return symmetric;
 }
 
 }  // namespace
@@ -342,6 +366,7 @@ IkfomCorrectionResult IkfomEstimator::correct(
   active_plane_and_gate_runtime_us_ = 0;
   active_jacobian_build_runtime_us_ = 0;
   last_residual_diagnostics_ = {};
+  active_information_.reset();
 
   struct ActiveGuard {
     explicit ActiveGuard(IkfomEstimator* estimator) {
@@ -379,6 +404,7 @@ IkfomCorrectionResult IkfomEstimator::correct(
   result.corrected_state = stateView();
   result.corrected_covariance = covariance();
   result.residual_diagnostics = last_residual_diagnostics_;
+  result.information = active_information_;
   result.residual_diagnostics.query_count =
       result.nearest_search_query_count;
   result.iteration_count =
@@ -472,6 +498,9 @@ Eigen::VectorXd IkfomEstimator::measurementModel(
 Eigen::VectorXd IkfomEstimator::buildMeasurement(
     IkfomState& state, esekfom::dyn_share_datastruct<double>& data) {
   ++measurement_call_count_;
+  // Only the final callback's value survives: it is the linearisation whose
+  // gain and Jacobian produce the posterior covariance.
+  active_information_.reset();
   if (active_map_ == nullptr) {
     data.valid = false;
     return {};
@@ -512,6 +541,8 @@ Eigen::VectorXd IkfomEstimator::buildMeasurement(
     data.R = measurement_view.variance_m2->head(rows).asDiagonal();
   }
   data.z = Eigen::VectorXd::Zero(rows);
+  active_information_ = accumulateInformation(
+      *measurement_view.jacobian, *measurement_view.variance_m2, rows);
   return measurement_view.residual_m->head(rows);
 }
 

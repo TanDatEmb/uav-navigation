@@ -5,7 +5,7 @@
 #include "fast_lio_core/common/result.hpp"
 #include "fast_lio_core/geometry/rigid_transform.hpp"
 #include "fast_lio_core/navigation/rigid_body_state.hpp"
-#include "fast_lio_core/pipeline/process_result.hpp"
+#include "fast_lio_core/estimation/state_estimate.hpp"
 
 namespace uav::nav::lio {
 

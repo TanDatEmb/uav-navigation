@@ -27,24 +27,18 @@ set(CORE_SOURCES
   src/initialization/initial_state_prior_applicator.cpp
   src/mapping/ikd_tree_registration_map.cpp
   src/mapping/local_map_manager.cpp
-  src/mapping/map_insertion_policy.cpp
   src/navigation/angular_velocity_resolver.cpp
   src/navigation/base_link_covariance_projector.cpp
   src/navigation/base_link_state_converter.cpp
-  src/pipeline/estimator_diagnostics.cpp
-  src/pipeline/fast_lio_pipeline.cpp
   src/preprocessing/point_cloud_preprocessor.cpp
   src/preprocessing/point_filter.cpp
   src/preprocessing/voxel_filter.cpp
-  src/propagation/imu_state_propagator.cpp
   src/registration/linearized_measurement.cpp
   src/registration/plane_estimator.cpp
   src/registration/residual_builder.cpp
   src/registration/residual_gate.cpp
   src/sensor/imu_sample.cpp
   src/sensor/lidar_scan.cpp
-  src/synchronization/measurement_buffer.cpp
-  src/synchronization/measurement_synchronizer.cpp
   src/time/duration.cpp
   src/time/timestamp.cpp
   src/time/timestamp_validator.cpp)
@@ -72,18 +66,13 @@ if(BUILD_TESTING)
     test/test_base_link_covariance_projector.cpp
     test/test_base_link_state_converter.cpp
     test/test_duration.cpp
-    test/test_fast_lio_pipeline.cpp
     test/test_frame_conventions.cpp
     test/test_ikfom_compact_equivalence.cpp
     test/test_ikfom_estimator.cpp
     test/test_ikfom_incremental_propagation.cpp
     test/test_ikfom_jacobians.cpp
     test/test_imu_initializer.cpp
-    test/test_imu_state_propagator.cpp
     test/test_initial_state_prior.cpp
-    test/test_initial_state_prior_pipeline.cpp
-    test/test_measurement_buffer.cpp
-    test/test_measurement_synchronizer.cpp
     test/test_plane_estimator.cpp
     test/test_point_filter.cpp
     test/test_pose_interpolator.cpp
