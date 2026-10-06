@@ -114,7 +114,11 @@ class Harness {
   LioEstimator& est() { return *est_; }
   time::SensorTime now() const { return next_imu_ - imu_period_; }
 
-  static time::TimeSnapshot Snap(time::SensorTime t) { return {time::SteadyTime{t.ns}, time::RosTime{t.ns}}; }
+  /// Event clocks deliberately on other time bases than sensor time (x3, +7 s), so a decision that used the
+  /// snapshot instead of sensor time would show in the pinned-timing tests.
+  static time::TimeSnapshot Snap(time::SensorTime t) {
+    return {time::SteadyTime{3 * t.ns}, time::RosTime{t.ns + 7'000'000'000}};
+  }
 
   Result<StepOutputs, EstimatorReason> Imu(const ImuInput& imu) {
     const LioState before = est_->state();
@@ -131,7 +135,7 @@ class Harness {
     return r;
   }
 
-  Result<void, EstimatorReason> Restart(const SeedPose& seed) {
+  Result<ResetDelta, EstimatorReason> Restart(const SeedPose& seed) {
     const LioState before = est_->state();
     auto r = est_->restart(seed, Snap(now()));
     if (est_->state() != before) ++state_changes_;
@@ -166,7 +170,7 @@ class Harness {
   void Run(int n, std::optional<ScanKind> kind = ScanKind::kRoom) {
     for (int i = 0; i < n; ++i) {
       const time::SensorTime end = scan_end_ + kScanPeriod;
-      ImuUntil(end);
+      ImuUntil(end + imu_lead_);
       if (kind) {
         const auto r = Scan(MakeScan(*kind, scan_end_, end));
         EXPECT_TRUE(r.has_value());
@@ -174,6 +178,17 @@ class Harness {
       scan_end_ = end;
     }
   }
+
+  /// A scan whose end is after the newest IMU sample (S1b precondition broken).
+  Result<StepOutputs, EstimatorReason> ScanAheadOfImu() {
+    const time::SensorTime end = scan_end_ + kScanPeriod;
+    auto r = Scan(MakeScan(ScanKind::kRoom, scan_end_, end));
+    scan_end_ = end;
+    return r;
+  }
+
+  /// IMU pushed this far past each scan end before the scan (the IMU stream leads the LiDAR).
+  void set_imu_lead(time::Duration lead) { imu_lead_ = lead; }
 
   void RunUntilTracking(int max_scans = 40) {
     for (int i = 0; i < max_scans && est_->state() != LioState::kTracking; ++i) Run(1);
@@ -214,6 +229,7 @@ class Harness {
   time::Duration imu_period_;
   time::SensorTime next_imu_{kT0};
   time::SensorTime scan_end_{kT0};
+  time::Duration imu_lead_{};
   std::vector<StepOutputs> outputs_;
   int state_changes_{0};
   bool all_finite_{true};
@@ -294,7 +310,29 @@ TEST(LioEstimator, ImuOnlyGapReachesLost) {
   Harness h;
   h.RunUntilTracking();
   const std::size_t from = h.outputs().size();
-  h.Run(10, std::nullopt);  // 1 s of IMU, no scans
+  // F22, pinned in sensor time: the last scan ended at `last` (the newest IMU sample too). The gap rule is
+  // strict (> 0.25 s, > 0.5 s) and evaluated on each 5 ms IMU tick.
+  const time::SensorTime last = h.now();
+  const auto at = [&](std::int64_t ms) { return last + time::milliseconds(ms); };
+  h.ImuUntil(at(250));
+  EXPECT_EQ(h.est().state(), LioState::kTracking) << "a gap of exactly 0.25 s is not > 0.25 s";
+  h.ImuUntil(at(255));
+  EXPECT_EQ(h.est().state(), LioState::kDegraded);
+  ASSERT_TRUE(h.outputs().back().health.has_value());
+  EXPECT_EQ(h.outputs().back().health->t, at(255));
+  EXPECT_EQ(h.outputs().back().health->reason, LioReason::kLidarGapDegraded);
+  h.ImuUntil(at(500));
+  EXPECT_EQ(h.est().state(), LioState::kDegraded) << "a gap of exactly 0.5 s is not > 0.5 s";
+  h.ImuUntil(at(505));
+  EXPECT_EQ(h.est().state(), LioState::kLost);
+  ASSERT_TRUE(h.outputs().back().health.has_value());
+  EXPECT_EQ(h.outputs().back().health->t, at(505));
+  EXPECT_EQ(h.outputs().back().health->reason, LioReason::kLidarGapLost);
+  const auto transitions = h.Events("StateTransition");
+  ASSERT_GE(transitions.size(), 2U);
+  EXPECT_EQ(Value(transitions[transitions.size() - 2], "sensor_time_s"), static_cast<double>(at(255).ns) / 1e9);
+  EXPECT_EQ(Value(transitions.back(), "sensor_time_s"), static_cast<double>(at(505).ns) / 1e9);
+  h.ImuUntil(at(1000));  // 1 s of IMU, no scans
   EXPECT_EQ(h.est().state(), LioState::kLost);
 
   const auto reasons = HealthReasons(h.outputs(), from);
@@ -321,15 +359,14 @@ TEST(LioEstimator, PlaneOnlyScansDegradeWithoutThrowing) {
   Harness h;
   h.RunUntilTracking();
   const std::size_t from = h.outputs().size();
-  EXPECT_NO_THROW(h.Run(5, ScanKind::kPlane));
+  EXPECT_NO_THROW(h.Run(2, ScanKind::kPlane));
+  // The degenerate window: the lifecycle still counts 2 degenerate scans in TRACKING, yet no odometry.
+  EXPECT_EQ(h.est().state(), LioState::kTracking);
+  for (std::size_t i = from; i < h.outputs().size(); ++i) EXPECT_FALSE(h.outputs()[i].odometry.has_value()) << i;
+  EXPECT_NO_THROW(h.Run(3, ScanKind::kPlane));
   EXPECT_EQ(h.est().state(), LioState::kDegraded);
   EXPECT_TRUE(Contains(HealthReasons(h.outputs(), from), LioReason::kDegenerateScans));
-  // No odometry once the state left TRACKING; the degenerate scans before that carry quality < 50.
-  for (std::size_t i = from; i < h.outputs().size(); ++i) {
-    if (h.outputs()[i].odometry) {
-      EXPECT_LT(h.outputs()[i].odometry->quality, 50U);
-    }
-  }
+  for (std::size_t i = from; i < h.outputs().size(); ++i) EXPECT_FALSE(h.outputs()[i].odometry.has_value()) << i;
   const auto scans = h.Events("LioScan");
   ASSERT_GE(scans.size(), 5U);
   for (std::size_t i = scans.size() - 5; i < scans.size(); ++i) {
@@ -387,6 +424,65 @@ TEST(LioEstimator, EmptyScanIsAnEventNotAnException) {
   const auto scans = h.Events("LioScan");
   ASSERT_GE(scans.size(), 3U);
   for (std::size_t i = scans.size() - 3; i < scans.size(); ++i) EXPECT_EQ(scans[i].reason, "SCAN_EMPTY");
+  // Health shows no stale eigenvalues of the last good scan, and empty scans do not refresh the correction age.
+  h.Run(1, std::nullopt);
+  std::optional<HealthOutput> health;
+  for (std::size_t i = from; i < h.outputs().size(); ++i) {
+    if (h.outputs()[i].health) health = h.outputs()[i].health;
+  }
+  ASSERT_TRUE(health.has_value());
+  EXPECT_EQ(health->translation_min_eigenvalue, 0.0);
+  EXPECT_EQ(health->rotation_min_eigenvalue, 0.0);
+  EXPECT_GE(health->correction_age_s, 0.35);
+  EXPECT_TRUE(h.Events("OdometryInvalid").empty());
+}
+
+// The S1b precondition (IMU reached scan.end) broken: the scan is never trusted, the ESKF is rebased with an
+// inflated covariance, and operation continues once the IMU leads again.
+TEST(LioEstimator, ScanAheadOfImuIsDegenerateAndRebased) {
+  Harness h;
+  h.RunUntilTracking();
+  const std::size_t from = h.outputs().size();
+  const auto r = h.ScanAheadOfImu();
+  ASSERT_TRUE(r.has_value());
+  EXPECT_FALSE(r->odometry.has_value());
+  const auto scans = h.Events("LioScan");
+  EXPECT_EQ(scans.back().reason, "SCAN_AHEAD_OF_IMU");
+  const auto rebased = h.Events("EskfRebased");
+  ASSERT_EQ(rebased.size(), 1U);
+  EXPECT_DOUBLE_EQ(Value(rebased[0], "skipped_s"), 0.1);
+  EXPECT_GT(Value(rebased[0], "position_sigma_m"), 0.0);
+  EXPECT_LT(Value(rebased[0], "position_sigma_m"), 0.5);  // one rebase does not lose the state
+  EXPECT_EQ(h.est().state(), LioState::kTracking);        // one degenerate scan of three
+  h.Run(3);
+  EXPECT_EQ(h.est().state(), LioState::kTracking);
+  bool odometry = false;
+  for (std::size_t i = from; i < h.outputs().size(); ++i) odometry = odometry || h.outputs()[i].odometry.has_value();
+  EXPECT_TRUE(odometry);
+}
+
+// D28 (the IMU leads each scan by 120 ms, so a periodic health at scan end + 100 ms precedes the scan-path\n//
+// transition): health stamps follow the newest IMU time, so they never decrease, even when the IMU leads the LiDAR and
+// a scan-path transition reports health for an older scan end.
+TEST(LioEstimator, HealthStampsNeverDecrease) {
+  Harness h;
+  h.set_imu_lead(time::milliseconds(120));  // past the next 100 ms health grid point
+  h.RunUntilTracking();                     // scan-path transition INITIALIZING -> TRACKING
+  h.Run(3, ScanKind::kEmpty);               // scan-path transition -> DEGRADED
+  h.Run(6);                                 // scan-path transition -> TRACKING
+  h.Run(10, std::nullopt);                  // IMU-path transitions -> DEGRADED -> LOST
+  ASSERT_EQ(h.est().state(), LioState::kLost);
+  std::optional<time::SensorTime> previous;
+  int count = 0;
+  for (const StepOutputs& o : h.outputs()) {
+    if (!o.health) continue;
+    ++count;
+    if (previous) {
+      EXPECT_GE(o.health->t, *previous) << count;
+    }
+    previous = o.health->t;
+  }
+  EXPECT_GT(count, 20);
 }
 
 TEST(LioEstimator, RejectsOutOfOrderInput) {
@@ -401,6 +497,23 @@ TEST(LioEstimator, RejectsOutOfOrderInput) {
   EXPECT_TRUE(h.Imu(scene::make_imu({}, time::SensorTime{t1.ns + 5'000'000})).has_value());
   EXPECT_EQ(h.Events("ImuDuplicate").size(), 1U);
   EXPECT_EQ(h.Events("LioInputRejected").size(), 1U);
+}
+
+// Per-sample events are rate-limited: 1st, 1000th, 2000th occurrence per reason and epoch.
+TEST(LioEstimator, PerSampleEventsAreRateLimited) {
+  Harness h;
+  const time::SensorTime t1{kT0.ns + 1'000'000'000};
+  ASSERT_TRUE(h.Imu(scene::make_imu({}, t1)).has_value());
+  for (int i = 0; i < 2500; ++i) ASSERT_TRUE(h.Imu(scene::make_imu({}, t1)).has_value());
+  for (int i = 0; i < 5; ++i) EXPECT_FALSE(h.Imu(scene::make_imu({}, kT0)).has_value());
+  const auto duplicates = h.Events("ImuDuplicate");
+  ASSERT_EQ(duplicates.size(), 3U);
+  EXPECT_EQ(Value(duplicates[0], "count"), 1.0);
+  EXPECT_EQ(Value(duplicates[1], "count"), 1000.0);
+  EXPECT_EQ(Value(duplicates[2], "count"), 2000.0);
+  const auto rejected = h.Events("LioInputRejected");
+  ASSERT_EQ(rejected.size(), 1U);
+  EXPECT_EQ(rejected[0].reason, "OUT_OF_ORDER");
 }
 
 TEST(LioEstimator, RejectsOutOfOrderScan) {
@@ -461,10 +574,40 @@ TEST(LioEstimator, RestartSeedsNewEpoch) {
   h.Run(1);  // geometry returned
   ASSERT_EQ(h.est().state(), LioState::kRestarting);
 
+  // One more IMU sample, so the newest predictor output is known exactly (the RESTARTING scan's correction
+  // shifted the buffer after the previous output was returned).
+  h.ImuUntil(h.now() + kImuPeriod);
+  // Three duplicate IMU samples: one ImuDuplicate event now, a summary (count 3) at the end of the epoch.
+  for (int i = 0; i < 3; ++i) ASSERT_TRUE(h.Imu(scene::make_imu({}, h.now())).has_value());
+  EXPECT_EQ(h.Events("ImuDuplicate").size(), 1U);
+
+  // The predictor's newest output before the restart (the old epoch's IMU state at the newest IMU time).
+  std::optional<StateOutput> old_state;
+  for (const StepOutputs& o : h.outputs()) {
+    if (!o.states.empty()) old_state = o.states.back();
+  }
+  ASSERT_TRUE(old_state.has_value());
+  ASSERT_EQ(old_state->sample.t, h.now());
+
   const double yaw = 0.3;
   const SeedPose seed{Eigen::Vector3d(1.0, 2.0, 0.5),
                       Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()))};
-  ASSERT_TRUE(h.Restart(seed).has_value());
+  const auto delta = h.Restart(seed);
+  ASSERT_TRUE(delta.has_value());
+  // ResetDelta = new - old output at the newest IMU time: the seeded IMU pose minus the old one.
+  const Eigen::Vector3d new_imu_p = seed.p_world_m + seed.q_world_base * scene::base_T_imu().translation();
+  EXPECT_LT((delta->position_m - (new_imu_p - old_state->sample.p_world_m)).norm(), 1e-9);
+  // The old velocity (near zero) is carried into the seed's world: v_new = R(seed) R(old)^-1 v_old.
+  const Eigen::Vector3d v_old = old_state->sample.v_world_mps;
+  const Eigen::Vector3d v_new = (seed.q_world_base * old_state->sample.q_world_imu.conjugate()) * v_old;
+  EXPECT_LT((delta->velocity_mps - (v_new - v_old)).norm(), 1e-9);
+  EXPECT_LT(delta->velocity_mps.norm(), 0.01);
+  const Eigen::Matrix3d r_old = old_state->sample.q_world_imu.toRotationMatrix();
+  EXPECT_NEAR(delta->yaw_rad, yaw - std::atan2(r_old(1, 0), r_old(0, 0)), 1e-9);
+  const auto duplicates = h.Events("ImuDuplicate");
+  ASSERT_EQ(duplicates.size(), 2U);
+  EXPECT_EQ(Value(duplicates.back(), "count"), 3.0);
+  EXPECT_EQ(duplicates.back().identity.lio_epoch, 1U);
   EXPECT_EQ(h.est().epoch(), 2U);
   EXPECT_EQ(h.est().state(), LioState::kInitializing);
 

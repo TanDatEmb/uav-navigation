@@ -58,9 +58,10 @@ struct LioConfig {
 /// (config/lio/sim.yaml) repeats the values and points back here ("see config.hpp").
 ///
 /// Math keys (MathConfig): beta values from the survey of `main` (config/runtime/sim.yaml); bounds are about
-/// 1/4x to 4x the beta value (for the negative extrinsic components: 4x .. 1/4x), except
-/// registration_max_iterations [1, 10]. imu_init_min_samples is capped at 800 so it stays below
-/// fast_lio_core's ImuInitializerConfig::maximum_imu_samples (1000). The range bounds do not overlap
+/// 1/4x to 4x the beta value, except: the IMU -> LiDAR extrinsic components use the physical bound +-0.5 m
+/// (an IMU-LiDAR offset on one airframe; 0 allowed), registration_max_iterations [1, 10], and imu_max_gap_s
+/// [0.01, 0.08] (at least two 200 Hz periods, so one late sample is not a gap). imu_init_min_samples is
+/// capped at 800 so it stays below fast_lio_core's ImuInitializerConfig::maximum_imu_samples (1000). The range bounds do not overlap
 /// (min <= 2 m < 10 m <= max), so preprocess_max_range_m > preprocess_min_range_m needs no cross check.
 inline constexpr auto kLioSpecs = std::to_array<config::ParamSpec>({
     {"lifecycle_confirm_scans", config::Unit::kNone, 1.0, 50.0},
@@ -73,9 +74,9 @@ inline constexpr auto kLioSpecs = std::to_array<config::ParamSpec>({
     {"degeneracy_rotation_min_info", config::Unit::kNone, 1.0, 1e12},
     {"predictor_tau_vel_s", config::Unit::kSeconds, 0.05, 5.0},
     {"predictor_tau_pos_s", config::Unit::kSeconds, 0.05, 5.0},
-    {"extrinsic_imu_lidar_x_m", config::Unit::kMeters, -0.044, -0.00275},
-    {"extrinsic_imu_lidar_y_m", config::Unit::kMeters, -0.09316, -0.0058225},
-    {"extrinsic_imu_lidar_z_m", config::Unit::kMeters, 0.01103, 0.17648},
+    {"extrinsic_imu_lidar_x_m", config::Unit::kMeters, -0.5, 0.5},
+    {"extrinsic_imu_lidar_y_m", config::Unit::kMeters, -0.5, 0.5},
+    {"extrinsic_imu_lidar_z_m", config::Unit::kMeters, -0.5, 0.5},
     {"preprocess_min_range_m", config::Unit::kMeters, 0.125, 2.0},
     {"preprocess_max_range_m", config::Unit::kMeters, 10.0, 160.0},
     {"preprocess_voxel_m", config::Unit::kMeters, 0.05, 0.8},
@@ -85,7 +86,7 @@ inline constexpr auto kLioSpecs = std::to_array<config::ParamSpec>({
     {"map_half_extent_z_m", config::Unit::kMeters, 3.75, 60.0},
     {"registration_max_iterations", config::Unit::kNone, 1.0, 10.0},
     {"imu_init_min_samples", config::Unit::kNone, 50.0, 800.0},
-    {"imu_max_gap_s", config::Unit::kSeconds, 0.005, 0.08},
+    {"imu_max_gap_s", config::Unit::kSeconds, 0.01, 0.08},
 });
 
 /// Builds a LioConfig from values already loaded against kLioSpecs (config::load_params).

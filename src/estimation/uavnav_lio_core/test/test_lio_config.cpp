@@ -266,7 +266,15 @@ TEST(LioConfig, MathKeyBoundsAreEnforced) {
   ExpectError(With("imu_init_min_samples", "801"), Kind::kOutOfRange, "imu_init_min_samples");
   ExpectError(With("imu_max_gap_s", "0.1"), Kind::kOutOfRange, "imu_max_gap_s");
   ExpectError(With("map_voxel_m", "0.05"), Kind::kOutOfRange, "map_voxel_m");
-  ExpectError(With("extrinsic_imu_lidar_z_m", "0.5"), Kind::kOutOfRange, "extrinsic_imu_lidar_z_m");
+  ExpectError(With("imu_max_gap_s", "0.009"), Kind::kOutOfRange, "imu_max_gap_s");
+  EXPECT_TRUE(Load(With("imu_max_gap_s", "0.01")).has_value());
+  for (const std::string_view key : {"extrinsic_imu_lidar_x_m", "extrinsic_imu_lidar_y_m", "extrinsic_imu_lidar_z_m"}) {
+    ExpectError(With(key, "0.51"), Kind::kOutOfRange, key);
+    ExpectError(With(key, "-0.51"), Kind::kOutOfRange, key);
+    EXPECT_TRUE(Load(With(key, "0")).has_value()) << key;  // physical bound: zero offset allowed
+    EXPECT_TRUE(Load(With(key, "0.5")).has_value()) << key;
+    EXPECT_TRUE(Load(With(key, "-0.5")).has_value()) << key;
+  }
   EXPECT_TRUE(Load(With({{"registration_max_iterations", "1"}})).has_value());
   EXPECT_TRUE(Load(With({{"registration_max_iterations", "10"}})).has_value());
 }

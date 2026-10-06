@@ -76,12 +76,15 @@ struct OdometryOutput {
 };
 
 struct HealthOutput {
-  time::SensorTime t;
+  time::SensorTime t;  ///< newest IMU time seen (the scan end before any IMU): monotonic across outputs
   LioState state;
   std::uint32_t epoch;
   LioReason reason;  ///< reason of the latest lifecycle transition (kNone before the first)
-  double translation_min_eigenvalue, rotation_min_eigenvalue;  ///< of the latest degeneracy report
-  double correction_age_s;                ///< newest IMU time - latest scan end time (0 before the first scan)
+  /// Of the latest scan's degeneracy report; 0 when the latest scan had no report (empty, failed prediction).
+  double translation_min_eigenvalue, rotation_min_eigenvalue;
+  /// Newest IMU time - end time of the latest GOOD scan (kScanGood; empty and degenerate scans do not count).
+  /// 0 before the first good scan of the estimator's life.
+  double correction_age_s;
   Eigen::Vector3d output_tracking_error;  ///< OutputPredictor::tracking_error()
 };
 
@@ -114,15 +117,23 @@ static_assert(ReasonEnum<EstimatorReason>);
 
 /// Reason of the facade's own decision events (not lifecycle transitions). Event names:
 ///   "LioScan"            one per accepted scan: kScanGood, kScanDegenerate, kScanEmpty, kMapBootstrap,
-///                        kPredictionFailed, kDeskewFailed, kMathException, kBeforeImuInit,
+///                        kScanAheadOfImu, kPredictionFailed, kDeskewFailed, kMathException, kBeforeImuInit,
 ///                        kBeforeEstimatorTime (values: translation/rotation min eigenvalue, quality, points)
-///   "ImuInitialized" / "ImuInitRejected" (once per epoch) / "ImuGap" / "ImuDuplicate" / "ImuRateTooHigh"
+///   "EskfRebased"        after a failed prediction or a math exception: the ESKF is moved to the scan end
+///                        with an inflated covariance (values skipped_s, position_sigma_m)
+///   "ImuInitialized" / "ImuInitRejected" (once) / "ImuGap" / "ImuRateTooHigh" (once per epoch)
 ///   "OdometryInvalid"    the base_link conversion of a TRACKING scan failed (no odometry)
+///   "AllocationFailed"   an IMU sample or a state output was dropped because memory ran out (value site)
+/// Per-sample events are rate-limited per reason and epoch: "ImuDuplicate" and "LioInputRejected" (reason
+/// EstimatorReason) are emitted on the 1st, 1000th, 2000th, ... occurrence, and once more at the end of the
+/// epoch (restart) when occurrences happened since the last one; value `count` = occurrences so far in the
+/// epoch.
 enum class EstimatorEventReason : std::uint8_t {
   kScanGood,
   kScanDegenerate,
   kScanEmpty,
   kMapBootstrap,
+  kScanAheadOfImu,
   kPredictionFailed,
   kDeskewFailed,
   kMathException,
@@ -133,7 +144,9 @@ enum class EstimatorEventReason : std::uint8_t {
   kImuGap,
   kImuDuplicate,
   kImuRateTooHigh,
-  kOdometryInvalid
+  kOdometryInvalid,
+  kEskfRebased,
+  kAllocationFailed
 };
 
 constexpr std::string_view to_string(EstimatorEventReason r) {
@@ -146,6 +159,8 @@ constexpr std::string_view to_string(EstimatorEventReason r) {
       return "SCAN_EMPTY";
     case EstimatorEventReason::kMapBootstrap:
       return "MAP_BOOTSTRAP";
+    case EstimatorEventReason::kScanAheadOfImu:
+      return "SCAN_AHEAD_OF_IMU";
     case EstimatorEventReason::kPredictionFailed:
       return "PREDICTION_FAILED";
     case EstimatorEventReason::kDeskewFailed:
@@ -168,6 +183,10 @@ constexpr std::string_view to_string(EstimatorEventReason r) {
       return "IMU_RATE_TOO_HIGH";
     case EstimatorEventReason::kOdometryInvalid:
       return "ODOMETRY_INVALID";
+    case EstimatorEventReason::kEskfRebased:
+      return "ESKF_REBASED";
+    case EstimatorEventReason::kAllocationFailed:
+      return "ALLOCATION_FAILED";
   }
   return "";
 }
@@ -199,13 +218,21 @@ class LioEstimator {
   /// predictor correction. Rejects (changing nothing) more than limits::kMaxScanPoints points
   /// (kTooManyPoints), a non-finite point (kNotFinite), end < start or end before the previous scan's end
   /// (kOutOfOrder). An empty scan (before or after preprocessing) is the lifecycle event kScanEmpty and an
-  /// Ok result. `odometry` is set only when the scan was corrected and leaves the state in TRACKING.
+  /// Ok result. `odometry` is set only for a GOOD scan (kScanGood) that leaves the state in TRACKING
+  /// (degenerate scans publish nothing, even while the lifecycle still counts them in TRACKING).
+  ///
+  /// Precondition (S1b): push a scan only after the IMU stream has reached scan.end. A scan ending after the
+  /// newest IMU sample is never trusted: it is degenerate (LioScan reason kScanAheadOfImu) and the ESKF is
+  /// rebased to scan.end with an inflated covariance (EskfRebased), as after any failed prediction.
   Result<StepOutputs, EstimatorReason> push_scan(ScanInput&& scan, const time::TimeSnapshot& now);
 
   /// Restart (§3.4), only in RESTARTING (kWrongState otherwise; kNotFinite for a non-finite seed): clears
   /// the map, applies the seed through InitialStatePriorApplicator at the newest IMU time, epoch + 1,
-  /// predictor reset_to (reset_counter + 1), lifecycle kRestartSeeded, event "LioRestart".
-  Result<void, EstimatorReason> restart(const SeedPose& seed, const time::TimeSnapshot& now);
+  /// predictor reset_to (reset_counter + 1), lifecycle kRestartSeeded, event "LioRestart". Returns the
+  /// predictor's ResetDelta (new - old output at the newest IMU time: position, velocity, yaw), which S1b
+  /// publishes with reset_counter on /lio/state (§3.3 item 7). The StateTransition health arrives with the next
+  /// IMU sample.
+  Result<ResetDelta, EstimatorReason> restart(const SeedPose& seed, const time::TimeSnapshot& now);
 
   LioState state() const noexcept;
   std::uint32_t epoch() const noexcept;

@@ -1,5 +1,6 @@
 #include "uavnav/lio/estimator.hpp"
 
+#include <Eigen/Eigenvalues>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -49,6 +50,12 @@ constexpr double kImuPeriodEmaWeight = 0.1;
 constexpr double kUnusedTiltLimitRad = 0.0;
 /// LioInputRejected "stream" value.
 enum class Stream : int { kImu = 0, kScan = 1, kRestart = 2 };
+/// The report of a scan without a correction (empty, failed prediction): no information.
+constexpr DegeneracyReport kNoReport{0.0, 0.0, true, 0};
+/// Rate-limited per-sample events: one slot per EstimatorReason, plus ImuDuplicate.
+constexpr std::size_t kDuplicateSlot = 5;
+constexpr std::size_t kSpamSlots = 6;
+static_assert(static_cast<std::size_t>(EstimatorReason::kWrongState) + 1 == kDuplicateSlot);
 
 fl::Timestamp stamp(time::SensorTime t) { return fl::Timestamp(t.ns); }
 double seconds(time::SensorTime t) { return static_cast<double>(t.ns) / 1e9; }
@@ -87,7 +94,7 @@ LioEvent::Kind kind_of(EstimatorEventReason r) {
     case EstimatorEventReason::kMapBootstrap:
       return LioEvent::Kind::kMapReady;
     default:
-      return LioEvent::Kind::kScanDegenerate;  // prediction/deskew failure, math exception
+      return LioEvent::Kind::kScanDegenerate;  // ahead of IMU, prediction/deskew failure, math exception
   }
 }
 
@@ -149,11 +156,41 @@ struct LioEstimator::Impl {
 
   Result<StepOutputs, EstimatorReason> reject(EstimatorReason r, Stream s, time::SensorTime t,
                                               const time::TimeSnapshot& now) {
-    emit(event("LioInputRejected", now)
-             .reason(r)
-             .value("stream", static_cast<int>(s))
-             .value("sensor_time_s", seconds(t)));
+    const std::size_t slot = static_cast<std::size_t>(r);
+    if (spam_due(slot)) {
+      emit(event("LioInputRejected", now)
+               .reason(r)
+               .value("stream", static_cast<int>(s))
+               .value("sensor_time_s", seconds(t))
+               .value("count", static_cast<double>(spam[slot].count)));
+    }
     return std::unexpected(r);
+  }
+
+  /// Counts one occurrence; true when it is the 1st or a kEventSummaryEvery-th of the epoch (emit it).
+  bool spam_due(std::size_t slot) {
+    Spam& c = spam[slot];
+    ++c.count;
+    if (c.count != 1 && c.count % limits::kEventSummaryEvery != 0) return false;
+    c.reported = c.count;
+    return true;
+  }
+
+  /// End of an epoch: one summary per reason whose latest occurrences were not emitted, then reset.
+  void flush_spam(const time::TimeSnapshot& now) {
+    for (std::size_t slot = 0; slot < kSpamSlots; ++slot) {
+      const Spam& c = spam[slot];
+      if (c.count > c.reported) {
+        EventBuilder b = event(slot == kDuplicateSlot ? "ImuDuplicate" : "LioInputRejected", now);
+        if (slot == kDuplicateSlot) {
+          b.reason(EstimatorEventReason::kImuDuplicate);
+        } else {
+          b.reason(static_cast<EstimatorReason>(slot));
+        }
+        emit(b.value("count", static_cast<double>(c.count)));
+      }
+    }
+    spam = {};
   }
 
   // --- shared helpers ------------------------------------------------------------------------------
@@ -164,7 +201,7 @@ struct LioEstimator::Impl {
 
   HealthOutput health(time::SensorTime t) const {
     double age = 0.0;
-    if (last_scan_event_t && last_imu) age = std::max(0.0, time::to_seconds(last_imu->t - *last_scan_event_t));
+    if (last_good_scan_t && last_imu) age = std::max(0.0, time::to_seconds(last_imu->t - *last_good_scan_t));
     return HealthOutput{t,
                         lifecycle.state(),
                         epoch,
@@ -189,22 +226,38 @@ struct LioEstimator::Impl {
           .value("rotation_min_eigenvalue", report->rotation_min_eigenvalue);
     }
     emit(b);
-    if (out != nullptr) out->health = health(t);
+    // Stamped with the newest IMU time (scan ends are older), so health stamps never decrease.
+    if (out != nullptr) out->health = health(last_imu ? std::max(last_imu->t, t) : t);
   }
 
-  /// Applies an ESKF snapshot to the output predictor. A snapshot newer than the output (the IMU has not
-  /// reached the scan end yet) waits for push_imu; every other rejection is one event. Persistent
+  /// After a failed prediction or a math exception: keep the state, move its time to `end` and inflate the
+  /// covariance (limits::kRebaseCovarianceInflation, eigenvalues capped), as main's pipeline did.
+  void rebase_to(time::SensorTime start, time::SensorTime end, const time::TimeSnapshot& now) {
+    const fl::ManifoldState::Covariance p = eskf.covariance();
+    const fl::ManifoldState::Covariance sym = 0.5 * (p + p.transpose());
+    Eigen::SelfAdjointEigenSolver<fl::ManifoldState::Covariance> solver(sym);
+    fl::ManifoldState::Covariance inflated = limits::kRebaseCovarianceInflation * sym;
+    if (solver.info() == Eigen::Success && solver.eigenvalues().allFinite()) {
+      const auto values = (solver.eigenvalues().cwiseMax(0.0) * limits::kRebaseCovarianceInflation)
+                              .cwiseMin(limits::kRebaseMaxCovarianceEigenvalue);
+      inflated = solver.eigenvectors() * values.asDiagonal() * solver.eigenvectors().transpose();
+      inflated = 0.5 * (inflated + inflated.transpose());
+    }
+    eskf.rebase(eskf.stateView(), inflated);
+    eskf_t = end;
+    refresh_sigma();
+    emit(event("EskfRebased", now)
+             .reason(EstimatorEventReason::kEskfRebased)
+             .value("sensor_time_s", seconds(end))
+             .value("skipped_s", time::to_seconds(end - start))
+             .value("position_sigma_m", position_sigma_m));
+  }
+
+  /// Applies an ESKF snapshot to the output predictor; every rejection is one event. Persistent
   /// rejection -> DEGRADED is an S1b carry-over (not decided here).
   void correct_predictor(const EstimatorSnapshot& s, const time::TimeSnapshot& now) {
     const auto r = predictor.on_correction(s);
     if (r) return;
-    if (r.error() == PredictorReason::kNewerThanOutput) {
-      if (pending_correction) {
-        emit(event("PredictorCorrectionRejected", now).reason(PredictorReason::kNewerThanOutput));
-      }
-      pending_correction = s;
-      return;
-    }
     emit(event("PredictorCorrectionRejected", now).reason(r.error()).value("sensor_time_s", seconds(s.t)));
   }
 
@@ -270,12 +323,10 @@ struct LioEstimator::Impl {
   }
 
   // --- scan ----------------------------------------------------------------------------------------
-  /// ESKF prediction from eskf_t to `end` over the IMU history. The last sample may be held (zero-order)
-  /// up to imu_max_gap when the IMU has not reached `end` yet. On failure (history does not cover the
-  /// interval, or an IMU gap) the state is kept and its time moved to `end` (no integration).
+  /// ESKF prediction from eskf_t to `end` over the IMU history (the caller checked the IMU reached `end`).
+  /// nullopt (state unchanged) when the history does not cover the interval or holds an IMU gap.
   std::optional<fl::ImuTrajectory> predict_to(time::SensorTime end) {
     const time::SensorTime start = *eskf_t;
-    eskf_t = end;
     std::vector<fl::ImuSample> span;
     for (std::size_t i = 0; i < imu_history.size(); ++i) {
       const std::int64_t ti = imu_history[i].time.nanoseconds();
@@ -284,28 +335,30 @@ struct LioEstimator::Impl {
       if (start_bracket || (!span.empty() && ti > start.ns)) span.push_back(imu_history[i]);
       if (!span.empty() && ti >= end.ns) break;
     }
-    if (!span.empty() && span.back().time.nanoseconds() < end.ns &&
-        end - time::SensorTime{span.back().time.nanoseconds()} <= cfg.math.imu_max_gap) {
-      fl::ImuSample held = span.back();
-      held.time = stamp(end);
-      span.push_back(held);
-    }
-    trim_history(end);
     if (span.empty() || span.front().time.nanoseconds() > start.ns || span.back().time.nanoseconds() < end.ns) {
       return std::nullopt;
     }
     auto trajectory = eskf.predict(span, stamp(start), stamp(end));
     if (!trajectory.ok()) return std::nullopt;
+    eskf_t = end;
+    trim_history(end);
     return std::move(trajectory).value();
   }
 
   /// predict -> deskew -> preprocess -> (map bootstrap | correct -> degeneracy). Throws only from the
   /// reused math; the caller turns that into kMathException.
-  ScanOutcome process(ScanInput& in) {
+  ScanOutcome process(ScanInput& in, const time::TimeSnapshot& now) {
     ScanOutcome o{EstimatorEventReason::kScanDegenerate, std::nullopt, {}, in.points.size()};
     const time::SensorTime trajectory_start = *eskf_t;
+    if (!last_imu || last_imu->t < in.end) {  // precondition broken: never trust it, never extrapolate
+      rebase_to(trajectory_start, in.end, now);
+      o.reason = EstimatorEventReason::kScanAheadOfImu;
+      return o;
+    }
     const auto trajectory = predict_to(in.end);
     if (!trajectory) {
+      rebase_to(trajectory_start, in.end, now);
+      trim_history(in.end);
       o.reason = EstimatorEventReason::kPredictionFailed;
       return o;
     }
@@ -424,15 +477,19 @@ struct LioEstimator::Impl {
   LioLifecycle lifecycle;
   OutputPredictor predictor;
 
-  std::deque<fl::ImuSample> imu_history;              // bounded by limits::kImuHistoryCapacity
-  std::optional<ImuInput> last_imu;                   // newest accepted IMU sample
-  std::optional<OutputSample> last_output;            // newest predictor output
-  std::optional<time::SensorTime> eskf_t;             // ESKF state time; nullopt until the IMU initialiser succeeds
-  std::optional<time::SensorTime> last_scan_end;      // newest accepted scan end (ordering check)
-  std::optional<time::SensorTime> last_scan_event_t;  // newest scan end fed to the lifecycle
+  std::deque<fl::ImuSample> imu_history;          // bounded by limits::kImuHistoryCapacity
+  std::optional<ImuInput> last_imu;               // newest accepted IMU sample
+  std::optional<OutputSample> last_output;        // newest predictor output
+  std::optional<time::SensorTime> eskf_t;         // ESKF state time; nullopt until the IMU initialiser succeeds
+  std::optional<time::SensorTime> last_scan_end;  // newest accepted scan end (ordering check)
   std::optional<time::SensorTime> next_health_t;
-  std::optional<EstimatorSnapshot> pending_correction;
-  DegeneracyReport last_report{0.0, 0.0, true, 0};
+  std::optional<time::SensorTime> last_good_scan_t;  // end of the newest kScanGood (correction age)
+  struct Spam {
+    std::uint64_t count{0};     // occurrences this epoch
+    std::uint64_t reported{0};  // count at the last emitted event
+  };
+  std::array<Spam, kSpamSlots> spam{};  // rate-limited per-sample events, see estimator.hpp
+  DegeneracyReport last_report{kNoReport};
   LioReason last_reason{LioReason::kNone};
   double position_sigma_m{0.0};
   double imu_period_s{0.0};
@@ -493,9 +550,12 @@ Result<StepOutputs, EstimatorReason> LioEstimator::push_imu(const ImuInput& imu,
 
   StepOutputs out;
   if (m.last_imu && imu.t == m.last_imu->t) {
-    m.emit(m.event("ImuDuplicate", now)
-               .reason(EstimatorEventReason::kImuDuplicate)
-               .value("sensor_time_s", seconds(imu.t)));
+    if (m.spam_due(kDuplicateSlot)) {
+      m.emit(m.event("ImuDuplicate", now)
+                 .reason(EstimatorEventReason::kImuDuplicate)
+                 .value("sensor_time_s", seconds(imu.t))
+                 .value("count", static_cast<double>(m.spam[kDuplicateSlot].count)));
+    }
   } else {
     if (m.last_imu) {
       const time::Duration dt = imu.t - m.last_imu->t;
@@ -506,7 +566,11 @@ Result<StepOutputs, EstimatorReason> LioEstimator::push_imu(const ImuInput& imu,
       m.track_rate(dt, now);
     }
     const fl::ImuSample sample{stamp(imu.t), imu.gyro_rad_s, imu.accel_mps2};
-    m.imu_history.push_back(sample);
+    try {
+      m.imu_history.push_back(sample);
+    } catch (...) {  // never throws: the sample is dropped (a later prediction across it fails, rebases)
+      m.emit(m.event("AllocationFailed", now).reason(EstimatorEventReason::kAllocationFailed).value("site", 0));
+    }
     while (m.imu_history.size() > limits::kImuHistoryCapacity) m.imu_history.pop_front();
 
     if (!m.eskf_t) {
@@ -515,33 +579,34 @@ Result<StepOutputs, EstimatorReason> LioEstimator::push_imu(const ImuInput& imu,
       const double dt_s = time::to_seconds(imu.t - m.last_imu->t);
       const ImuDelta delta{imu.t, 0.5 * (m.last_imu->gyro_rad_s + imu.gyro_rad_s) * dt_s,
                            0.5 * (m.last_imu->accel_mps2 + imu.accel_mps2) * dt_s, dt_s};
-      if (const auto o = m.predictor.on_imu(delta)) {
-        m.last_output = *o;
-        if (m.pending_correction && m.pending_correction->t <= imu.t) {
-          const EstimatorSnapshot s = *m.pending_correction;
-          m.pending_correction.reset();
-          m.correct_predictor(s, now);
-        }
-      }
+      if (const auto o = m.predictor.on_imu(delta)) m.last_output = *o;
     }
     m.last_imu = imu;
   }
 
   const Transition tr = m.lifecycle.on(LioEvent{LioEvent::Kind::kImuTick, imu.t, m.position_sigma_m});
   m.on_transition(tr, imu.t, now, &out, std::nullopt);
-  if (m.last_output && m.last_output->t == imu.t)
-    out.states.push_back(StateOutput{*m.last_output, m.epoch, m.lifecycle.state()});
+  if (m.last_output && m.last_output->t == imu.t) {
+    try {
+      out.states.push_back(StateOutput{*m.last_output, m.epoch, m.lifecycle.state()});
+    } catch (...) {  // never throws: this output is dropped
+      m.emit(m.event("AllocationFailed", now).reason(EstimatorEventReason::kAllocationFailed).value("site", 1));
+    }
+  }
+  // Periodic health on the sensor-time grid next_health_t + k * kHealthPeriod (no drift with jitter).
   if (!m.next_health_t || imu.t >= *m.next_health_t) {
     out.health = m.health(imu.t);
-    m.next_health_t = imu.t + limits::kHealthPeriod;
+    if (!m.next_health_t) m.next_health_t = imu.t;
+    while (*m.next_health_t <= imu.t) m.next_health_t = *m.next_health_t + limits::kHealthPeriod;
   }
   return out;
 }
 
 Result<StepOutputs, EstimatorReason> LioEstimator::push_scan(ScanInput&& in, const time::TimeSnapshot& now) {
   Impl& m = *impl_;
-  if (in.points.size() > limits::kMaxScanPoints)
+  if (in.points.size() > limits::kMaxScanPoints) {
     return m.reject(EstimatorReason::kTooManyPoints, Stream::kScan, in.end, now);
+  }
   for (const auto& p : in.points) {
     if (!p.allFinite()) return m.reject(EstimatorReason::kNotFinite, Stream::kScan, in.end, now);
   }
@@ -559,12 +624,21 @@ Result<StepOutputs, EstimatorReason> LioEstimator::push_scan(ScanInput&& in, con
   }
 
   ScanOutcome o{EstimatorEventReason::kMathException, std::nullopt, {}, in.points.size()};
+  const time::SensorTime start = *m.eskf_t;
+  const fl::ManifoldState saved_state = m.eskf.stateView();
+  const fl::ManifoldState::Covariance saved_cov = m.eskf.covariance();
   try {
-    o = m.process(in);
-  } catch (...) {  // reused math threw: a degenerate scan + event, never an exception out
-    m.eskf_t = t;
+    o = m.process(in, now);
+  } catch (...) {  // reused math threw: restore, rebase, degenerate scan + event; never an exception out
+    try {
+      m.eskf.rebase(saved_state, saved_cov);
+      m.rebase_to(start, t, now);
+    } catch (...) {
+      m.eskf_t = t;
+    }
   }
   m.refresh_sigma();
+  m.last_report = o.report ? *o.report : kNoReport;  // a scan without a correction carries no information
 
   EventBuilder scan_event = m.event("LioScan", now);
   scan_event.reason(o.reason)
@@ -572,7 +646,6 @@ Result<StepOutputs, EstimatorReason> LioEstimator::push_scan(ScanInput&& in, con
       .value("input_points", static_cast<double>(o.input_points));
   scan_event.value("points", static_cast<double>(o.points.size()));
   if (o.report) {
-    m.last_report = *o.report;
     scan_event.value("translation_min_eigenvalue", o.report->translation_min_eigenvalue)
         .value("rotation_min_eigenvalue", o.report->rotation_min_eigenvalue)
         .value("quality", o.report->quality)
@@ -580,25 +653,23 @@ Result<StepOutputs, EstimatorReason> LioEstimator::push_scan(ScanInput&& in, con
   }
   m.emit(scan_event);
 
-  const LioEvent::Kind kind = kind_of(o.reason);
-  if (kind != LioEvent::Kind::kMapReady) m.last_scan_event_t = t;
-  const Transition tr = m.lifecycle.on(LioEvent{kind, t, m.position_sigma_m});
+  const bool good = o.reason == EstimatorEventReason::kScanGood;
+  if (good) m.last_good_scan_t = t;
+  const Transition tr = m.lifecycle.on(LioEvent{kind_of(o.reason), t, m.position_sigma_m});
   m.on_transition(tr, t, now, &out, o.report);
 
   const LioState s = m.lifecycle.state();
   const bool trusted = s == LioState::kInitializing || s == LioState::kTracking || s == LioState::kDegraded;
-  if (o.reason == EstimatorEventReason::kMapBootstrap) {
-    m.insert_into_map(o.points, now);
-  } else if (o.reason == EstimatorEventReason::kScanGood && trusted) {
-    m.insert_into_map(o.points, now);
-  }
+  if (o.reason == EstimatorEventReason::kMapBootstrap || (good && trusted)) m.insert_into_map(o.points, now);
   // Only a LiDAR-corrected, non-degenerate state corrects the output; otherwise it dead-reckons on IMU.
-  if (o.reason == EstimatorEventReason::kScanGood) m.correct_predictor(snapshot(m.eskf.stateView(), t), now);
-  if (s == LioState::kTracking && o.report) out.odometry = m.odometry(t, o.report->quality, now);
+  if (good) m.correct_predictor(snapshot(m.eskf.stateView(), t), now);
+  // Odometry only for a good scan in TRACKING: a degenerate scan publishes nothing even while the lifecycle
+  // still counts it in TRACKING (D28 beta: EKF2_EV_QMIN = 0, quality is not gated downstream; §4.1).
+  if (good && s == LioState::kTracking) out.odometry = m.odometry(t, o.report->quality, now);
   return out;
 }
 
-Result<void, EstimatorReason> LioEstimator::restart(const SeedPose& seed, const time::TimeSnapshot& now) {
+Result<ResetDelta, EstimatorReason> LioEstimator::restart(const SeedPose& seed, const time::TimeSnapshot& now) {
   Impl& m = *impl_;
   const time::SensorTime t = m.last_imu ? m.last_imu->t : time::SensorTime{};
   if (m.lifecycle.state() != LioState::kRestarting || !m.eskf_t || !m.last_imu) {
@@ -610,6 +681,7 @@ Result<void, EstimatorReason> LioEstimator::restart(const SeedPose& seed, const 
     return std::unexpected(EstimatorReason::kNotFinite);
   }
   const Eigen::Quaterniond q_seed = seed.q_world_base.normalized();
+  ResetDelta delta{};
   try {
     // Biases, gravity and extrinsics carry over from the old epoch. The velocity is the predictor's
     // dead-reckoned one at the newest IMU time, rotated from the old world into the seed's.
@@ -640,17 +712,17 @@ Result<void, EstimatorReason> LioEstimator::restart(const SeedPose& seed, const 
     m.trim_history(t);
     m.refresh_sigma();
     // Stamped at the newest IMU time, so the predictor buffer matches it (no rewind, output_predictor.hpp).
-    (void)m.predictor.reset_to(snapshot(seeded, t));
+    delta = m.predictor.reset_to(snapshot(seeded, t));
   } catch (...) {
     (void)m.reject(EstimatorReason::kNotFinite, Stream::kRestart, t, now);
     return std::unexpected(EstimatorReason::kNotFinite);
   }
 
+  m.flush_spam(now);  // end of the old epoch: summaries of rate-limited events, under the old epoch id
   const std::uint32_t old_epoch = m.epoch;
   ++m.epoch;
-  m.pending_correction.reset();
   m.last_output.reset();
-  m.last_report = DegeneracyReport{0.0, 0.0, true, 0};
+  m.last_report = kNoReport;
   m.rate_reported = false;
   m.imu_period_samples = 0;
   m.next_health_t.reset();  // restart() returns no outputs: the next IMU sample carries the health
@@ -662,9 +734,13 @@ Result<void, EstimatorReason> LioEstimator::restart(const SeedPose& seed, const 
              .value("seed_x_m", seed.p_world_m.x())
              .value("seed_y_m", seed.p_world_m.y())
              .value("seed_z_m", seed.p_world_m.z())
-             .value("seed_yaw_rad", yaw_of(q_seed)));
+             .value("seed_yaw_rad", yaw_of(q_seed))
+             .value("delta_x_m", delta.position_m.x())
+             .value("delta_y_m", delta.position_m.y())
+             .value("delta_z_m", delta.position_m.z())
+             .value("delta_yaw_rad", delta.yaw_rad));
   m.on_transition(tr, t, now, nullptr, std::nullopt);
-  return {};
+  return delta;
 }
 
 }  // namespace uavnav::lio
