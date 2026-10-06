@@ -6,6 +6,7 @@
 #include "uavnav/core/result.hpp"
 #include "uavnav/lio/degeneracy.hpp"
 #include "uavnav/lio/lifecycle.hpp"
+#include "uavnav/lio/output_predictor.hpp"
 
 // Typed tier-(b) configuration of the LIO core (SYSTEM_DESIGN §6.2). Later tasks append
 // their keys to kLioSpecs (N is derived from the initializer) and their section to
@@ -15,11 +16,13 @@ namespace uavnav::lio {
 struct LioConfig {
   LifecycleConfig lifecycle;
   DegeneracyConfig degeneracy;
+  PredictorConfig predictor;
 };
 
 /// The single definition of every LIO key, its unit and its inclusive bounds. Beta values:
 /// confirm 5, degenerate 3, gap_degraded 0.25 s, gap_lost 0.5 s, degeneracy_lost 1.0 s, sigma_lost 0.5 m,
-/// degeneracy_translation_min_info 1.1e5, degeneracy_rotation_min_info 2.8e6.
+/// degeneracy_translation_min_info 1.1e5, degeneracy_rotation_min_info 2.8e6,
+/// predictor_tau_vel_s 0.25 s, predictor_tau_pos_s 0.25 s (SYSTEM_DESIGN §3.3: τ_vel = τ_pos = 0.25 s).
 ///
 /// Derivation of the two degeneracy thresholds (smallest eigenvalue of the translation / rotation block of
 /// the per-scan information matrix; see evaluate_degeneracy). Information from n points with weak-direction
@@ -37,6 +40,8 @@ inline constexpr auto kLioSpecs = std::to_array<config::ParamSpec>({
     {"lifecycle_position_sigma_lost_m", config::Unit::kMeters, 0.05, 5.0},
     {"degeneracy_translation_min_info", config::Unit::kNone, 1.0, 1e9},
     {"degeneracy_rotation_min_info", config::Unit::kNone, 1.0, 1e12},
+    {"predictor_tau_vel_s", config::Unit::kSeconds, 0.05, 5.0},
+    {"predictor_tau_pos_s", config::Unit::kSeconds, 0.05, 5.0},
 });
 
 /// Builds a LioConfig from values already loaded against kLioSpecs (config::load_params).

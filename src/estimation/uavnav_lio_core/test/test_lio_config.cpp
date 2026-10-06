@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <initializer_list>
 #include <limits>
 #include <utility>
@@ -24,7 +25,9 @@ constexpr std::string_view kBeta =
     "lifecycle_degeneracy_lost_s: 1.0\n"
     "lifecycle_position_sigma_lost_m: 0.5\n"
     "degeneracy_translation_min_info: 1.1e5\n"
-    "degeneracy_rotation_min_info: 2.8e6\n";
+    "degeneracy_rotation_min_info: 2.8e6\n"
+    "predictor_tau_vel_s: 0.25\n"
+    "predictor_tau_pos_s: 0.25\n";
 
 // kBeta with each `key: value` pair of `changes` replacing the line that starts with `key:`.
 std::string With(std::initializer_list<std::pair<std::string_view, std::string_view>> changes) {
@@ -72,10 +75,12 @@ TEST(LioConfig, BetaValuesLoad) {
   EXPECT_DOUBLE_EQ(c.position_sigma_lost_m, 0.5);
   EXPECT_DOUBLE_EQ(r->degeneracy.translation_min_info, 1.1e5);
   EXPECT_DOUBLE_EQ(r->degeneracy.rotation_min_info, 2.8e6);
+  EXPECT_EQ(r->predictor.tau_vel, time::milliseconds(250));
+  EXPECT_EQ(r->predictor.tau_pos, time::milliseconds(250));
 }
 
 TEST(LioConfig, SpecsAreValidAndComplete) {
-  static_assert(kLioSpecs.size() == 8);
+  static_assert(kLioSpecs.size() == 10);
   // A schema with a bad spec would be rejected before the text is read.
   const auto r = config::load_params(kBeta, kLioSpecs);
   ASSERT_TRUE(r.has_value());
@@ -181,7 +186,58 @@ TEST(LioConfig, LoadLioConfigReportsMissingKeyWithoutThrowing) {
   EXPECT_EQ(r.error().kind, Kind::kMissingKey);
 }
 
+TEST(LioConfig, PredictorKeysLoad) {
+  const auto r = Load(With({{"predictor_tau_vel_s", "0.5"}, {"predictor_tau_pos_s", "1.5"}}));
+  ASSERT_TRUE(r.has_value()) << r.error().key << ": " << r.error().detail;
+  EXPECT_EQ(r->predictor.tau_vel, time::milliseconds(500));
+  EXPECT_EQ(r->predictor.tau_pos, time::milliseconds(1500));
+}
+
+TEST(LioConfig, PredictorKeyBoundsAreInclusive) {
+  const auto low = Load(With({{"predictor_tau_vel_s", "0.05"}, {"predictor_tau_pos_s", "0.05"}}));
+  ASSERT_TRUE(low.has_value()) << low.error().key << ": " << low.error().detail;
+  EXPECT_EQ(low->predictor.tau_vel, time::milliseconds(50));
+  EXPECT_EQ(low->predictor.tau_pos, time::milliseconds(50));
+  const auto high = Load(With({{"predictor_tau_vel_s", "5.0"}, {"predictor_tau_pos_s", "5.0"}}));
+  ASSERT_TRUE(high.has_value()) << high.error().key << ": " << high.error().detail;
+  EXPECT_EQ(high->predictor.tau_vel, time::seconds(5));
+  EXPECT_EQ(high->predictor.tau_pos, time::seconds(5));
+}
+
+TEST(LioConfig, PredictorKeysOutOfRangeAreRejectedNamingTheKey) {
+  for (const std::string_view key : {"predictor_tau_vel_s", "predictor_tau_pos_s"}) {
+    ExpectError(With(key, "0.04"), Kind::kOutOfRange, key);
+    ExpectError(With(key, "5.01"), Kind::kOutOfRange, key);
+    ExpectError(With(key, "0"), Kind::kOutOfRange, key);
+    ExpectError(With(key, "-0.25"), Kind::kOutOfRange, key);
+  }
+}
+
+TEST(LioConfig, MissingPredictorKeyIsRejectedNamingTheKey) {
+  for (const std::string_view key : {"predictor_tau_vel_s", "predictor_tau_pos_s"}) {
+    std::string text;
+    std::string_view rest = kBeta;
+    while (!rest.empty()) {
+      const auto nl = rest.find('\n');
+      const std::string_view line = rest.substr(0, nl);
+      rest.remove_prefix(nl + 1);
+      if (!line.starts_with(std::string(key) + ":")) text += std::string(line) + "\n";
+    }
+    ExpectError(text, Kind::kMissingKey, key);
+  }
+}
+
 TEST(LioLimits, ScanPointCap) { EXPECT_EQ(limits::kMaxScanPoints, 200'000U); }
+
+TEST(LioLimits, PredictorConstants) {
+  EXPECT_EQ(limits::kPredictorBufferSpan, time::milliseconds(300));
+  EXPECT_EQ(limits::kPredictorBufferCapacity, 64U);
+  EXPECT_EQ(limits::kPredictorDtMin, time::nanoseconds(100'000));
+  EXPECT_EQ(limits::kPredictorDtMax, time::milliseconds(30));
+  // The buffer holds at least the full span at the design IMU rate (200 Hz).
+  EXPECT_GE(static_cast<std::int64_t>(limits::kPredictorBufferCapacity - 1) * limits::kPredictorDesignImuPeriod.ns,
+            limits::kPredictorBufferSpan.ns);
+}
 
 // --- hand-built ParamValues (load_lio_config is public) ----------------------------------------
 
@@ -239,6 +295,26 @@ TEST(LioConfigHandBuilt, BoundsAreInclusive) {
 
 TEST(LioConfigHandBuilt, MissingDegeneracyKeyInHandBuiltValuesNamesTheKey) {
   for (const std::string_view key : {"degeneracy_translation_min_info", "degeneracy_rotation_min_info"}) {
+    auto values = Beta();
+    values.erase(std::string(key));
+    const auto r = load_lio_config(values);
+    ASSERT_FALSE(r.has_value()) << key;
+    EXPECT_EQ(r.error().kind, Kind::kMissingKey);
+    EXPECT_EQ(r.error().key, key);
+  }
+}
+
+TEST(LioConfigHandBuilt, PredictorKeysRejectHostileValues) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  for (const std::string_view key : {"predictor_tau_vel_s", "predictor_tau_pos_s"}) {
+    for (const double bad : {-1.0, 0.0, 0.0499, 5.0001, 1e30, nan, inf, -inf}) {
+      auto values = Beta();
+      values[std::string(key)] = bad;
+      const auto r = load_lio_config(values);
+      ASSERT_FALSE(r.has_value()) << key << " = " << bad;
+      EXPECT_EQ(r.error().key, key);
+    }
     auto values = Beta();
     values.erase(std::string(key));
     const auto r = load_lio_config(values);

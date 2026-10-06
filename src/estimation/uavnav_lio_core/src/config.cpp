@@ -73,6 +73,10 @@ Result<LioConfig, ConfigError> load_lio_config(const config::ParamValues& values
   if (!translation_min_info) return std::unexpected(translation_min_info.error());
   const auto rotation_min_info = checked(values, "degeneracy_rotation_min_info");
   if (!rotation_min_info) return std::unexpected(rotation_min_info.error());
+  const auto tau_vel = seconds_key(values, "predictor_tau_vel_s");
+  if (!tau_vel) return std::unexpected(tau_vel.error());
+  const auto tau_pos = seconds_key(values, "predictor_tau_pos_s");
+  if (!tau_pos) return std::unexpected(tau_pos.error());
 
   if (*gap_lost <= *gap_degraded) {
     return fail(Kind::kOutOfRange, "lifecycle_gap_lost_s",
@@ -87,7 +91,7 @@ Result<LioConfig, ConfigError> load_lio_config(const config::ParamValues& values
   }
 
   return LioConfig{LifecycleConfig{*confirm, *degenerate, *gap_degraded, *gap_lost, *degeneracy_lost, *sigma},
-                   DegeneracyConfig{*translation_min_info, *rotation_min_info}};
+                   DegeneracyConfig{*translation_min_info, *rotation_min_info}, PredictorConfig{*tau_vel, *tau_pos}};
 }
 
 }  // namespace uavnav::lio

@@ -11,7 +11,8 @@ find_package(Eigen3 REQUIRED)
 set(UAVNAV_LIO_CORE_SOURCES
   src/config.cpp
   src/degeneracy.cpp
-  src/lifecycle.cpp)
+  src/lifecycle.cpp
+  src/output_predictor.cpp)
 
 add_library(uavnav_lio_core STATIC ${UAVNAV_LIO_CORE_SOURCES})
 add_library(uavnav_lio_core::uavnav_lio_core ALIAS uavnav_lio_core)
@@ -36,7 +37,7 @@ ament_export_dependencies(uavnav_core fast_lio_core Eigen3)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  foreach(test_name test_lio_config test_lifecycle test_degeneracy)
+  foreach(test_name test_lio_config test_lifecycle test_degeneracy test_output_predictor)
     ament_add_gtest(${test_name} test/${test_name}.cpp)
     target_link_libraries(${test_name} uavnav_lio_core::uavnav_lio_core)
     target_compile_options(${test_name} PRIVATE ${UAVNAV_LIO_CORE_STRICT_WARNINGS})
