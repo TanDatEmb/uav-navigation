@@ -398,7 +398,7 @@ src/external/  px4_msgs, px4_ros2_interface_lib, livox_ros_driver2
 src/vendor/    ikfom_vendor, ikd_tree_vendor, rog_map_vendor
 src/sim/       uav_simulation, uav_description
 src/core/      uavnav_core, uavnav_interfaces
-src/estimation/uavnav_lio_core (thuần), uavnav_lio
+src/estimation/fast_lio_core (toán FAST-LIO tận dụng, thuần), uavnav_lio_core (thuần), uavnav_lio
 src/navigation/uavnav_world, uavnav_planning, uavnav_supervisor (thuần), uavnav_navigation
 src/px4/       uavnav_px4_bridge, uavnav_px4_mode
 src/uavnav_bringup             tools/uavnav/
