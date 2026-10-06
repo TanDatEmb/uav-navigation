@@ -104,7 +104,7 @@ Spec §7.1, §7.2 S0, D13, D15. Delete only what no kept package depends on. The
   - `tools/uavnav/__init__.py` (empty)
   - `tools/uavnav/tests/__init__.py` (empty)
   - `tools/uavnav/gate.sh`
-  - `tools/uavnav/s0_prune.sh`
+  - the one-shot S0 prune script (since removed; see commit `f618909`)
 - Modify:
   - `src/mapping/navigation_mapping/CMakeLists.txt`, `src/planning/navigation_planning_backend/CMakeLists.txt`: change every path to `planner.yaml` into `${CMAKE_CURRENT_SOURCE_DIR}/../../../config/runtime/planner.yaml`.
   - `src/uav_description/test/test_sensor_frames_contract.py`: remove the assertions that read `navigation_bringup/launch/fast_lio.launch.py`. Keep the standalone-launch assertions, and rename the test to `test_standalone_launch_mount_policy`.
@@ -146,16 +146,16 @@ Spec §7.1, §7.2 S0, D13, D15. Delete only what no kept package depends on. The
 
 - [ ] **Step 2: Prepare the deletion script, dry-run it, and hand it to the owner (OWNER ACTION)**
 
-  Write `tools/uavnav/s0_prune.sh` as follows:
+  Write the one-shot S0 prune script (since removed; see commit `f618909`) as follows:
   - `set -euo pipefail`; run from the repo root;
   - one `git rm -r --quiet "$@" --` command per path from the Delete list;
-  - it forwards its arguments, so `tools/uavnav/s0_prune.sh -n` performs a dry run.
+  - it forwards its arguments, so passing `-n` performs a dry run.
 
   The agent runs only the dry run:
 
-  `tools/uavnav/s0_prune.sh -n`
+  Run the prune script with `-n`.
 
-  Expected: one `rm '<path>'` line per tracked file under the listed paths, and nothing else. Then the agent **stops and asks the owner** to run `tools/uavnav/s0_prune.sh`. Every deleted file is tracked and stays recoverable from `main` and from `HEAD~`.
+  Expected: one `rm '<path>'` line per tracked file under the listed paths, and nothing else. Then the agent **stops and asks the owner** to run the prune script. Every deleted file is tracked and stays recoverable from `main` and from `HEAD~`.
 
   After the owner confirms, the agent runs `git status --short | grep -c '^D '`. Expected: a non-zero count, and `git status` shows no deletion outside the listed paths.
 
