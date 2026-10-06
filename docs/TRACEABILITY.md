@@ -22,7 +22,7 @@ Cột WP sẽ được điền khi có implementation plan.
 | P4 Kiểu setpoint (A′: P/V/A qua `T`) | §4.2 | S2 | | todo | |
 | P5 LIO mất rồi khởi động lại | §3.1, §3.4, §2.2 | S4 | | todo | |
 | P6 Không GPS mà LIO fail → bàn giao có Reason | §2.3, §4.2 | S4 | | todo | |
-| P7 Trạng thái 50–100 Hz với LiDAR 10 Hz | §3.3 | S1 | S1a-T7, S1a-T8 | doing | `OutputPredictor.CorrectionConvergesWithoutJump`, `OutputPredictor.CorrectionMatchedByTimestampNotOldest`, `OutputPredictor.AttitudeTrackingDoesNotOvershootAtScanRate` (predictor xong; phát 100 Hz thuộc S1b; còn lệch O13 về τ hiệu dụng) |
+| P7 Trạng thái 50–100 Hz với LiDAR 10 Hz | §3.3 | S1 | S1a-T7, S1a-T8 | doing | `OutputPredictor.CorrectionConvergesWithoutJump`, `OutputPredictor.CorrectionMatchedByTimestampNotOldest`, `OutputPredictor.AttitudeTrackingDoesNotOvershootAtScanRate` (predictor xong; phát 100 Hz thuộc S1b; còn lệch O13 về τ hiệu dụng và O14 về thread) |
 | P8 Phạm vi SITL, PX4 1.17 | §0 | S0 | S0-T1 | done | commit `f618909` (gỡ code main-only khỏi nhánh; gate build/test `uavnav_core` và `uavnav_interfaces`); pin PX4 v1.17 ghi ở `src/external/README.md` |
 | P9 Chất lượng cấu trúc (M1–M9) | §2, §6, AGENTS.md §2 | mọi lát | | todo | |
 | P10 Chống chuyển nhánh liên tục | §2.1, §2.4, §7.3 | S3, S5 | | todo | |
@@ -32,13 +32,13 @@ Cột WP sẽ được điền khi có implementation plan.
 | Lỗi | Mục spec | Lát | WP | Trạng thái | Bằng chứng (test chống tái diễn) |
 |---|---|---|---|---|---|
 | F13 Reset counter PX4 là tổng | §4.1 | S1 | S1a-T10 | done | `Alignment.AppliesDoubleResetDeltas`, `Alignment.ZResetStepOfThreeAppliesDeltaZ`, `Alignment.ResetCounterWrapIsAReset` (cách cộng delta heading lệch spec, xem O11) |
-| F14 Reset counter EV theo epoch của mẫu | §4.1, §3.4 | S1 | S1a-T9 | done | `EvEncoder.UsesSampleEpochAsResetCounter` (bộ mã hoá; node điền `EvInput.epoch` từ epoch của mẫu ở S1b) |
+| F14 Reset counter EV theo epoch của mẫu | §4.1, §3.4 | S1 | S1a-T9 | doing | `EvEncoder.UsesSampleEpochAsResetCounter` (chỉ chứng minh ở mức bộ mã hoá; node điền `EvInput.epoch` từ epoch của mẫu là việc S1b, như F34) |
 | F15 "Đang bay" theo z LIO, deactivate sai nhãn | §4.2 | S2 | | todo | |
 | F18 Quy tắc chết về logic | §2.3 (không còn quy tắc này) | S3 | | todo | |
 | F20 Mapping bị poison vĩnh viễn | §5.2 | S3 | | todo | |
 | F21 Hai WorldView / hai DDA | §5.2 | S3 | | todo | |
-| F22 LIO không tự chuyển LOST khi chỉ LiDAR mất | §3.1 | S1 | S1a-T5, S1a-T8 | done | `LioLifecycle.LidarGapOnImuTicksAloneReachesLost`, `LioEstimator.ImuOnlyGapReachesLost` |
-| F23 Output 50 Hz nhảy bậc | §3.3 | S1 | S1a-T7 | done | `OutputPredictor.CorrectionConvergesWithoutJump` (xem O13: bước này chỉ đúng khi giữ kẹp 0.03 s của PX4) |
+| F22 LIO không tự chuyển LOST khi chỉ LiDAR mất | §3.1 | S1 | S1a-T5, S1a-T8 | done | `LioLifecycle.LidarGapOnImuTicksAloneReachesLost`, `LioEstimator.ImuOnlyGapReachesLost`, `LioEstimator.ScanAheadOfImuDoesNotHideALidarGap`, `LioEstimator.NormalScansAreAcceptedAfterAScanAheadOfImu` (lỗ hổng scan đóng dấu thời gian vượt IMU đã sửa ở `a5fa24c`) |
+| F23 Output 50 Hz nhảy bậc | §3.3 | S1 | S1a-T7 | doing | `OutputPredictor.CorrectionConvergesWithoutJump` (bằng chứng chỉ đúng khi giữ kẹp 0.03 s của PX4, điều O13 còn để mở; phát 100 Hz thuộc S1b) |
 | F24, F26 Param bị ghi đè hoặc default lệch | §6.2 | S0, S3 | | todo | |
 | F25 Route gate fail-open | §5.3 | S3 | | todo | |
 | F27 LIO nhảy Lost→Tracking không xác nhận | §3.1 | S1 | S1a-T5 | done | `LioLifecycle.LostNeverJumpsToTracking`, `LioLifecycleTable.NoEdgeFromLostToTracking` |
@@ -67,5 +67,6 @@ Khi phát hiện lệch: thêm mục O\* trong [DECISIONS.md](architecture/DECIS
 | O11 | S1a-T10 | Reset heading PX4: code áp phép đổi hệ quy chiếu G (xoay `T` quanh vị trí xe), không "cộng delta heading vào `T`" như văn bản spec | §4.1 |
 | O12 | S1a-T10 | Cổng nhảy, residual và bộ giới hạn tốc độ của `T` đo tại gốc LIO, không tại xe: cánh tay đòn R·δyaw làm cổng 0.5 m chỉ chịu được ≈ 1.7 mrad ở R = 300 m | §4.1 |
 | O13 | S1a-T7 | Output predictor: kẹp 0.03 s của PX4 làm hằng thời gian hiệu dụng ≈ τ·T_scan/0.03 (≈ 0.83 s ở 10 Hz, không phải 0.25 s); thêm cửa sổ giữ attitude có giới hạn, khác PX4 | §3.3 |
+| O14 | S1a-T8 | Thread: facade `LioEstimator` đơn luồng (ICP, dựng lại ikd-tree và hiệu chỉnh predictor cùng đối tượng với `push_imu`), còn §3.5 tách predictor và kiểm tra gap (ingest) khỏi xử lý scan (estimator); thêm các worker OpenMP mà thiết kế không liệt kê | §3.5 |
 
-**Đã đạt ngưỡng ≥ 3 dòng đang mở.** Theo §7.4, dừng implementation và owner quyết định sửa thiết kế (hoặc chấp nhận từng lệch) trước khi bắt đầu S1b.
+**Đang có 4 dòng mở, vượt ngưỡng ≥ 3: quy tắc dừng của §7.4 đang có hiệu lực.** Dừng implementation; owner quyết định sửa thiết kế (hoặc chấp nhận từng lệch) trước khi bắt đầu S1b.

@@ -40,7 +40,8 @@ make gate    # tools/uavnav/gate.sh all: static, python, ros; ends GATE_RESULT=P
 make clean   # prints what to remove (log/); deletes nothing
 ```
 
-`PKGS` defaults to `uavnav_core uavnav_interfaces fast_lio_core`; override it
+`PKGS` defaults to `uavnav_core uavnav_interfaces fast_lio_core uavnav_lio_core
+uavnav_px4_bridge`; override it
 with `make build PKGS="..."`. `COLCON_EXTRA` passes extra `colcon build`
 arguments, e.g. `COLCON_EXTRA="--cmake-clean-cache"` after a package moves.
 `tools/uavnav/gate.sh static|python|ros|all` runs a
