@@ -22,6 +22,10 @@ def make_line(t_ns, component="supervisor", event="Handover", before="RUNNING",
         "world_revision": 0, "values": {}}, separators=(",", ":"))
 
 
+GOLDEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "src", "core",
+                      "uavnav_core", "test", "golden", "event_v1.jsonl")
+
+
 class TempFileCase(unittest.TestCase):
     def write(self, text, binary=False):
         fd, path = tempfile.mkstemp(suffix=".jsonl")
@@ -140,6 +144,26 @@ class LoadTest(TempFileCase):
     def test_load_missing_file_raises_oserror(self):
         with self.assertRaises(OSError):
             events.load(os.path.join(tempfile.gettempdir(), "uavnav-no-such-file.jsonl"))
+
+
+class GoldenFileTest(unittest.TestCase):
+    """The same file the C++ GoldenJsonl test pins; together they lock the wire format."""
+
+    def test_golden_file_round_trip(self):
+        records = events.load(GOLDEN)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0], {
+            "t_steady_ns": 2000000000, "t_ros_ns": 1500000000, "component": "lio",
+            "event": "LioStateChanged", "state_before": "RUNNING", "state_after": "STALE",
+            "reason": "STALE_ODOMETRY", "mission_id": 7, "lio_epoch": 3, "request_id": 42,
+            "bundle_id": 5, "world_revision": 9,
+            "values": {"prefix_s": 1.5, "nan_value": None}})
+        # Key order is part of the format.
+        with open(GOLDEN, encoding="utf-8") as f:
+            first = json.loads(f.readline(), object_pairs_hook=lambda pairs: [k for k, _ in pairs])
+        self.assertEqual(first, ["t_steady_ns", "t_ros_ns", "component", "event", "state_before",
+                                 "state_after", "reason", "mission_id", "lio_epoch", "request_id",
+                                 "bundle_id", "world_revision", "values"])
 
 
 class AnalysisTest(unittest.TestCase):

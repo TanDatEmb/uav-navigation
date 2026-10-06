@@ -33,6 +33,17 @@ class EventSink {
   virtual Result<void, SinkError> write(std::span<const EventRecord> batch) = 0;
 };
 
+/// Why EventRecorder::create() refused to build a recorder.
+enum class RecorderError : std::uint8_t { kZeroCapacity, kNoSink };
+
+constexpr std::string_view to_string(RecorderError e) {
+  switch (e) {
+    case RecorderError::kZeroCapacity: return "ZERO_CAPACITY";
+    case RecorderError::kNoSink: return "NO_SINK";
+  }
+  return "unknown";  // unreachable for valid enumerators
+}
+
 struct RecorderStats {
   std::uint64_t emitted{0};        ///< records accepted by emit()
   std::uint64_t written{0};        ///< accepted records the sink took (EventsDropped notices not counted)
@@ -45,11 +56,16 @@ struct RecorderStats {
 /// hands batches to the sink outside the lock. A slow sink fills the ring and makes
 /// emit() drop (counted, reported later as an `EventsDropped` record); it never
 /// makes emit() wait. A failing or throwing sink loses that batch, is counted, and
-/// the writer carries on. A null sink counts every batch as a sink failure.
+/// the writer carries on. Within one drain the batch is written first, then the
+/// `EventsDropped` notice for the drops counted up to that drain, so log order matches
+/// time order. Built only through create(), which rejects a null sink and a zero capacity.
 class EventRecorder {
  public:
-  explicit EventRecorder(std::unique_ptr<EventSink> sink,
-                         std::size_t capacity = limits::kEventRingCapacity);
+  /// Fails with kZeroCapacity (capacity 0, checked first) or kNoSink (null sink); no
+  /// thread is started on failure.
+  static Result<std::unique_ptr<EventRecorder>, RecorderError> create(
+      std::unique_ptr<EventSink> sink, std::size_t capacity = limits::kEventRingCapacity);
+
   /// Stops the writer after it drains the ring; never throws. Returns once the sink
   /// does, so a sink that never returns from write() would block it.
   ~EventRecorder();
@@ -68,6 +84,8 @@ class EventRecorder {
   RecorderStats stats() const noexcept;
 
  private:
+  EventRecorder(std::unique_ptr<EventSink> sink, std::size_t capacity);
+
   struct Delivery {
     std::uint64_t written{0};
     std::uint64_t failures{0};

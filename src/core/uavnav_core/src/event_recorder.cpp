@@ -7,6 +7,14 @@
 
 namespace uavnav::events {
 
+Result<std::unique_ptr<EventRecorder>, RecorderError> EventRecorder::create(
+    std::unique_ptr<EventSink> sink, std::size_t capacity) {
+  if (capacity == 0) return std::unexpected(RecorderError::kZeroCapacity);
+  if (!sink) return std::unexpected(RecorderError::kNoSink);
+  // The constructor is private, so make_unique cannot reach it.
+  return std::unique_ptr<EventRecorder>(new EventRecorder(std::move(sink), capacity));
+}
+
 EventRecorder::EventRecorder(std::unique_ptr<EventSink> sink, std::size_t capacity)
     : sink_(std::move(sink)), capacity_(capacity) {
   // Both buffers keep this capacity for life (swap and clear() never shrink), so
@@ -78,6 +86,15 @@ void EventRecorder::run() noexcept {
 EventRecorder::Delivery EventRecorder::deliver(std::span<const EventRecord> batch,
                                                std::uint64_t dropped_total) noexcept {
   Delivery d;
+  // The batch goes first: its records are older than the drops counted by now, so the
+  // notice that summarises those drops comes after them and log order matches time order.
+  if (!batch.empty()) {
+    if (write_to_sink(batch)) {
+      d.written += batch.size();
+    } else {
+      ++d.failures;  // the batch is discarded
+    }
+  }
   if (dropped_total > reported_drops_) {
     EventRecord notice;
     notice.t_steady_ns = time::steady_now().ns;  // no ROS clock in core: t_ros_ns stays 0
@@ -88,13 +105,6 @@ EventRecorder::Delivery EventRecorder::deliver(std::span<const EventRecord> batc
       reported_drops_ = dropped_total;  // on failure the count is re-reported next time
     } else {
       ++d.failures;
-    }
-  }
-  if (!batch.empty()) {
-    if (write_to_sink(batch)) {
-      d.written += batch.size();
-    } else {
-      ++d.failures;  // the batch is discarded
     }
   }
   return d;

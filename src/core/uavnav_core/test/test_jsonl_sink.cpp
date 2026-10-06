@@ -378,7 +378,9 @@ TEST(JsonlSink, EscapesValueKeysAndEveryStringField) {
 TEST(JsonlSink, FullRecordWithSixteenValuesIsValidJson) {
   EventRecord r = make_record();
   r.value_count = 0;
-  for (std::size_t i = 0; i < r.values.size(); ++i) r.add_value("v", static_cast<double>(i) * 0.25);
+  // Distinct keys: add_value() rejects a duplicate.
+  static constexpr std::string_view kKeys[] = {"v00", "v01", "v02", "v03", "v04", "v05", "v06", "v07", "v08", "v09", "v10", "v11", "v12", "v13", "v14", "v15"};
+  for (std::size_t i = 0; i < r.values.size(); ++i) r.add_value(kKeys[i], static_cast<double>(i) * 0.25);
   const auto json = parse_json(to_json_line(r));
   ASSERT_TRUE(json.has_value());
   EXPECT_EQ(json->find("values")->members.size(), r.values.size());
@@ -583,10 +585,11 @@ TEST(JsonlSink, WorksAsRecorderSink) {
   {
     auto sink = JsonlSink::open(tmp.path());
     ASSERT_TRUE(sink.has_value());
-    EventRecorder recorder(std::move(*sink));
-    EXPECT_TRUE(recorder.emit(make_record()));
-    EXPECT_TRUE(recorder.emit(make_record()));
-    recorder.flush();
+    auto recorder = EventRecorder::create(std::move(*sink));
+    ASSERT_TRUE(recorder.has_value());
+    EXPECT_TRUE((*recorder)->emit(make_record()));
+    EXPECT_TRUE((*recorder)->emit(make_record()));
+    (*recorder)->flush();
   }
   EXPECT_EQ(read_lines(tmp.path()).size(), 2u);
 }

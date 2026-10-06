@@ -57,9 +57,13 @@ struct EventRecord {
   std::array<EventValue, limits::kMaxEventValues> values{};
   std::uint8_t value_count{0};
 
-  /// Appends a value. Returns false and leaves the record unchanged when full.
+  /// Appends a value. Returns false and leaves the record unchanged when full or when
+  /// `key` is already present (compared by content); the first value for a key stays.
   bool add_value(std::string_view key, double v) noexcept {
     if (value_count >= values.size()) return false;
+    for (std::uint8_t i = 0; i < value_count; ++i) {
+      if (values[i].key == key) return false;
+    }
     values[value_count++] = EventValue{key, v};
     return true;
   }
