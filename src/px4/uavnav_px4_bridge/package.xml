@@ -4,7 +4,7 @@
 <package format="3">
   <name>uavnav_px4_bridge</name>
   <version>0.1.0</version>
-  <description>PX4 bridge core for uav-navigation: FLU to FRD frame conversion, the external-vision (EV) encoder and SITL PX4 time conversion. ROS-free library; the node is added separately.</description>
+  <description>PX4 bridge core for uav-navigation: FLU to FRD frame conversion, the external-vision (EV) encoder, SITL PX4 time conversion and the alignment estimator T_px4&lt;-lio. ROS-free library; the node is added separately.</description>
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>

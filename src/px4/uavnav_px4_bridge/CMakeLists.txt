@@ -8,6 +8,8 @@ find_package(Eigen3 REQUIRED)
 # No ROS (rclcpp) and no px4_msgs dependency: this library must stay usable outside any node.
 # EvSample maps 1:1 onto px4_msgs::msg::VehicleOdometry, the node copies it field by field.
 set(UAVNAV_PX4_BRIDGE_SOURCES
+  src/alignment.cpp
+  src/config.cpp
   src/ev_encoder.cpp
   src/px4_time.cpp)
 
@@ -33,7 +35,7 @@ ament_export_dependencies(uavnav_core Eigen3)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  foreach(test_name test_frames test_px4_time test_ev_encoder)
+  foreach(test_name test_frames test_px4_time test_ev_encoder test_alignment test_alignment_config)
     ament_add_gtest(${test_name} test/${test_name}.cpp TIMEOUT 300)
     target_link_libraries(${test_name} uavnav_px4_bridge::uavnav_px4_bridge_core)
     target_compile_options(${test_name} PRIVATE ${UAVNAV_PX4_BRIDGE_STRICT_WARNINGS})
