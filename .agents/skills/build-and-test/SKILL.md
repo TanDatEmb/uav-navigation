@@ -8,7 +8,7 @@ virtual environment for normal verification.
 
 - `make setup` prepares the host when required.
 - `make build` runs `colcon build --packages-up-to $(PKGS)`; `PKGS` defaults to
-  `uavnav_core uavnav_interfaces fast_lio_core uavnav_lio_core`. Override it with
+  `uavnav_core uavnav_interfaces fast_lio_core uavnav_lio_core uavnav_px4_bridge`. Override it with
   `make build PKGS="..."`. `COLCON_EXTRA="--cmake-clean-cache"` adds colcon
   arguments (use it after a package moves); the Makefile sets the colcon
   arguments, never call bare `colcon`.
