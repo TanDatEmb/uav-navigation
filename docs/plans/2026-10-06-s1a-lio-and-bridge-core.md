@@ -980,3 +980,85 @@ Spec §4.1, D7, D21, F13.
   git add docs/TRACEABILITY.md docs/plans/2026-10-06-s1a-lio-and-bridge-core.md
   git commit -m "docs(design): close S1a traceability and carry-over to S1b"
   ```
+
+## Carry-over to S1b
+
+Obligations found during S1a that S1b must schedule or explicitly reject. Each line names the file and the originating task. The three design deviations (O11, O12, O13 in `docs/architecture/DECISIONS.md`, rows in the "Lệch thiết kế đang mở" section of `docs/TRACEABILITY.md`) reach the §7.4 stop threshold, so the owner must decide on them first.
+
+### Owner decisions needed before S1b
+
+- O11: §4.1 says "add xy/z/heading deltas to T" but `AlignmentEstimator` applies the frame change G (yaw_T += dh and a rotation of T about the vehicle's PX4 position, same G on buffered PX4 samples); update §4.1 or reject the implementation (T10).
+- O12: the alignment jump gate, residual and rate limiter are measured at the LIO origin, not at the vehicle (lever arm R·δyaw: at R = 300 m the 0.5 m gate tolerates only about 1.7 mrad heading noise, so persistent `kPairRejectedJump` leads to STALE and INVALID mid-mission); decide before long-range SITL (T10).
+- O13: §3.3 output predictor: PX4's 0.03 s clamp makes the effective time constant about τ·T_scan/0.03 (about 0.83 s at 10 Hz) and the "no jump" test (F23) needs that clamp; also a bounded attitude-correction hold window that PX4 does not have; state the intended τ semantics (T7).
+- Decide whether the S1a-T8 interface additions stay: `push_imu` and `push_scan` take a `TimeSnapshot`, `restart` returns `Result<ResetDelta, EstimatorReason>`, `AlignmentEstimator::on_px4` returns `AlignmentOutput` (T8, T10).
+
+### LIO facade (`LioEstimator`)
+
+- Feed each scan only after the IMU has reached `scan.end`, with a bounded wait/timeout policy in the ingest thread; scans ahead of the IMU are degenerate (`kScanAheadOfImu`) and rebase the ESKF (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
+- In the `kScanAheadOfImu` case leave the ESKF time where it is instead of rebasing (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
+- Rebase fallback after a solver failure inflates P to 10·P without a cap; NaN fails closed in the lifecycle but cap or reject it explicitly (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
+- LOST recovery registers against the stale map and stays LOST forever once the drift exceeds about 2 m; add a pose-independent geometry check for LOST to RESTARTING (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
+- Restart uses a velocity from dead-reckoning and a 1e-3·I covariance; review both, and add a SeedPose velocity or a re-bootstrap after N degenerate scans (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
+- The bootstrap map is built from the first scan regardless of geometry and INITIALIZING has no exit on a degenerate bootstrap; add a re-bootstrap or an event (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
+- `LocalMapUpdate` is silent; emit an event per AGENTS.md section 2.3 (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
+- `LioEstimator::create()` should check orthonormality of the extrinsic `linear()` parts and return an empty key when `fast_lio_core` refuses the config (`src/estimation/uavnav_lio_core/include/uavnav/lio/estimator.hpp`, T8).
+- A pending predictor correction is dropped silently at restart; log it (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
+- Log `T` in the `LioRestart` event as §3.4 requires (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
+- Odometry is published only for good scans while TRACKING (`kScanGood`), but a bridge must still gate on `quality` per D28 and fill `EvInput` only from TRACKING samples (`src/estimation/uavnav_lio_core/include/uavnav/lio/estimator.hpp`, T8).
+- Any IMU gap above `imu_max_gap_s` makes that scan degenerate and the ESKF time moves forward without a correction; confirm the policy on SITL data (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
+- The floor-only translation eigenvalue is about 1.6% of the threshold; re-check the degeneracy thresholds on SITL logs (`config/lio/sim.yaml`, T8).
+- Measure OpenMP and ikd-tree rebuild latency against the budget; the 100 Hz publisher must not be starved by the estimator thread (`src/estimation/fast_lio_core/src/mapping/ikd_tree_registration_map.cpp`, T4, T8).
+- IMU rate above about 210 Hz cannot fill the 300 ms buffer of capacity 64; `ImuRateTooHigh` is reported once per epoch, so decide the real IMU rate and capacity (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T7, T8).
+- `estimator.cpp` is about 750 lines and the exception catch path has no test (no fault injection into `fast_lio_core`); split or add an injection seam (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
+- Test scene is stationary, noise-free and has no per-point time; add a constant-velocity, noisy case with per-point time (`src/estimation/uavnav_lio_core/test/synthetic_scene.hpp`, T8).
+- Add an off-grid forward-jump test for the health grid (phase preservation) and a direct test of `OutputPredictor::latest()`; the comment bound 9.3e18 should say 9e18 (`src/estimation/uavnav_lio_core/test/test_estimator.cpp`, T8).
+
+### Output predictor
+
+- Choose between the PX4 0.03 s clamp and the literal τ (effective time constant about τ·T_scan/0.03, about 0.83 s at 10 Hz), and document it in section 3.3; tune on SITL (`src/estimation/uavnav_lio_core/include/uavnav/lio/config.hpp`, T7; owner item O13).
+- Persistent `PredictorCorrectionRejected` events must degrade the estimator, not only log; today one event per rejection is all that happens (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T7, T8).
+- `vertical_velocity_mps()` is an accessor only; publish it (needs a message field) or drop it (`src/estimation/uavnav_lio_core/include/uavnav/lio/output_predictor.hpp`, T7, T8).
+- The lookup tolerance uses the last IMU dt, not the average; there is no `kNoSampleAtStamp` reason, no anti-windup, and an IMU dt above 300 ms is dropped (`src/estimation/uavnav_lio_core/src/output_predictor.cpp`, T7).
+- An IMU gap inside the buffer gives `kOlderThanBuffer`; `reset_to` with a stale snapshot rewinds the output and the lag lands in `ResetDelta`, so the facade must always seed with a snapshot at the newest IMU time (`src/estimation/uavnav_lio_core/include/uavnav/lio/output_predictor.hpp`, T7, T8).
+- The 100 Hz publishing of `/lio/state` is S1b work; the predictor is single-thread owned, so the node must keep one owner thread for it (`src/estimation/uavnav_lio_core/include/uavnav/lio/output_predictor.hpp`, T7, T8).
+
+### Degeneracy and lifecycle
+
+- Information-matrix tests are weak (full-rank check only; block swap and stale iteration are not pinned); `IkfomCorrectionResult::information` is also nullopt when the rows fall below the minimum accepted residuals, which the degeneracy code treats as degenerate; fix the header comment "filter consumed" to "linearised" and the suite name `IkfomEstimator` vs `IkfomEstimatorTest` (`src/estimation/fast_lio_core/test/test_ikfom_estimator.cpp`, T4).
+- Quality is capped at 49 when degenerate; the exact-threshold case with non-uniform ulp is fragile, note it in the degeneracy test (`src/estimation/uavnav_lio_core/src/degeneracy.cpp`, T6).
+- `kScanAccepted` and `kScanEmpty` enumerators are reserved and never emitted; emit them or remove them (`src/estimation/uavnav_lio_core/include/uavnav/lio/lifecycle.hpp`, T5).
+- `LioLifecycle::go()` now returns bool and asserts on an unlisted edge; the stale `degenerate_since_` edge cases are unreachable but untested (`src/estimation/uavnav_lio_core/src/lifecycle.cpp`, T5).
+
+### Alignment
+
+- Compute the pair residual, the jump test and the rate limit at the vehicle point and apply yaw filter steps as a rotation about the vehicle; add a regression test at R of about 300 m with 5 mrad yaw noise (`src/px4/uavnav_px4_bridge/src/alignment.cpp`, T10; owner item O12).
+- The rate limiter never engages at the beta values (bound is jump/τ = 0.25 m/s and 0.0436 rad/s); recalibrate the 0.5 m/s and 5°/s values on SITL (`config/lio/sim.yaml`, T10).
+- A FROZEN to VALID pair that is jump-rejected reports `kLioTracking` and loses the reason (`src/px4/uavnav_px4_bridge/src/alignment.cpp`, T10).
+- `on_tick` with `now` earlier than the last seen time is silent `kNone`; a far-future stamp blocks the input permanently with no recovery (`src/px4/uavnav_px4_bridge/src/alignment.cpp`, T10).
+- A reset lost in a dropped message leaves `T` wrong for up to `valid_stale`; LIO-side resets rely on the seed continuity of section 3.4 (`src/px4/uavnav_px4_bridge/src/alignment.cpp`, T10).
+- The node must gate the PX4 `vehicle_local_position` validity flags (`Px4PoseSample` has none) before calling `on_px4`, and fill the `raw_*` fields of the `/alignment` message when `AlignmentOutput::raw` is nullopt (`src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/alignment.hpp`, T10).
+- The core emits no events; the node must emit events from the returned `AlignmentReason`, including the new `kInputRejected` (`src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/alignment.hpp`, T10).
+
+### EV encoder and bridge node
+
+- Fill `EvInput.epoch` from `OdometryOutput::epoch`, not `reset_counter`, and write that rule at the call site (F14) (`src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/ev_encoder.hpp`, T9).
+- Feed the encoder only on TRACKING; the node supplies `tracking` and quality; quality above 100 maps to 0 (invalid) (`src/px4/uavnav_px4_bridge/src/ev_encoder.cpp`, T9).
+- Add a `kBadQuaternion` reason (a bad quaternion currently maps to `kNonFiniteState`) and consider returning `Result` from `to_px4_us` (it saturates a negative value to 0) (`src/px4/uavnav_px4_bridge/src/px4_time.cpp`, T9).
+- Add a test combining a non-unit quaternion with a non-identity orientation covariance (`src/px4/uavnav_px4_bridge/test/test_ev_encoder.cpp`, T9).
+- Realtime PX4 time mode is rejected with a reason in beta (identity conversion in SITL, D29); S1b decides whether any timesync path is needed (`src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/px4_time.hpp`, T9).
+- Run the SITL check that the EV frame label is FRD (F34 stays "doing" until then) (`src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/ev_encoder.hpp`, T9).
+
+### Core and tooling
+
+- `make sanitize` has no trap for SIGINT (the cache keeps `UAVNAV_SANITIZE=thread` and a plain `make build` does not reset it), and its grep fails open if the log directory is missing; libtsan needs `setarch -R` on this kernel (`Makefile`, T2).
+- Missing tests for -0.0, tiny values and `nextafter(1e6)` in config parsing; `value()` is not `noexcept` (OOM only); the `too_big` message is built on the success path; the config dir has a TOCTOU FIFO swap (needs write access) (`src/core/uavnav_core/src/config.cpp`, T2).
+- `MissionDefinition` frame comment is a run-on sentence (`src/core/uavnav_interfaces/msg/MissionDefinition.msg`, T3).
+- `README.md` line 43 still lists the old default `PKGS` (it is now `uavnav_core uavnav_interfaces fast_lio_core uavnav_lio_core uavnav_px4_bridge` and S1b adds the ROS shell packages) (`README.md`, T4, T5).
+- Stale build results of five deleted tests inflate `colcon test-result` (182 vs 101 for `fast_lio_core`) and `install/` keeps stale headers; clean `build/fast_lio_core` and `install/fast_lio_core` once when the owner agrees (`Makefile`, T4).
+- Dead code left in place by ruling: `src/estimation/fast_lio_core/include/fast_lio_core/common/types.hpp` and the `transform_utils` files under `src/estimation/fast_lio_core/include/fast_lio_core/geometry`; remove when nothing depends on them (T4).
+
+### Tests and CI
+
+- Concurrency test in `test_event_recorder.cpp` does not assert that any drop occurred (statistical); no test for the notice at shutdown drain or a failed-notice re-report; `SlowCountingSink::notices` is dead; the 16-key arrays repeat three times; the golden path is an absolute compile definition (`src/core/uavnav_core/test/test_event_recorder.cpp`, T1).
+- Add an S1b SITL scenario that exercises the tail of section 4.1: PX4 reset during FROZEN and a LiDAR gap with only IMU ticks, with the event log as evidence (`tools/uavnav/events.py`, T8, T10).
+- `make sanitize` covers only `uavnav_core`; extend it to `uavnav_lio_core` and `uavnav_px4_bridge` before the first multi-threaded node (`Makefile`, T2).
