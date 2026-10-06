@@ -25,8 +25,9 @@ class JsonlSink final : public EventSink {
   static Result<std::unique_ptr<JsonlSink>, SinkError> open(const std::filesystem::path& file) noexcept;
 
   /// kIo when the stream fails (disk full, file gone read-only, ...). The batch is
-  /// then lost, matching the recorder's contract; a later batch may succeed. A
-  /// failed write can leave a partial line, so the next write starts on a fresh line.
+  /// then lost, matching the recorder's contract: the stream is unbuffered, so
+  /// nothing is retried or replayed later. A later batch may succeed. A failed write
+  /// can leave one torn line, so the next write starts on a fresh line.
   Result<void, SinkError> write(std::span<const EventRecord> batch) override;
 
  private:
@@ -34,11 +35,14 @@ class JsonlSink final : public EventSink {
 
   std::ofstream out_;
   std::string buffer_;        // reused across batches to limit allocations
-  bool needs_newline_{false};  // previous write failed; its last line may be partial
+  enum class Tail { kClean, kMaybePartialLine };
+  Tail tail_{Tail::kClean};  // kMaybePartialLine after a failed write: the file may end mid-line
 };
 
 /// The JSON object for one record, without a trailing newline. Number values that
-/// are NaN or infinite become `null` so the line is always valid JSON.
+/// are NaN or infinite become `null` so the line is always valid JSON. String fields
+/// are assumed to be valid UTF-8 (they are static literals), because the Python
+/// reader decodes the file as UTF-8; bytes are not validated here.
 std::string to_json_line(const EventRecord& record);
 
 }  // namespace uavnav::events

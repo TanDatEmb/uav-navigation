@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <sys/resource.h>
 
-#include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -191,38 +194,31 @@ EventRecord make_record() {
   return r;
 }
 
-// A scratch file path unique to this process and test; removes only that file (and
-// the directory when the test asked for one) on destruction.
+// A private scratch directory made with mkdtemp (unique per process and instance);
+// the destructor removes only that directory. path() is a file inside it; with
+// `in_new_dir` the file sits two levels down in directories that do not exist yet.
 class TempPath {
  public:
   explicit TempPath(std::string_view leaf, bool in_new_dir = false) {
-    static std::atomic<int> counter{0};
-    const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
-    std::ostringstream name;
-    name << "uavnav_jsonl_" << info->test_suite_name() << "_" << info->name() << "_"
-         << counter.fetch_add(1) << "_" << std::filesystem::path(leaf).stem().string();
-    root_ = std::filesystem::temp_directory_path() / name.str();
-    if (in_new_dir) {
-      dir_ = root_;
-      path_ = root_ / "nested" / "deeper" / leaf;
-    } else {
-      path_ = std::filesystem::temp_directory_path() / (name.str() + std::string(leaf).substr(leaf.rfind('.')));
+    std::string tmpl = (std::filesystem::temp_directory_path() / "uavnav_jsonl_XXXXXX").string();
+    if (::mkdtemp(tmpl.data()) == nullptr) {
+      ADD_FAILURE() << "mkdtemp failed";
+      return;
     }
+    dir_ = tmpl;
+    path_ = in_new_dir ? dir_ / "nested" / "deeper" / leaf : dir_ / leaf;
   }
   ~TempPath() {
+    if (dir_.empty()) return;
     std::error_code ec;
-    if (!dir_.empty()) {
-      std::filesystem::remove_all(dir_, ec);  // a directory this test created
-    } else {
-      std::filesystem::remove(path_, ec);
-    }
+    std::filesystem::remove_all(dir_, ec);  // a directory this instance created
   }
   TempPath(const TempPath&) = delete;
   TempPath& operator=(const TempPath&) = delete;
   const std::filesystem::path& path() const { return path_; }
 
  private:
-  std::filesystem::path root_, dir_, path_;
+  std::filesystem::path dir_, path_;
 };
 
 std::vector<std::string> read_lines(const std::filesystem::path& p) {
@@ -498,6 +494,88 @@ TEST(JsonlSink, WriteReportsIoWhenStreamFailsAndDoesNotThrow) {
   EXPECT_NO_THROW(second = (*sink)->write(batch));
   ASSERT_FALSE(second.has_value());
   EXPECT_EQ(second.error(), SinkError::kIo);
+}
+
+namespace {
+
+// Caps the process's maximum file size (soft RLIMIT_FSIZE only, so it can be raised
+// again) and ignores SIGXFSZ so an over-limit write fails with a short count / EFBIG
+// instead of killing the process. The destructor restores the limit and the signal.
+class FileSizeCap {
+ public:
+  explicit FileSizeCap(rlim_t bytes) {
+    struct sigaction ignore {};
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset(&ignore.sa_mask);
+    ok_ = ::sigaction(SIGXFSZ, &ignore, &old_action_) == 0 && ::getrlimit(RLIMIT_FSIZE, &old_limit_) == 0;
+    if (!ok_) return;
+    rlimit capped = old_limit_;
+    capped.rlim_cur = bytes;  // hard limit untouched
+    ok_ = ::setrlimit(RLIMIT_FSIZE, &capped) == 0;
+  }
+  ~FileSizeCap() { restore(); }
+  FileSizeCap(const FileSizeCap&) = delete;
+  FileSizeCap& operator=(const FileSizeCap&) = delete;
+
+  bool ok() const { return ok_; }
+  void restore() {
+    if (!armed_) return;
+    armed_ = false;
+    ::setrlimit(RLIMIT_FSIZE, &old_limit_);
+    ::sigaction(SIGXFSZ, &old_action_, nullptr);
+  }
+
+ private:
+  bool ok_{false};
+  bool armed_{true};
+  rlimit old_limit_{};
+  struct sigaction old_action_ {};
+};
+
+EventRecord tagged_record(std::string_view reason) {
+  EventRecord r = make_record();
+  r.reason = reason;
+  return r;
+}
+
+}  // namespace
+
+TEST(JsonlSink, FailedPartialWriteIsLostAndNextBatchStartsOnAFreshLine) {
+  TempPath tmp("partial.jsonl");
+  auto sink = JsonlSink::open(tmp.path());
+  ASSERT_TRUE(sink.has_value());
+
+  const EventRecord batch_a[] = {tagged_record("A1"), tagged_record("A2")};
+  ASSERT_TRUE((*sink)->write(batch_a).has_value());
+  const auto size_a = static_cast<rlim_t>(std::filesystem::file_size(tmp.path()));
+
+  // Room for 40 more bytes only: the next batch writes a torn first line and fails.
+  constexpr rlim_t kRoom = 40;
+  FileSizeCap cap(size_a + kRoom);
+  ASSERT_TRUE(cap.ok());
+  const EventRecord batch_b[] = {tagged_record("B1"), tagged_record("B2"), tagged_record("B3")};
+  uavnav::Result<void, SinkError> failed;
+  EXPECT_NO_THROW(failed = (*sink)->write(batch_b));
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error(), SinkError::kIo);
+  EXPECT_EQ(std::filesystem::file_size(tmp.path()), size_a + kRoom);  // exactly the torn prefix
+
+  cap.restore();
+  const EventRecord batch_c[] = {tagged_record("C1"), tagged_record("C2")};
+  ASSERT_TRUE((*sink)->write(batch_c).has_value());
+  sink->reset();  // closing must not replay anything either
+
+  const auto lines = read_lines(tmp.path());
+  ASSERT_EQ(lines.size(), 5u) << file_bytes(tmp.path());
+  EXPECT_EQ(lines[0], to_json_line(batch_a[0]));
+  EXPECT_EQ(lines[1], to_json_line(batch_a[1]));
+  // The torn line is confined to one line: a strict prefix of B1, not valid JSON.
+  const std::string b1 = to_json_line(batch_b[0]);
+  EXPECT_EQ(lines[2], b1.substr(0, kRoom));
+  EXPECT_FALSE(parse_json(lines[2]).has_value());
+  EXPECT_EQ(lines[3], to_json_line(batch_c[0]));
+  EXPECT_EQ(lines[4], to_json_line(batch_c[1]));
+  for (const std::size_t i : {0u, 1u, 3u, 4u}) EXPECT_TRUE(parse_json(lines[i]).has_value()) << lines[i];
 }
 
 TEST(JsonlSink, WorksAsRecorderSink) {

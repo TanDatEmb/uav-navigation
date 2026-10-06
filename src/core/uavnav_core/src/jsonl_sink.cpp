@@ -2,8 +2,8 @@
 
 #include <charconv>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
-#include <exception>
 #include <ios>
 #include <string_view>
 #include <system_error>
@@ -126,6 +126,11 @@ Result<std::unique_ptr<JsonlSink>, SinkError> JsonlSink::open(const std::filesys
     }
     std::ofstream out;
     out.exceptions(std::ios::goodbit);  // report failures through the stream state
+    // No hidden buffer: a filebuf that fails to flush keeps the unwritten bytes and
+    // replays them on the next flush or at close, which would duplicate and tear
+    // lines. Unbuffered, each write() below goes straight to the OS and a failed batch
+    // stays lost. Must be called before open().
+    out.rdbuf()->pubsetbuf(nullptr, 0);
     out.open(file, std::ios::out | std::ios::app | std::ios::binary);
     if (!out.is_open() || !out.good()) return std::unexpected(SinkError::kIo);
     return std::unique_ptr<JsonlSink>(new JsonlSink(std::move(out)));
@@ -138,7 +143,7 @@ Result<void, SinkError> JsonlSink::write(std::span<const EventRecord> batch) {
   if (batch.empty()) return {};
   try {
     buffer_.clear();
-    if (needs_newline_) buffer_.push_back('\n');  // terminate a partial line from a failed write
+    if (tail_ == Tail::kMaybePartialLine) buffer_.push_back('\n');  // terminate a partial line from a failed write
     for (const EventRecord& record : batch) {
       append_record(buffer_, record);
       buffer_.push_back('\n');
@@ -147,14 +152,14 @@ Result<void, SinkError> JsonlSink::write(std::span<const EventRecord> batch) {
     out_.flush();
     if (!out_.good()) {
       out_.clear();  // let a later batch try again (e.g. space freed)
-      needs_newline_ = true;
+      tail_ = Tail::kMaybePartialLine;
       return std::unexpected(SinkError::kIo);
     }
-    needs_newline_ = false;
+    tail_ = Tail::kClean;
     return {};
   } catch (...) {  // allocation failure or a stream configured to throw
     out_.clear();
-    needs_newline_ = true;
+    tail_ = Tail::kMaybePartialLine;
     return std::unexpected(SinkError::kIo);
   }
 }
