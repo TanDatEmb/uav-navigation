@@ -66,6 +66,12 @@ TEST(Time, NegativeAndSubtractedDurationsAreKept) {
   EXPECT_DOUBLE_EQ(to_seconds(nanoseconds(-1'500'000'000)), -1.5);
 }
 
+TEST(Time, ToSecondsIsExactForIntegralSeconds) {
+  EXPECT_EQ(to_seconds(seconds(15)), 15.0);  // exact, not within ULPs
+  EXPECT_EQ(to_seconds(seconds(3600)), 3600.0);  // exact, not within ULPs
+  EXPECT_EQ(to_seconds(seconds(-15)), -15.0);  // exact, not within ULPs
+}
+
 TEST(Time, DefaultIsZeroAndComparesEqual) {
   EXPECT_EQ(Px4Time{}.ns, 0);
   EXPECT_EQ(Px4Time{5}, Px4Time{5});

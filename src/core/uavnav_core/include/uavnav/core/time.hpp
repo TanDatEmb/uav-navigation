@@ -10,9 +10,15 @@
 // mixed by accident. There are no implicit conversions between domains, and none
 // to or from a raw integer: build a value with brace-init and read it with `.ns`.
 //
-// Arithmetic is plain int64 arithmetic. Results are never clamped or saturated, so
-// a negative Duration stays negative and ordering is preserved. Overflow of int64
-// nanoseconds (about 292 years) is outside the supported range.
+// Overflow contract: arithmetic here is plain int64 arithmetic. It is never
+// clamped or saturated, so a negative Duration stays negative and ordering is
+// preserved. Signed overflow is UNDEFINED BEHAVIOUR, and this layer neither checks
+// for it nor saturates, by design. A compiler may assume it cannot happen and fold
+// away a staleness check, which is the opposite of fail-closed. Therefore code that
+// builds a TimePoint or Duration from external data (ROS, PX4, sensor stamps, which
+// can be garbage, uninitialised, sentinel INT64_MIN/MAX, or uint64 cast to int64) or
+// from config (a large n in seconds(n) or milliseconds(n)) must range-check the raw
+// value BEFORE constructing it.
 namespace uavnav::time {
 
 /// A signed span of time in nanoseconds. Domain-free.
@@ -26,7 +32,8 @@ constexpr Duration milliseconds(std::int64_t n) { return Duration{n * 1'000'000}
 constexpr Duration seconds(std::int64_t n) { return Duration{n * 1'000'000'000}; }
 
 /// Only at calculation boundaries (filters, kinematics); never store the result.
-constexpr double to_seconds(Duration d) { return static_cast<double>(d.ns) * 1e-9; }
+/// Divides by 1e9 (exact), not multiplies by 1e-9 (inexact), so whole seconds round-trip.
+constexpr double to_seconds(Duration d) { return static_cast<double>(d.ns) / 1e9; }
 
 constexpr Duration operator+(Duration a, Duration b) { return Duration{a.ns + b.ns}; }
 constexpr Duration operator-(Duration a, Duration b) { return Duration{a.ns - b.ns}; }
