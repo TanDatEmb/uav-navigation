@@ -19,8 +19,9 @@ target_include_directories(uavnav_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_compile_features(uavnav_core PUBLIC cxx_std_23)
-# PUBLIC keeps the earlier INTERFACE behavior: consumers inherit the warning flags.
-target_compile_options(uavnav_core PUBLIC -Wall -Wextra -Wpedantic -Werror)
+# Strict warnings apply to this package only; they must not leak to consumers.
+set(UAVNAV_CORE_STRICT_WARNINGS -Wall -Wextra -Wpedantic -Werror)
+target_compile_options(uavnav_core PRIVATE ${UAVNAV_CORE_STRICT_WARNINGS})
 # Static code is linked into shared libraries and nodes of other packages.
 set_target_properties(uavnav_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(uavnav_core PUBLIC yaml-cpp::yaml-cpp Threads::Threads)
@@ -37,14 +38,19 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_result test/test_result.cpp)
   target_link_libraries(test_result uavnav_core::uavnav_core)
+  target_compile_options(test_result PRIVATE ${UAVNAV_CORE_STRICT_WARNINGS})
   ament_add_gtest(test_time test/test_time.cpp)
   target_link_libraries(test_time uavnav_core::uavnav_core)
+  target_compile_options(test_time PRIVATE ${UAVNAV_CORE_STRICT_WARNINGS})
   ament_add_gtest(test_event_recorder test/test_event_recorder.cpp)
   target_link_libraries(test_event_recorder uavnav_core::uavnav_core)
+  target_compile_options(test_event_recorder PRIVATE ${UAVNAV_CORE_STRICT_WARNINGS})
   ament_add_gtest(test_jsonl_sink test/test_jsonl_sink.cpp)
   target_link_libraries(test_jsonl_sink uavnav_core::uavnav_core)
+  target_compile_options(test_jsonl_sink PRIVATE ${UAVNAV_CORE_STRICT_WARNINGS})
   ament_add_gtest(test_config test/test_config.cpp)
   target_link_libraries(test_config uavnav_core::uavnav_core)
+  target_compile_options(test_config PRIVATE ${UAVNAV_CORE_STRICT_WARNINGS})
 endif()
 
 ament_package()
