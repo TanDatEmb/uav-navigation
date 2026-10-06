@@ -8,8 +8,13 @@ virtual environment for normal verification.
 
 - `make setup` prepares the host when required.
 - `make build` runs `colcon build --packages-up-to $(PKGS)`; `PKGS` defaults to
-  `uavnav_core uavnav_interfaces`. Override it with `make build PKGS="..."`.
+  `uavnav_core uavnav_interfaces fast_lio_core uavnav_lio_core`. Override it with
+  `make build PKGS="..."`. `COLCON_EXTRA="--cmake-clean-cache"` adds colcon
+  arguments (use it after a package moves); the Makefile sets the colcon
+  arguments, never call bare `colcon`.
 - `make test` runs `colcon test` for `PKGS`, then `colcon test-result --verbose`.
+- `make sanitize` builds and tests `uavnav_core` under ThreadSanitizer, then
+  rebuilds it normally; run nothing heavy meanwhile.
 - `make gate` runs `tools/uavnav/gate.sh all`. The script also takes
   `static|python|ros`, and its last line is `GATE_RESULT=PASS|FAIL`.
 - `make clean` only prints what to remove (`log/`); `build/` and `install/` are

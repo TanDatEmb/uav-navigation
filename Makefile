@@ -2,7 +2,7 @@ SHELL := /bin/bash
 # ROS Jazzy's rclpy/ament modules are installed for the system interpreter.
 PYTHON ?= /usr/bin/python3
 # Packages built and tested by `make build` / `make test`; override with PKGS="...".
-PKGS ?= uavnav_core uavnav_interfaces fast_lio_core
+PKGS ?= uavnav_core uavnav_interfaces fast_lio_core uavnav_lio_core
 # Extra `colcon build` arguments, e.g. COLCON_EXTRA="--cmake-clean-cache" after a package moves.
 COLCON_EXTRA ?=
 
