@@ -5,18 +5,27 @@ find_package(ament_cmake REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 # No ROS (rclcpp) dependency: this library must stay usable outside any node.
-# INTERFACE for now; it becomes STATIC when the first source file is added.
-add_library(uavnav_core INTERFACE)
+# Add library sources to UAVNAV_CORE_SOURCES; add tests below with ament_add_gtest.
+set(UAVNAV_CORE_SOURCES
+  src/time.cpp)
+
+add_library(uavnav_core STATIC ${UAVNAV_CORE_SOURCES})
 add_library(uavnav_core::uavnav_core ALIAS uavnav_core)
-target_include_directories(uavnav_core INTERFACE
+target_include_directories(uavnav_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_compile_features(uavnav_core INTERFACE cxx_std_23)
-target_compile_options(uavnav_core INTERFACE -Wall -Wextra -Wpedantic -Werror)
-target_link_libraries(uavnav_core INTERFACE yaml-cpp::yaml-cpp)
+target_compile_features(uavnav_core PUBLIC cxx_std_23)
+# PUBLIC keeps the earlier INTERFACE behavior: consumers inherit the warning flags.
+target_compile_options(uavnav_core PUBLIC -Wall -Wextra -Wpedantic -Werror)
+# Static code is linked into shared libraries and nodes of other packages.
+set_target_properties(uavnav_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(uavnav_core PUBLIC yaml-cpp::yaml-cpp)
 
 install(DIRECTORY include/ DESTINATION include)
-install(TARGETS uavnav_core EXPORT export_uavnav_core)
+install(TARGETS uavnav_core EXPORT export_uavnav_core
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin)
 ament_export_targets(export_uavnav_core HAS_LIBRARY_TARGET)
 ament_export_dependencies(yaml-cpp)
 
@@ -24,6 +33,8 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_result test/test_result.cpp)
   target_link_libraries(test_result uavnav_core::uavnav_core)
+  ament_add_gtest(test_time test/test_time.cpp)
+  target_link_libraries(test_time uavnav_core::uavnav_core)
 endif()
 
 ament_package()
