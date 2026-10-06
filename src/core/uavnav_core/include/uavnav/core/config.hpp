@@ -74,16 +74,16 @@ struct ConfigError {
 
 constexpr std::string_view to_string(ConfigError::Kind k) {
   switch (k) {
-    case ConfigError::Kind::kFileUnreadable: return "kFileUnreadable";
-    case ConfigError::Kind::kParse: return "kParse";
-    case ConfigError::Kind::kNotFlatMap: return "kNotFlatMap";
-    case ConfigError::Kind::kDuplicateKey: return "kDuplicateKey";
-    case ConfigError::Kind::kUnknownKey: return "kUnknownKey";
-    case ConfigError::Kind::kMissingKey: return "kMissingKey";
-    case ConfigError::Kind::kWrongType: return "kWrongType";
-    case ConfigError::Kind::kNotFinite: return "kNotFinite";
-    case ConfigError::Kind::kOutOfRange: return "kOutOfRange";
-    case ConfigError::Kind::kBadSpec: return "kBadSpec";
+    case ConfigError::Kind::kFileUnreadable: return "FILE_UNREADABLE";
+    case ConfigError::Kind::kParse: return "PARSE";
+    case ConfigError::Kind::kNotFlatMap: return "NOT_FLAT_MAP";
+    case ConfigError::Kind::kDuplicateKey: return "DUPLICATE_KEY";
+    case ConfigError::Kind::kUnknownKey: return "UNKNOWN_KEY";
+    case ConfigError::Kind::kMissingKey: return "MISSING_KEY";
+    case ConfigError::Kind::kWrongType: return "WRONG_TYPE";
+    case ConfigError::Kind::kNotFinite: return "NOT_FINITE";
+    case ConfigError::Kind::kOutOfRange: return "OUT_OF_RANGE";
+    case ConfigError::Kind::kBadSpec: return "BAD_SPEC";
   }
   return "";
 }

@@ -52,16 +52,16 @@ TEST(Config, SuffixTable) {
 }
 
 TEST(Config, KindNames) {
-  EXPECT_EQ(to_string(Kind::kFileUnreadable), "kFileUnreadable");
-  EXPECT_EQ(to_string(Kind::kParse), "kParse");
-  EXPECT_EQ(to_string(Kind::kNotFlatMap), "kNotFlatMap");
-  EXPECT_EQ(to_string(Kind::kDuplicateKey), "kDuplicateKey");
-  EXPECT_EQ(to_string(Kind::kUnknownKey), "kUnknownKey");
-  EXPECT_EQ(to_string(Kind::kMissingKey), "kMissingKey");
-  EXPECT_EQ(to_string(Kind::kWrongType), "kWrongType");
-  EXPECT_EQ(to_string(Kind::kNotFinite), "kNotFinite");
-  EXPECT_EQ(to_string(Kind::kOutOfRange), "kOutOfRange");
-  EXPECT_EQ(to_string(Kind::kBadSpec), "kBadSpec");
+  EXPECT_EQ(to_string(Kind::kFileUnreadable), "FILE_UNREADABLE");
+  EXPECT_EQ(to_string(Kind::kParse), "PARSE");
+  EXPECT_EQ(to_string(Kind::kNotFlatMap), "NOT_FLAT_MAP");
+  EXPECT_EQ(to_string(Kind::kDuplicateKey), "DUPLICATE_KEY");
+  EXPECT_EQ(to_string(Kind::kUnknownKey), "UNKNOWN_KEY");
+  EXPECT_EQ(to_string(Kind::kMissingKey), "MISSING_KEY");
+  EXPECT_EQ(to_string(Kind::kWrongType), "WRONG_TYPE");
+  EXPECT_EQ(to_string(Kind::kNotFinite), "NOT_FINITE");
+  EXPECT_EQ(to_string(Kind::kOutOfRange), "OUT_OF_RANGE");
+  EXPECT_EQ(to_string(Kind::kBadSpec), "BAD_SPEC");
   static_assert(uavnav::ReasonEnum<Kind>);
 }
 

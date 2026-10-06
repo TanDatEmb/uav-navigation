@@ -20,7 +20,7 @@ enum class SinkError : std::uint8_t { kIo };
 
 constexpr std::string_view to_string(SinkError e) {
   switch (e) {
-    case SinkError::kIo: return "io";
+    case SinkError::kIo: return "IO";
   }
   return "unknown";  // unreachable for valid enumerators
 }

@@ -18,7 +18,7 @@ using namespace std::chrono_literals;
 
 static_assert(to_string(Component::kPx4Bridge) == "px4_bridge");
 static_assert(to_string(Component::kPx4Mode) == "px4_mode");
-static_assert(to_string(SinkError::kIo) == "io");
+static_assert(to_string(SinkError::kIo) == "IO");
 
 namespace {
 
