@@ -9,7 +9,8 @@ find_package(Threads REQUIRED)
 # Add library sources to UAVNAV_CORE_SOURCES; add tests below with ament_add_gtest.
 set(UAVNAV_CORE_SOURCES
   src/time.cpp
-  src/event_recorder.cpp)
+  src/event_recorder.cpp
+  src/jsonl_sink.cpp)
 
 add_library(uavnav_core STATIC ${UAVNAV_CORE_SOURCES})
 add_library(uavnav_core::uavnav_core ALIAS uavnav_core)
@@ -39,6 +40,8 @@ if(BUILD_TESTING)
   target_link_libraries(test_time uavnav_core::uavnav_core)
   ament_add_gtest(test_event_recorder test/test_event_recorder.cpp)
   target_link_libraries(test_event_recorder uavnav_core::uavnav_core)
+  ament_add_gtest(test_jsonl_sink test/test_jsonl_sink.cpp)
+  target_link_libraries(test_jsonl_sink uavnav_core::uavnav_core)
 endif()
 
 ament_package()
