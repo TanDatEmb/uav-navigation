@@ -10,7 +10,7 @@ external overlay is required.
 
 - PX4 release: `v1.17.0`
 - pinned commit: `86d8239e962f6939e05c3737784f60c02fa884db`
-- consumer: `src/px4/px4_odometry_bridge`
+- consumer: the PX4 bridge (the old `px4_odometry_bridge` package was removed from this branch in S0 and is available at `main`; S1 writes its replacement)
 - license: BSD 3-Clause (`src/external/px4_msgs/LICENSE`)
 
 Initialize the submodule after cloning:
@@ -35,7 +35,9 @@ PX4 bridge.
 `px4_ros2_interface_lib` is tracked as a Git submodule at
 `src/external/px4_ros2_interface_lib`, using the `release/1.17` branch pinned
 to commit `4a3370f084ac6f1ef001a4afa2b007845ffd0837`. It provides the
-`px4_ros2_cpp` package used by `px4_navigation_external_mode`.
+`px4_ros2_cpp` package. The old `px4_navigation_external_mode` consumer was
+removed from this branch in S0 and is available at `main`; a later slice
+rewrites it.
 
 The project-owned node must use `ModeBase`, `ModeExecutorBase`, and the
 library setpoint types. It must not replace the library with direct

@@ -710,3 +710,23 @@ Spec §6.1, §7.4. This task closes S0.
 ## After S0
 
 The plans for S1 (`lio` and `px4_bridge`), S2, S3, S4 and S5 are written one at a time, each after the previous slice is done. Each new plan starts from the actual result of the slice before it, as D16 requires. Before an S1 plan is written, the S0 result is reviewed with the owner.
+
+### Carry-over to S1
+
+Obligations found by the S0 final whole-branch review that S0 deliberately did not close. The S1 plan must schedule each one or record why not.
+
+- Range-check external stamps and config values before constructing `TimePoint`/`Duration`; signed overflow is UB (`src/core/uavnav_core/include/uavnav/core/time.hpp` contract). Applies to every S1 adapter.
+- `EventsDropped` notice is written before the older buffered batch, so the log order is inverted; swap the order or document it (`src/core/uavnav_core/src/event_recorder.cpp`).
+- `EventRecorder` accepts capacity 0 silently; reject it or assert (`src/core/uavnav_core/src/event_recorder.cpp`).
+- Add an N-thread emit stress test (emitted + dropped == N·M, written == emitted, no time bound) and get an owner-approved TSan run before the first multi-threaded emitter (`src/core/uavnav_core/test/test_event_recorder.cpp`).
+- `load_params_file` has no size cap; suggest 1 MiB, reported as `kFileUnreadable` (`src/core/uavnav_core/src/config.cpp`).
+- The depth-guard test relies on yaml-cpp >= 0.8 behaviour (`src/core/uavnav_core/test/test_config.cpp`).
+- Duplicate keys: `add_value` allows a repeated key while Python `json` keeps the last one; reject in `add_value` or in the reader (`src/core/uavnav_core/src/event_recorder.cpp`, `tools/uavnav/events.py`).
+- Replace free-text `string_view` reasons with a typed builder (`set_reason(ReasonEnum auto)`, D25); the builder named in this plan's File Structure was never built (`src/core/uavnav_core/include/uavnav/core/event_recorder.hpp`).
+- `ParamValues` is a string-keyed map whose `.at()` throws on a typo; S1 must bind it to a typed struct per §6.2 and D25 (`src/core/uavnav_core/include/uavnav/core/config.hpp`).
+- Add a C++ to Python golden JSONL round-trip test; key order is currently pinned twice by hand (`src/core/uavnav_core/test/test_event_recorder.cpp`, `tools/uavnav/tests/test_events.py`).
+- `LioOdometry` has no `quality` field although §4.1 says covariance and quality come from LIO; needs an owner decision or an open question (`src/core/uavnav_interfaces/msg/LioOdometry.msg`).
+- The clock domain of `NavCommand.sample_time_ns` and of the `LioHealth`/`Alignment` stamps is unstated (D25); annotate the messages or open an O* item (`src/core/uavnav_interfaces/msg/NavCommand.msg`).
+- `MissionDefinition` has no mission-level yaw for Y1 (§2.5) and the GPS altitude datum is unspecified; S2 needs both (`src/core/uavnav_interfaces/msg/MissionDefinition.msg`).
+- `tools/simulation/README.md` (lines 4, 24 and 26) still mentions the removed `make sim`, `sim-check` and `tools/runtime`; S1 rewrites the SITL launch and this file.
+- Commits `5ad488e` and `d8ef690` have a `Co-Authored-By` line glued to the subject; the owner may reword them.

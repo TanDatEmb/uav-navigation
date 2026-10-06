@@ -23,7 +23,7 @@ Cột WP sẽ được điền khi có implementation plan.
 | P5 LIO mất rồi khởi động lại | §3.1, §3.4, §2.2 | S4 | | todo | |
 | P6 Không GPS mà LIO fail → bàn giao có Reason | §2.3, §4.2 | S4 | | todo | |
 | P7 Trạng thái 50–100 Hz với LiDAR 10 Hz | §3.3 | S1 | | todo | |
-| P8 Phạm vi SITL, PX4 1.17 | §0 | S0 | S0-T1 | done | commit `f618909` (gỡ code main-only, gate chỉ build/test gói SITL); pin PX4 v1.17 ở `src/external/README.md` |
+| P8 Phạm vi SITL, PX4 1.17 | §0 | S0 | S0-T1 | done | commit `f618909` (gỡ code main-only khỏi nhánh; gate build/test `uavnav_core` và `uavnav_interfaces`); pin PX4 v1.17 ghi ở `src/external/README.md` |
 | P9 Chất lượng cấu trúc (M1–M9) | §2, §6, AGENTS.md §2 | mọi lát | | todo | |
 | P10 Chống chuyển nhánh liên tục | §2.1, §2.4, §7.3 | S3, S5 | | todo | |
 
@@ -53,9 +53,9 @@ Cột WP sẽ được điền khi có implementation plan.
 |---|---|---|---|---|---|
 | Thay `tools/gate.sh`, ledger validator và test của `main` bằng gate tối giản | §7.2 | S0 | S0-T1 | done | `tools/uavnav/gate.sh all` |
 | Event log + script KPI | §6.1 | S0, S5 | S0-T4, S0-T5, S0-T8 | doing | `test_event_recorder`, `test_jsonl_sink`, `test_events` (phần script KPI thuộc S5) |
-| Config ba tầng | §6.2 | S0 | S0-T6 | done | `test_config` (tầng b) |
+| Config ba tầng | §6.2 | S0 | S0-T6 | doing | `test_config` (chỉ tầng b: ParamValues; chưa có struct có kiểu, tầng a/c chưa làm) |
 | Kiểu thời gian | §6.3 | S0 | S0-T3 | done | `test_time` |
-| Message v2 | §6.5 | S0 | S0-T7 | done | build `uavnav_interfaces` |
+| Message v2 | §6.5 | S0 | S0-T7 | done | commit `5ad488e`, `d8ef690`; build `uavnav_interfaces` |
 | Gate beta | §7.3 | S5 | | todo | |
 
 ## Lệch thiết kế đang mở
