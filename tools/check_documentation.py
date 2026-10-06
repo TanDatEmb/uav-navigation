@@ -47,14 +47,20 @@ def check_document(root: Path, doc: Path) -> list[str]:
     return errors
 
 def tracked_documents(root: Path, directory: Path) -> list[Path]:
-    """Return git-tracked Markdown files under directory (rglob outside a git repo)."""
+    """Return Markdown files under directory that git tracks or has not ignored.
+
+    Untracked-but-not-ignored files count, so a new document is checked before it is
+    committed; git-excluded files (e.g. the owner's private notes) are skipped.
+    Falls back to rglob outside a git repo."""
     try:
         result = subprocess.run(
-            ['git', '-C', str(root), 'ls-files', '-z', '--', f'{directory.relative_to(root)}/*.md'],
+            ['git', '-C', str(root), 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
+             '--', str(directory.relative_to(root))],
             check=True, capture_output=True, text=True)
     except (OSError, subprocess.CalledProcessError, ValueError):
         return sorted(directory.rglob('*.md'))
-    return sorted(root / name for name in result.stdout.split('\0') if name)
+    return sorted({root / name for name in result.stdout.split('\0')
+                   if name.endswith('.md') and (root / name).is_file()})
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
