@@ -70,7 +70,7 @@ if(BUILD_TESTING)
   target_compile_features(test_mapping_actor PRIVATE cxx_std_20)
   target_compile_definitions(test_mapping_actor PRIVATE
     ORIGIN_AT_CORNER
-    NAVIGATION_MAPPING_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
+    NAVIGATION_MAPPING_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../config/runtime/planner.yaml")
   target_link_libraries(test_mapping_actor ${PROJECT_NAME})
   ament_target_dependencies(test_mapping_actor
     nav_msgs navigation_common navigation_world_model)
@@ -83,7 +83,7 @@ if(BUILD_TESTING)
   target_compile_definitions(test_mapping_world_model PRIVATE
     USE_ROS2
     ORIGIN_AT_CORNER
-    NAVIGATION_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
+    NAVIGATION_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../config/runtime/planner.yaml")
   target_link_libraries(test_mapping_world_model
     navigation_world_model::navigation_world_model
     rog_map_vendor::rog_map_vendor)

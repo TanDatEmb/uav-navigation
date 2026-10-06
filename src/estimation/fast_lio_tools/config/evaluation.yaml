@@ -1,4 +1,0 @@
-evaluation:
-  timing_mode: auto
-  output_directory: evaluation
-  optional_ground_truth: ""

@@ -32,12 +32,7 @@ def test_sensor_xacro_has_canonical_chain_and_required_mount():
     assert joints["livox_frame_to_livox_imu_frame"].find("child").attrib["link"] == "livox_imu_frame"
 
 
-def test_standalone_and_canonical_launch_mount_policy():
+def test_standalone_launch_mount_policy():
     standalone = (ROOT / "launch/publish_sensor_frames.launch.py").read_text()
-    bringup = (
-        ROOT.parent / "navigation_bringup/launch/fast_lio.launch.py"
-    ).read_text()
     assert '"livox_mount_xyz"' in standalone
     assert '"livox_mount_rpy"' in standalone
-    assert 'default_value="true"' in bringup
-    assert "canonical static base_link -> livox_frame ->" in bringup
