@@ -22,7 +22,9 @@ constexpr std::string_view kBeta =
     "lifecycle_gap_degraded_s: 0.25\n"
     "lifecycle_gap_lost_s: 0.5\n"
     "lifecycle_degeneracy_lost_s: 1.0\n"
-    "lifecycle_position_sigma_lost_m: 0.5\n";
+    "lifecycle_position_sigma_lost_m: 0.5\n"
+    "degeneracy_translation_min_info: 1.1e5\n"
+    "degeneracy_rotation_min_info: 2.8e6\n";
 
 // kBeta with each `key: value` pair of `changes` replacing the line that starts with `key:`.
 std::string With(std::initializer_list<std::pair<std::string_view, std::string_view>> changes) {
@@ -68,10 +70,12 @@ TEST(LioConfig, BetaValuesLoad) {
   EXPECT_EQ(c.gap_lost, time::milliseconds(500));
   EXPECT_EQ(c.degeneracy_lost, time::seconds(1));
   EXPECT_DOUBLE_EQ(c.position_sigma_lost_m, 0.5);
+  EXPECT_DOUBLE_EQ(r->degeneracy.translation_min_info, 1.1e5);
+  EXPECT_DOUBLE_EQ(r->degeneracy.rotation_min_info, 2.8e6);
 }
 
 TEST(LioConfig, SpecsAreValidAndComplete) {
-  static_assert(kLioSpecs.size() == 6);
+  static_assert(kLioSpecs.size() == 8);
   // A schema with a bad spec would be rejected before the text is read.
   const auto r = config::load_params(kBeta, kLioSpecs);
   ASSERT_TRUE(r.has_value());
@@ -131,6 +135,38 @@ TEST(LioConfig, PerKeyBoundsAreEnforced) {
   ExpectError(With("lifecycle_gap_degraded_s", "0.04"), Kind::kOutOfRange, "lifecycle_gap_degraded_s");
   ExpectError(With("lifecycle_degeneracy_lost_s", "10.5"), Kind::kOutOfRange, "lifecycle_degeneracy_lost_s");
   ExpectError(With("lifecycle_position_sigma_lost_m", "0.01"), Kind::kOutOfRange, "lifecycle_position_sigma_lost_m");
+}
+
+TEST(LioConfig, DegeneracyKeysLoadAndAreRangeChecked) {
+  const auto r = Load(With({{"degeneracy_translation_min_info", "2000"}, {"degeneracy_rotation_min_info", "3e7"}}));
+  ASSERT_TRUE(r.has_value()) << r.error().key << ": " << r.error().detail;
+  EXPECT_DOUBLE_EQ(r->degeneracy.translation_min_info, 2000.0);
+  EXPECT_DOUBLE_EQ(r->degeneracy.rotation_min_info, 3e7);
+
+  ExpectError(With("degeneracy_translation_min_info", "0.5"), Kind::kOutOfRange, "degeneracy_translation_min_info");
+  ExpectError(With("degeneracy_translation_min_info", "1.1e9"), Kind::kOutOfRange, "degeneracy_translation_min_info");
+  ExpectError(With("degeneracy_rotation_min_info", "0"), Kind::kOutOfRange, "degeneracy_rotation_min_info");
+  ExpectError(With("degeneracy_rotation_min_info", "2e12"), Kind::kOutOfRange, "degeneracy_rotation_min_info");
+}
+
+TEST(LioConfig, DegeneracyKeyBoundsAreInclusive) {
+  EXPECT_TRUE(Load(With({{"degeneracy_translation_min_info", "1"}, {"degeneracy_rotation_min_info", "1"}})).has_value());
+  EXPECT_TRUE(
+      Load(With({{"degeneracy_translation_min_info", "1e9"}, {"degeneracy_rotation_min_info", "1e12"}})).has_value());
+}
+
+TEST(LioConfig, MissingDegeneracyKeyIsRejectedNamingTheKey) {
+  for (const std::string_view key : {"degeneracy_translation_min_info", "degeneracy_rotation_min_info"}) {
+    std::string text;
+    std::string_view rest = kBeta;
+    while (!rest.empty()) {
+      const auto nl = rest.find('\n');
+      const std::string_view line = rest.substr(0, nl);
+      rest.remove_prefix(nl + 1);
+      if (!line.starts_with(std::string(key) + ":")) text += std::string(line) + "\n";
+    }
+    ExpectError(text, Kind::kMissingKey, key);
+  }
 }
 
 TEST(LioConfig, NonIntegerCountIsRejected) {
@@ -199,4 +235,29 @@ TEST(LioConfigHandBuilt, BoundsAreInclusive) {
   values["lifecycle_confirm_scans"] = 50.0;
   values["lifecycle_degenerate_scans"] = 50.0;
   EXPECT_TRUE(load_lio_config(values).has_value());
+}
+
+TEST(LioConfigHandBuilt, MissingDegeneracyKeyInHandBuiltValuesNamesTheKey) {
+  for (const std::string_view key : {"degeneracy_translation_min_info", "degeneracy_rotation_min_info"}) {
+    auto values = Beta();
+    values.erase(std::string(key));
+    const auto r = load_lio_config(values);
+    ASSERT_FALSE(r.has_value()) << key;
+    EXPECT_EQ(r.error().kind, Kind::kMissingKey);
+    EXPECT_EQ(r.error().key, key);
+  }
+}
+
+TEST(LioConfigHandBuilt, DegeneracyKeysRejectHostileValues) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  for (const std::string_view key : {"degeneracy_translation_min_info", "degeneracy_rotation_min_info"}) {
+    for (const double bad : {-1.0, 0.0, 1e30, nan, inf, -inf}) {
+      auto values = Beta();
+      values[std::string(key)] = bad;
+      const auto r = load_lio_config(values);
+      ASSERT_FALSE(r.has_value()) << key << " = " << bad;
+      EXPECT_EQ(r.error().key, key);
+    }
+  }
 }

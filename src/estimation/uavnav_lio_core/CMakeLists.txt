@@ -10,6 +10,7 @@ find_package(Eigen3 REQUIRED)
 # Add library sources to UAVNAV_LIO_CORE_SOURCES; add tests below with ament_add_gtest.
 set(UAVNAV_LIO_CORE_SOURCES
   src/config.cpp
+  src/degeneracy.cpp
   src/lifecycle.cpp)
 
 add_library(uavnav_lio_core STATIC ${UAVNAV_LIO_CORE_SOURCES})
@@ -35,7 +36,7 @@ ament_export_dependencies(uavnav_core fast_lio_core Eigen3)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  foreach(test_name test_lio_config test_lifecycle)
+  foreach(test_name test_lio_config test_lifecycle test_degeneracy)
     ament_add_gtest(${test_name} test/${test_name}.cpp)
     target_link_libraries(${test_name} uavnav_lio_core::uavnav_lio_core)
     target_compile_options(${test_name} PRIVATE ${UAVNAV_LIO_CORE_STRICT_WARNINGS})
