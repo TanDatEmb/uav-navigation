@@ -88,8 +88,15 @@ constexpr std::string_view to_string(ConfigError::Kind k) {
   return "";
 }
 
+/// Config files larger than this are rejected before parsing (a hostile or wrong file must not be slurped).
+inline constexpr std::uintmax_t kMaxConfigFileBytes = 1048576;
+
 /// Every spec key mapped to its validated value.
 using ParamValues = std::map<std::string, double, std::less<>>;
+
+/// The validated value of `key`. kMissingKey (naming the key) when `values` does not hold it.
+/// Never throws, unlike std::map::at.
+Result<double, ConfigError> value(const ParamValues& values, std::string_view key);
 
 /// Loads `yaml_text` against `specs`. On success the result holds exactly one finite,
 /// in-range value per spec. When several things are wrong, the FIRST error by this
@@ -123,8 +130,9 @@ using ParamValues = std::map<std::string, double, std::less<>>;
 Result<ParamValues, ConfigError> load_params(std::string_view yaml_text, std::span<const ParamSpec> specs) noexcept;
 
 /// Reads `file` and calls load_params. The specs are validated first (rule 1), before
-/// the file is touched. A missing, non-regular (e.g. directory) or unreadable file, or
-/// a read failure, is kFileUnreadable with the path in `detail`.
+/// the file is touched. A missing, non-regular (e.g. directory) or unreadable file, a
+/// read failure, or a file larger than kMaxConfigFileBytes (1 MiB), is kFileUnreadable
+/// with the path or the reason ("larger than 1048576 bytes") in `detail`.
 Result<ParamValues, ConfigError> load_params_file(const std::filesystem::path& file,
                                                   std::span<const ParamSpec> specs) noexcept;
 

@@ -281,6 +281,14 @@ Result<ParamValues, ConfigError> guarded(std::string_view yaml_text, std::span<c
 
 }  // namespace
 
+Result<double, ConfigError> value(const ParamValues& values, std::string_view key) {
+  const auto it = values.find(key);
+  if (it == values.end()) {
+    return fail(Kind::kMissingKey, std::string(key), std::format("key '{}' is not in the loaded values", clip(key)));
+  }
+  return it->second;
+}
+
 Result<ParamValues, ConfigError> load_params(std::string_view yaml_text, std::span<const ParamSpec> specs) noexcept {
   return guarded(yaml_text, specs);
 }
@@ -297,13 +305,23 @@ Result<ParamValues, ConfigError> load_params_file(const std::filesystem::path& f
     if (ec || !std::filesystem::is_regular_file(status)) {
       return fail(Kind::kFileUnreadable, "", std::format("'{}' is missing or is not a regular file", path));
     }
+    const std::uintmax_t size = std::filesystem::file_size(file, ec);
+    if (ec) return fail(Kind::kFileUnreadable, "", std::format("cannot get the size of '{}'", path));
+    const std::string too_big = std::format("'{}' is larger than {} bytes", path, kMaxConfigFileBytes);
+    if (size > kMaxConfigFileBytes) return fail(Kind::kFileUnreadable, "", too_big);
     std::ifstream in(file, std::ios::binary);
     if (!in) return fail(Kind::kFileUnreadable, "", std::format("cannot open '{}' for reading", path));
+    // The file can grow after the size check, or be a special file: never read more than the cap + 1.
     std::string text;
     std::array<char, 4096> buf;
-    while (in.read(buf.data(), buf.size()) || in.gcount() > 0) {
+    while (text.size() <= kMaxConfigFileBytes) {
+      const auto want = static_cast<std::streamsize>(
+          std::min<std::uintmax_t>(buf.size(), kMaxConfigFileBytes + 1 - text.size()));
+      in.read(buf.data(), want);
+      if (in.gcount() <= 0) break;
       text.append(buf.data(), static_cast<std::size_t>(in.gcount()));
     }
+    if (text.size() > kMaxConfigFileBytes) return fail(Kind::kFileUnreadable, "", too_big);
     if (in.bad()) return fail(Kind::kFileUnreadable, "", std::format("read error on '{}'", path));
     return guarded(text, specs);
   } catch (const std::exception& e) {

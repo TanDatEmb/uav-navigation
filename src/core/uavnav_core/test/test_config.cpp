@@ -484,3 +484,56 @@ TEST(Config, BadSpecIsReportedBeforeTheFileIsTouched) {
   ASSERT_FALSE(r.has_value());
   EXPECT_EQ(r.error().kind, Kind::kBadSpec);
 }
+
+TEST(Config, ValueReturnsTheStoredNumber) {
+  const auto loaded = load_params(kValid, kSpecs);
+  ASSERT_TRUE(loaded.has_value());
+  const auto v = value(*loaded, "cruise_speed_mps");
+  ASSERT_TRUE(v.has_value());
+  EXPECT_DOUBLE_EQ(*v, 3.0);
+}
+
+TEST(Config, ValueNeverThrows) {
+  const auto loaded = load_params(kValid, kSpecs);
+  ASSERT_TRUE(loaded.has_value());
+  const auto r = value(*loaded, "absent_s");
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error().kind, Kind::kMissingKey);
+  EXPECT_EQ(r.error().key, "absent_s");
+  EXPECT_NE(r.error().detail.find("absent_s"), std::string::npos) << r.error().detail;
+  EXPECT_NO_THROW((void)value(ParamValues{}, "anything"));
+}
+
+namespace {
+// Writes `valid` followed by a YAML comment so the file is exactly `size` bytes.
+void WriteFileOfSize(const std::filesystem::path& file, std::size_t size) {
+  std::string text(kValid);
+  ASSERT_LT(text.size() + 2, size);
+  text += '#';
+  text.append(size - text.size(), 'x');
+  text.back() = '\n';
+  ASSERT_EQ(text.size(), size);
+  std::ofstream(file, std::ios::binary) << text;
+}
+}  // namespace
+
+TEST(Config, AcceptsFileOfExactlyOneMebibyte) {
+  TempDir dir;
+  const auto file = dir.path / "limit.yaml";
+  WriteFileOfSize(file, 1048576);
+  ASSERT_EQ(std::filesystem::file_size(file), 1048576u);
+  const auto r = load_params_file(file, kSpecs);
+  ASSERT_TRUE(r.has_value()) << r.error().detail;
+  EXPECT_DOUBLE_EQ(r->at("cruise_speed_mps"), 3.0);
+}
+
+TEST(Config, RejectsOversizedFile) {
+  TempDir dir;
+  const auto file = dir.path / "big.yaml";
+  WriteFileOfSize(file, 1048577);
+  ASSERT_EQ(std::filesystem::file_size(file), 1048577u);
+  const auto r = load_params_file(file, kSpecs);
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error().kind, Kind::kFileUnreadable);
+  EXPECT_NE(r.error().detail.find("larger than 1048576 bytes"), std::string::npos) << r.error().detail;
+}
