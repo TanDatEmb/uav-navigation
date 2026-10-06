@@ -27,7 +27,20 @@ constexpr std::string_view kBeta =
     "degeneracy_translation_min_info: 1.1e5\n"
     "degeneracy_rotation_min_info: 2.8e6\n"
     "predictor_tau_vel_s: 0.25\n"
-    "predictor_tau_pos_s: 0.25\n";
+    "predictor_tau_pos_s: 0.25\n"
+    "extrinsic_imu_lidar_x_m: -0.011\n"
+    "extrinsic_imu_lidar_y_m: -0.02329\n"
+    "extrinsic_imu_lidar_z_m: 0.04412\n"
+    "preprocess_min_range_m: 0.5\n"
+    "preprocess_max_range_m: 40\n"
+    "preprocess_voxel_m: 0.2\n"
+    "map_voxel_m: 0.3\n"
+    "map_half_extent_x_m: 30\n"
+    "map_half_extent_y_m: 30\n"
+    "map_half_extent_z_m: 15\n"
+    "registration_max_iterations: 4\n"
+    "imu_init_min_samples: 200\n"
+    "imu_max_gap_s: 0.02\n";
 
 // kBeta with each `key: value` pair of `changes` replacing the line that starts with `key:`.
 std::string With(std::initializer_list<std::pair<std::string_view, std::string_view>> changes) {
@@ -80,7 +93,7 @@ TEST(LioConfig, BetaValuesLoad) {
 }
 
 TEST(LioConfig, SpecsAreValidAndComplete) {
-  static_assert(kLioSpecs.size() == 10);
+  static_assert(kLioSpecs.size() == 23);
   // A schema with a bad spec would be rejected before the text is read.
   const auto r = config::load_params(kBeta, kLioSpecs);
   ASSERT_TRUE(r.has_value());
@@ -225,6 +238,54 @@ TEST(LioConfig, MissingPredictorKeyIsRejectedNamingTheKey) {
     }
     ExpectError(text, Kind::kMissingKey, key);
   }
+}
+
+TEST(LioConfig, MathKeysLoadWithBetaValues) {
+  const auto r = Load(std::string(kBeta));
+  ASSERT_TRUE(r.has_value()) << r.error().key << ": " << r.error().detail;
+  const MathConfig& m = r->math;
+  EXPECT_DOUBLE_EQ(m.t_imu_lidar_m.x(), -0.011);
+  EXPECT_DOUBLE_EQ(m.t_imu_lidar_m.y(), -0.02329);
+  EXPECT_DOUBLE_EQ(m.t_imu_lidar_m.z(), 0.04412);
+  EXPECT_DOUBLE_EQ(m.preprocess_min_range_m, 0.5);
+  EXPECT_DOUBLE_EQ(m.preprocess_max_range_m, 40.0);
+  EXPECT_DOUBLE_EQ(m.preprocess_voxel_m, 0.2);
+  EXPECT_DOUBLE_EQ(m.map_voxel_m, 0.3);
+  EXPECT_DOUBLE_EQ(m.map_half_extent_m.x(), 30.0);
+  EXPECT_DOUBLE_EQ(m.map_half_extent_m.y(), 30.0);
+  EXPECT_DOUBLE_EQ(m.map_half_extent_m.z(), 15.0);
+  EXPECT_EQ(m.registration_max_iterations, 4U);
+  EXPECT_EQ(m.imu_init_min_samples, 200U);
+  EXPECT_EQ(m.imu_max_gap, time::milliseconds(20));
+}
+
+TEST(LioConfig, MathKeyBoundsAreEnforced) {
+  ExpectError(With("registration_max_iterations", "0"), Kind::kOutOfRange, "registration_max_iterations");
+  ExpectError(With("registration_max_iterations", "11"), Kind::kOutOfRange, "registration_max_iterations");
+  ExpectError(With("registration_max_iterations", "2.5"), Kind::kWrongType, "registration_max_iterations");
+  ExpectError(With("imu_init_min_samples", "801"), Kind::kOutOfRange, "imu_init_min_samples");
+  ExpectError(With("imu_max_gap_s", "0.1"), Kind::kOutOfRange, "imu_max_gap_s");
+  ExpectError(With("map_voxel_m", "0.05"), Kind::kOutOfRange, "map_voxel_m");
+  ExpectError(With("extrinsic_imu_lidar_z_m", "0.5"), Kind::kOutOfRange, "extrinsic_imu_lidar_z_m");
+  EXPECT_TRUE(Load(With({{"registration_max_iterations", "1"}})).has_value());
+  EXPECT_TRUE(Load(With({{"registration_max_iterations", "10"}})).has_value());
+}
+
+// The tracked default file config/lio/sim.yaml (path from a compile definition, see CMakeLists.txt) holds
+// every kLioSpecs key and loads without error.
+TEST(LioConfig, DefaultSimYamlLoadsAndHasEveryKey) {
+  const auto values = config::load_params_file(UAVNAV_LIO_DEFAULT_YAML, kLioSpecs);
+  ASSERT_TRUE(values.has_value()) << UAVNAV_LIO_DEFAULT_YAML << ": " << values.error().key << ": "
+                                  << values.error().detail;
+  for (const config::ParamSpec& spec : kLioSpecs) {
+    EXPECT_TRUE(values->contains(spec.key)) << spec.key;
+  }
+  const auto cfg = load_lio_config(*values);
+  ASSERT_TRUE(cfg.has_value()) << cfg.error().key << ": " << cfg.error().detail;
+  // Same values as the beta text used by the other tests.
+  const auto beta = config::load_params(kBeta, kLioSpecs);
+  ASSERT_TRUE(beta.has_value());
+  EXPECT_EQ(*values, *beta);
 }
 
 TEST(LioLimits, ScanPointCap) { EXPECT_EQ(limits::kMaxScanPoints, 200'000U); }

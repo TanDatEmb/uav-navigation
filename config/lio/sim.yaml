@@ -1,0 +1,38 @@
+# Default tier-(b) parameters of the LIO core (uavnav_lio_core) for SITL.
+# Schema, units and bounds: kLioSpecs in src/estimation/uavnav_lio_core/include/uavnav/lio/config.hpp.
+# A value outside its bounds, a missing key or an unknown key makes the process refuse to start.
+# All values are beta starting values; S1b tunes them from SITL logs.
+
+# --- lifecycle (SYSTEM_DESIGN §3.1) ---------------------------------------------------------------
+lifecycle_confirm_scans: 5               # consecutive good scans to enter TRACKING
+lifecycle_degenerate_scans: 3            # consecutive degenerate/empty scans TRACKING -> DEGRADED
+lifecycle_gap_degraded_s: 0.25           # LiDAR gap (IMU time - last scan end) TRACKING -> DEGRADED
+lifecycle_gap_lost_s: 0.5                # LiDAR gap DEGRADED -> LOST
+lifecycle_degeneracy_lost_s: 1.0         # degenerate run length DEGRADED -> LOST
+lifecycle_position_sigma_lost_m: 0.5     # position sigma TRACKING/DEGRADED -> LOST
+
+# --- degeneracy (SYSTEM_DESIGN §3.2) --------------------------------------------------------------
+# derivation: see src/estimation/uavnav_lio_core/include/uavnav/lio/config.hpp
+# (about n / sigma^2: 100 points at 0.03 m; rotation with a 5 m lever arm)
+degeneracy_translation_min_info: 1.1e5   # smallest eigenvalue of the translation information block
+degeneracy_rotation_min_info: 2.8e6      # smallest eigenvalue of the rotation information block
+
+# --- output predictor (SYSTEM_DESIGN §3.3) --------------------------------------------------------
+# effective time constant at scan period T is about tau*T/0.03 s (see config.hpp); S1b tunes it in SITL
+predictor_tau_vel_s: 0.25
+predictor_tau_pos_s: 0.25
+
+# --- reused FAST-LIO math (values from the survey of main, config/runtime/sim.yaml) --------------
+extrinsic_imu_lidar_x_m: -0.011          # IMU -> LiDAR translation in the IMU frame (Mid-360)
+extrinsic_imu_lidar_y_m: -0.02329
+extrinsic_imu_lidar_z_m: 0.04412
+preprocess_min_range_m: 0.5              # points closer than this are dropped
+preprocess_max_range_m: 40.0             # points farther than this are dropped
+preprocess_voxel_m: 0.2                  # scan voxel filter edge
+map_voxel_m: 0.3                         # ikd-tree downsample voxel edge
+map_half_extent_x_m: 30.0                # local map half extents around the vehicle
+map_half_extent_y_m: 30.0
+map_half_extent_z_m: 15.0
+registration_max_iterations: 4           # IKFoM iterations per scan
+imu_init_min_samples: 200                # stationary IMU samples for gravity and bias (1 s at 200 Hz)
+imu_max_gap_s: 0.02                      # largest IMU step integrated; a larger gap is an ImuGap event

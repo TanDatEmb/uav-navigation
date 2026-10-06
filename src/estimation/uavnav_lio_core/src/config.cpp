@@ -1,6 +1,8 @@
 #include "uavnav/lio/config.hpp"
 
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -54,6 +56,47 @@ Result<time::Duration, ConfigError> seconds_key(const config::ParamValues& value
   return *d;
 }
 
+// The MathConfig keys, each re-checked against kLioSpecs (cross-key checks are in load_lio_config).
+Result<MathConfig, ConfigError> load_math(const config::ParamValues& values) {
+  MathConfig m{};
+  for (int axis = 0; axis < 3; ++axis) {
+    constexpr std::array<std::string_view, 3> kExtrinsic{"extrinsic_imu_lidar_x_m", "extrinsic_imu_lidar_y_m",
+                                                         "extrinsic_imu_lidar_z_m"};
+    const auto v = checked(values, kExtrinsic[static_cast<std::size_t>(axis)]);
+    if (!v) return std::unexpected(v.error());
+    m.t_imu_lidar_m[axis] = *v;
+  }
+  const auto min_range = checked(values, "preprocess_min_range_m");
+  if (!min_range) return std::unexpected(min_range.error());
+  m.preprocess_min_range_m = *min_range;
+  const auto max_range = checked(values, "preprocess_max_range_m");
+  if (!max_range) return std::unexpected(max_range.error());
+  m.preprocess_max_range_m = *max_range;
+  const auto scan_voxel = checked(values, "preprocess_voxel_m");
+  if (!scan_voxel) return std::unexpected(scan_voxel.error());
+  m.preprocess_voxel_m = *scan_voxel;
+  const auto map_voxel = checked(values, "map_voxel_m");
+  if (!map_voxel) return std::unexpected(map_voxel.error());
+  m.map_voxel_m = *map_voxel;
+  for (int axis = 0; axis < 3; ++axis) {
+    constexpr std::array<std::string_view, 3> kHalfExtent{"map_half_extent_x_m", "map_half_extent_y_m",
+                                                          "map_half_extent_z_m"};
+    const auto v = checked(values, kHalfExtent[static_cast<std::size_t>(axis)]);
+    if (!v) return std::unexpected(v.error());
+    m.map_half_extent_m[axis] = *v;
+  }
+  const auto iterations = count(values, "registration_max_iterations");
+  if (!iterations) return std::unexpected(iterations.error());
+  m.registration_max_iterations = *iterations;
+  const auto init_samples = count(values, "imu_init_min_samples");
+  if (!init_samples) return std::unexpected(init_samples.error());
+  m.imu_init_min_samples = *init_samples;
+  const auto max_gap = seconds_key(values, "imu_max_gap_s");
+  if (!max_gap) return std::unexpected(max_gap.error());
+  m.imu_max_gap = *max_gap;
+  return m;
+}
+
 }  // namespace
 
 Result<LioConfig, ConfigError> load_lio_config(const config::ParamValues& values) {
@@ -78,6 +121,9 @@ Result<LioConfig, ConfigError> load_lio_config(const config::ParamValues& values
   const auto tau_pos = seconds_key(values, "predictor_tau_pos_s");
   if (!tau_pos) return std::unexpected(tau_pos.error());
 
+  const auto math = load_math(values);
+  if (!math) return std::unexpected(math.error());
+
   if (*gap_lost <= *gap_degraded) {
     return fail(Kind::kOutOfRange, "lifecycle_gap_lost_s",
                 "lifecycle_gap_lost_s (" + std::to_string(time::to_seconds(*gap_lost)) +
@@ -91,7 +137,8 @@ Result<LioConfig, ConfigError> load_lio_config(const config::ParamValues& values
   }
 
   return LioConfig{LifecycleConfig{*confirm, *degenerate, *gap_degraded, *gap_lost, *degeneracy_lost, *sigma},
-                   DegeneracyConfig{*translation_min_info, *rotation_min_info}, PredictorConfig{*tau_vel, *tau_pos}};
+                   DegeneracyConfig{*translation_min_info, *rotation_min_info}, PredictorConfig{*tau_vel, *tau_pos},
+                   *math};
 }
 
 }  // namespace uavnav::lio

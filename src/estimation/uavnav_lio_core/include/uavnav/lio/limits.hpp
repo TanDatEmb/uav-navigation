@@ -36,4 +36,16 @@ static_assert(static_cast<std::int64_t>(kPredictorBufferCapacity - 1) * kPredict
 inline constexpr time::Duration kPredictorDtMin = time::nanoseconds(100'000);
 inline constexpr time::Duration kPredictorDtMax = time::milliseconds(30);
 
+// --- estimator facade (SYSTEM_DESIGN §3, LioEstimator) ----------------------------------------------
+
+/// IMU samples kept for the ESKF prediction between scans. 1024 samples = 5.1 s at 200 Hz, which covers the
+/// largest allowed lifecycle_gap_lost_s (5 s), so the first scan after a LiDAR outage that ended in LOST can
+/// still be predicted from the last scan. When history is dropped, that scan's prediction fails (an event,
+/// treated as a degenerate scan) and the ESKF time is moved to the scan end; it never blocks.
+inline constexpr std::size_t kImuHistoryCapacity = 1024;
+
+/// Period of the HealthOutput produced from IMU time (sensor time), besides one on every transition.
+/// 10 Hz: one health sample per scan period at the 10 Hz scan rate (SYSTEM_DESIGN §6.4).
+inline constexpr time::Duration kHealthPeriod = time::milliseconds(100);
+
 }  // namespace uavnav::lio::limits

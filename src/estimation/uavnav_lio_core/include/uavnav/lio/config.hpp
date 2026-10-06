@@ -1,6 +1,9 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
+
+#include <Eigen/Core>
 
 #include "uavnav/core/config.hpp"
 #include "uavnav/core/result.hpp"
@@ -13,10 +16,26 @@
 // LioConfig / load_lio_config.
 namespace uavnav::lio {
 
+/// Values handed to the reused FAST-LIO math (fast_lio_core) by LioEstimator. Beta values (from the survey
+/// of `main`, config/runtime/sim.yaml) in parentheses. Every other fast_lio_core knob keeps the default of
+/// its own config struct (single source: fast_lio_core), see estimator.cpp.
+struct MathConfig {
+  Eigen::Vector3d t_imu_lidar_m;         ///< IMU -> LiDAR translation, IMU frame ((-0.011, -0.02329, 0.04412))
+  double preprocess_min_range_m;         ///< points closer than this are dropped (0.5)
+  double preprocess_max_range_m;         ///< points farther than this are dropped (40)
+  double preprocess_voxel_m;             ///< scan voxel filter edge (0.2)
+  double map_voxel_m;                    ///< ikd-tree downsample voxel edge (0.3)
+  Eigen::Vector3d map_half_extent_m;     ///< local map half extents x, y, z ((30, 30, 15))
+  std::uint32_t registration_max_iterations;  ///< IKFoM iterations per scan (4)
+  std::uint32_t imu_init_min_samples;    ///< stationary samples for gravity + bias init (200)
+  time::Duration imu_max_gap;            ///< largest IMU step integrated / reported as a gap (0.02 s)
+};
+
 struct LioConfig {
   LifecycleConfig lifecycle;
   DegeneracyConfig degeneracy;
   PredictorConfig predictor;
+  MathConfig math;
 };
 
 /// The single definition of every LIO key, its unit and its inclusive bounds. Beta values:
@@ -35,8 +54,14 @@ struct LioConfig {
 /// measurement noise sigma is about n / sigma^2:
 ///   translation 1.1e5 ~= 100 points at sigma = 0.03 m along the weakest direction: 100 / 0.03^2 = 1.11e5.
 ///   rotation    2.8e6 ~= the same 100 points at a 5 m lever arm: 100 * 5^2 / 0.03^2 = 2.78e6.
-/// These are beta starting values; S1b recalibrates both from SITL logs. The default YAML (Task 8) repeats
-/// the values and points back here ("see config.hpp").
+/// These are beta starting values; S1b recalibrates both from SITL logs. The default YAML
+/// (config/lio/sim.yaml) repeats the values and points back here ("see config.hpp").
+///
+/// Math keys (MathConfig): beta values from the survey of `main` (config/runtime/sim.yaml); bounds are about
+/// 1/4x to 4x the beta value (for the negative extrinsic components: 4x .. 1/4x), except
+/// registration_max_iterations [1, 10]. imu_init_min_samples is capped at 800 so it stays below
+/// fast_lio_core's ImuInitializerConfig::maximum_imu_samples (1000). The range bounds do not overlap
+/// (min <= 2 m < 10 m <= max), so preprocess_max_range_m > preprocess_min_range_m needs no cross check.
 inline constexpr auto kLioSpecs = std::to_array<config::ParamSpec>({
     {"lifecycle_confirm_scans", config::Unit::kNone, 1.0, 50.0},
     {"lifecycle_degenerate_scans", config::Unit::kNone, 1.0, 50.0},
@@ -48,6 +73,19 @@ inline constexpr auto kLioSpecs = std::to_array<config::ParamSpec>({
     {"degeneracy_rotation_min_info", config::Unit::kNone, 1.0, 1e12},
     {"predictor_tau_vel_s", config::Unit::kSeconds, 0.05, 5.0},
     {"predictor_tau_pos_s", config::Unit::kSeconds, 0.05, 5.0},
+    {"extrinsic_imu_lidar_x_m", config::Unit::kMeters, -0.044, -0.00275},
+    {"extrinsic_imu_lidar_y_m", config::Unit::kMeters, -0.09316, -0.0058225},
+    {"extrinsic_imu_lidar_z_m", config::Unit::kMeters, 0.01103, 0.17648},
+    {"preprocess_min_range_m", config::Unit::kMeters, 0.125, 2.0},
+    {"preprocess_max_range_m", config::Unit::kMeters, 10.0, 160.0},
+    {"preprocess_voxel_m", config::Unit::kMeters, 0.05, 0.8},
+    {"map_voxel_m", config::Unit::kMeters, 0.075, 1.2},
+    {"map_half_extent_x_m", config::Unit::kMeters, 7.5, 120.0},
+    {"map_half_extent_y_m", config::Unit::kMeters, 7.5, 120.0},
+    {"map_half_extent_z_m", config::Unit::kMeters, 3.75, 60.0},
+    {"registration_max_iterations", config::Unit::kNone, 1.0, 10.0},
+    {"imu_init_min_samples", config::Unit::kNone, 50.0, 800.0},
+    {"imu_max_gap_s", config::Unit::kSeconds, 0.005, 0.08},
 });
 
 /// Builds a LioConfig from values already loaded against kLioSpecs (config::load_params).

@@ -4,7 +4,7 @@
 <package format="3">
   <name>uavnav_lio_core</name>
   <version>0.1.0</version>
-  <description>ROS-free LIO core for uav-navigation: typed config and the lifecycle state machine.</description>
+  <description>ROS-free LIO core for uav-navigation: typed config, lifecycle, degeneracy, output predictor and the LioEstimator facade over the reused FAST-LIO math.</description>
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>

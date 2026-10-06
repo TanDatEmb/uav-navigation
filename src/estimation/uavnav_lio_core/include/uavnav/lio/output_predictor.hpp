@@ -161,6 +161,9 @@ class OutputPredictor {
   /// a restarting reset; rejected corrections do not change it.
   Eigen::Vector3d tracking_error() const noexcept { return tracking_error_; }
 
+  /// Number of reset_to calls so far (the value the next output sample carries). 0 before any reset.
+  std::uint32_t reset_counter() const noexcept { return reset_counter_; }
+
   /// Vertical velocity (world z, m/s) of the separate vertical channel at the newest output (PX4
   /// z_deriv): unlike v_world_mps.z(), its integral is the channel's vertical position, which tracks
   /// the estimator's p.z through velocity corrections only. 0 before align.
