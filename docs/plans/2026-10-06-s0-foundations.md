@@ -98,7 +98,7 @@ Spec §7.1, §7.2 S0, D13, D15. Delete only what no kept package depends on. The
   - `tools/gate.sh`, `tools/data.py`
   - `tools/validate_runtime_safety_ledger.py`, `tools/check_mission_authority_cut.py`
   - `tools/check_dependency_direction.py`, `tools/verify_baseline_migration.py`
-  - `docs/evidence/`
+  - the `evidence` folder under the `docs` directory
 - Move: `src/runtime/navigation_runtime/config/planner.yaml` → `config/runtime/planner.yaml`. Two kept packages read this file.
 - Create:
   - `tools/uavnav/__init__.py` (empty)
