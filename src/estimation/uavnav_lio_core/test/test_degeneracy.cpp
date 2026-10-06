@@ -80,7 +80,32 @@ TEST(Degeneracy, RotationBlockUsedIndependently) {
 TEST(Degeneracy, JustBelowThresholdIsDegenerate) {
   EXPECT_TRUE(Eval(Diag(kT * 0.999, kT, kT, kR, kR, kR)).degenerate);
   EXPECT_TRUE(Eval(Diag(kT, kT, kT, kR, kR, kR * 0.999)).degenerate);
-  EXPECT_LE(Eval(Diag(kT * 0.999, kT, kT, kR, kR, kR)).quality, 50U);
+  EXPECT_LE(Eval(Diag(kT * 0.999, kT, kT, kR, kR, kR)).quality, 49U);
+}
+
+TEST(Degeneracy, RatioOf0995IsDegenerateWithQualityCappedAt49) {
+  // 50 * 0.995 = 49.75 rounds to 50, but the matrix is degenerate, so quality must stay below 50.
+  const DegeneracyReport r = Eval(Diag(0.995 * kT, kT, kT, kR, kR, kR));
+  EXPECT_TRUE(r.degenerate);
+  EXPECT_EQ(r.quality, 49U);
+}
+
+TEST(Degeneracy, QualityAtLeastFiftyIffNotDegenerateOverARatioSweep) {
+  for (int i = 0; i <= 300; ++i) {
+    const double ratio = i / 100.0;  // i = 100 gives exactly 1.0
+    const DegeneracyReport t = Eval(Diag(ratio * kT, 3 * kT, 3 * kT, 3 * kR, 3 * kR, 3 * kR));
+    EXPECT_EQ(t.quality >= 50U, !t.degenerate) << "translation ratio " << ratio << " quality " << int{t.quality};
+    const DegeneracyReport rot = Eval(Diag(3 * kT, 3 * kT, 3 * kT, 3 * kR, ratio * kR, 3 * kR));
+    EXPECT_EQ(rot.quality >= 50U, !rot.degenerate) << "rotation ratio " << ratio << " quality " << int{rot.quality};
+  }
+}
+
+TEST(Degeneracy, OnePlaneTranslationBlockIsDegenerate) {
+  // Information only in two translation axes (a flat scene seen from above): the third eigenvalue is 0.
+  const DegeneracyReport r = Eval(Diag(10 * kT, 10 * kT, 0.0, 10 * kR, 10 * kR, 10 * kR));
+  EXPECT_TRUE(r.degenerate);
+  EXPECT_EQ(r.quality, 0U);
+  EXPECT_DOUBLE_EQ(r.translation_min_eigenvalue, 0.0);
 }
 
 TEST(Degeneracy, JustAboveThresholdIsNotDegenerate) {

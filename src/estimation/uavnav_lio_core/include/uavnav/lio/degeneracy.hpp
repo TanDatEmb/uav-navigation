@@ -37,14 +37,14 @@ struct DegeneracyReport {
 ///             OR a threshold in `config` is not finite and > 0 (an unusable configuration is never "healthy").
 ///   quality    = clamp(round(50 * min(λt / translation_min_info, λr / rotation_min_info)), 0, 100),
 ///                with negative eigenvalues (numerical noise) counted as 0 for the quality only.
-///                So 50 exactly at the thresholds, 100 at twice the thresholds or more, 0 with no information.
-///                Quality 50 does not imply "not degenerate": a ratio of 0.995 rounds to 50 while `degenerate`
-///                is true. Consumers gate on `degenerate`, never on quality alone.
+///                and capped at 49 whenever `degenerate` is true. So 50 exactly at the thresholds, 100 at twice
+///                the thresholds or more, 0 with no information, and the invariant
+///                `quality >= 50 <=> !degenerate` holds. Consumers should still gate on `degenerate`.
 ///
 /// nullopt means "no usable rows" (a degenerate/unknown case, not "skip"): degenerate = true, quality = 0,
 /// both reported eigenvalues 0.0. Non-finite input gives the same result. For finite input the eigenvalues
 /// are reported raw, so a slightly negative value shows as is.
-DegeneracyReport evaluate_degeneracy(const std::optional<Eigen::Matrix<double, 6, 6>>& information,
-                                     const DegeneracyConfig& config) noexcept;
+[[nodiscard]] DegeneracyReport evaluate_degeneracy(const std::optional<Eigen::Matrix<double, 6, 6>>& information,
+                                                   const DegeneracyConfig& config) noexcept;
 
 }  // namespace uavnav::lio
