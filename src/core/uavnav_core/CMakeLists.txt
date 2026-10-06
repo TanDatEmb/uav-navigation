@@ -3,11 +3,13 @@ project(uavnav_core LANGUAGES CXX)
 
 find_package(ament_cmake REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(Threads REQUIRED)
 
 # No ROS (rclcpp) dependency: this library must stay usable outside any node.
 # Add library sources to UAVNAV_CORE_SOURCES; add tests below with ament_add_gtest.
 set(UAVNAV_CORE_SOURCES
-  src/time.cpp)
+  src/time.cpp
+  src/event_recorder.cpp)
 
 add_library(uavnav_core STATIC ${UAVNAV_CORE_SOURCES})
 add_library(uavnav_core::uavnav_core ALIAS uavnav_core)
@@ -19,7 +21,7 @@ target_compile_features(uavnav_core PUBLIC cxx_std_23)
 target_compile_options(uavnav_core PUBLIC -Wall -Wextra -Wpedantic -Werror)
 # Static code is linked into shared libraries and nodes of other packages.
 set_target_properties(uavnav_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(uavnav_core PUBLIC yaml-cpp::yaml-cpp)
+target_link_libraries(uavnav_core PUBLIC yaml-cpp::yaml-cpp Threads::Threads)
 
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS uavnav_core EXPORT export_uavnav_core
@@ -27,7 +29,7 @@ install(TARGETS uavnav_core EXPORT export_uavnav_core
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
 ament_export_targets(export_uavnav_core HAS_LIBRARY_TARGET)
-ament_export_dependencies(yaml-cpp)
+ament_export_dependencies(yaml-cpp Threads)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
@@ -35,6 +37,8 @@ if(BUILD_TESTING)
   target_link_libraries(test_result uavnav_core::uavnav_core)
   ament_add_gtest(test_time test/test_time.cpp)
   target_link_libraries(test_time uavnav_core::uavnav_core)
+  ament_add_gtest(test_event_recorder test/test_event_recorder.cpp)
+  target_link_libraries(test_event_recorder uavnav_core::uavnav_core)
 endif()
 
 ament_package()
