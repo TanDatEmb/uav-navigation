@@ -3,7 +3,7 @@
 builtin_interfaces/Time stamp
 uint32 epoch
 uint32 reset_counter
-uint8 lio_state
+uint8 lio_state  # one of the LioHealth state constants (INITIALIZING..RESTARTING)
 geometry_msgs/Pose pose
 geometry_msgs/Vector3 velocity
 geometry_msgs/Vector3 angular_velocity
