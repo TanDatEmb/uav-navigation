@@ -111,3 +111,11 @@ maintained on this branch.
 The machine has 15 GB RAM. Run static analyzers and builds with at most
 `-j3`, under `nice`. Run at most 3 subagents in parallel. Subagents write
 results progressively, so that interrupted work is not lost.
+
+## 6. Deleting and moving files
+
+These rules come from what happened during S0.
+
+- Before deleting or moving a tracked path, run a **reference sweep** across all file types, not only `package.xml`: CMake, YAML, launch files, tests, scripts and docs. Grep for both the path and the package name. Resolve every hit, or list it with a reason, before the change.
+- Move a package in the slice that rebuilds it. Its first rebuild after the move uses `colcon build --cmake-clean-cache`, because the shared `build/` caches hold the old source path.
+- Mass deletion is irreversible. The agent writes a script that runs one `git rm` command per path, dry-runs it (`-n`), and hands it to the owner to execute. An agent never retries a deletion that the permission system blocked.

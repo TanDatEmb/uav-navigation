@@ -32,6 +32,9 @@
 - Do not add new state encoded as boolean flags. Do not hold a lock while publishing or while calling a callback (AGENTS.md §2.1, §2.6).
 - Tier-(b) config: every key has a unit suffix and min/max bounds. A value outside its bounds rejects startup (§6.2, D22).
 - Commits use conventional format `type(scope): description` and end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- Before deleting or moving any tracked path, run a reference sweep across **all** file types, not just `package.xml`: CMake, YAML, launch, tests, scripts, docs. Resolve or list every hit. Mass deletions are prepared and dry-run by the agent and executed by the owner (AGENTS.md §6).
+- Tests must not depend on tight wall-clock timing (≤ 1 s bounds), because the machine is shared with SITL.
+- File-system and parsing APIs that can throw are used through their non-throwing overloads, or wrapped, so that failures surface as `Result` errors and never escape as exceptions.
 
 ## Review Focus
 
@@ -80,8 +83,14 @@ Spec §7.1, §7.2 S0, D13, D15. Delete only what no kept package depends on. The
 - `uav_simulation`, `uav_description`
 - `config/`, `tools/simulation/`, `tools/datasets/`, `tools/setup.sh`
 
+**Two lessons from the first execution attempt are now built into this task:**
+- References between packages are not only `package.xml` dependencies. Configs, launch files, tests and scripts also refer to files by path. A reference sweep across all file types comes before any deletion (Step 1).
+- Mass deletion is an irreversible local action. The permission classifier blocks it for agents. The agent prepares and dry-runs the deletion; the **owner** runs it (Step 2).
+
+**Nothing is moved in S0.** The vendor and sim directories stay where they are. Moving them breaks path references (for example `tools/simulation/run_px4_mid360.sh` uses `src/uav_simulation/models`, and the `uav_description` test uses `ROOT.parent`). It also leaves stale source paths in the shared `build/` CMake caches. Each move happens in the slice that rebuilds the package (S1: `ikfom_vendor`, `ikd_tree_vendor`, `uav_simulation`, `uav_description`; S3: `rog_map_vendor`), using `--cmake-clean-cache` on its first rebuild.
+
 **Files:**
-- Delete (`git rm -r`):
+- Delete (Step 2, owner-run):
   - `src/runtime/`, `src/execution/`, `src/px4/`
   - `src/estimation/fast_lio_ros/`, `src/estimation/fast_lio_tools/`
   - `src/contracts/navigation_contracts/`, `src/navigation_bringup/`
@@ -90,33 +99,67 @@ Spec §7.1, §7.2 S0, D13, D15. Delete only what no kept package depends on. The
   - `tools/validate_runtime_safety_ledger.py`, `tools/check_mission_authority_cut.py`
   - `tools/check_dependency_direction.py`, `tools/verify_baseline_migration.py`
   - `docs/evidence/`
-- Move (`git mv`):
-  - `src/estimation/ikfom_vendor` → `src/vendor/ikfom_vendor`
-  - `src/estimation/ikd_tree_vendor` → `src/vendor/ikd_tree_vendor`
-  - `src/mapping/rog_map_vendor` → `src/vendor/rog_map_vendor`
-  - `src/uav_simulation` → `src/sim/uav_simulation`
-  - `src/uav_description` → `src/sim/uav_description`
+- Move: `src/runtime/navigation_runtime/config/planner.yaml` → `config/runtime/planner.yaml`. Two kept packages read this file.
 - Create:
   - `tools/uavnav/__init__.py` (empty)
   - `tools/uavnav/tests/__init__.py` (empty)
   - `tools/uavnav/gate.sh`
+  - `tools/uavnav/s0_prune.sh`
 - Modify:
-  - `Makefile` (full rewrite)
-  - `README.md`: remove instructions for the deleted `make` targets (`run`, `sim`, `replay`, `dataset-check`, …)
-  - `.agents/skills/build-and-test/SKILL.md`: point it to `make build|test|gate`
+  - `src/mapping/navigation_mapping/CMakeLists.txt`, `src/planning/navigation_planning_backend/CMakeLists.txt`: change every path to `planner.yaml` into `${CMAKE_CURRENT_SOURCE_DIR}/../../../config/runtime/planner.yaml`.
+  - `src/uav_description/test/test_sensor_frames_contract.py`: remove the assertions that read `navigation_bringup/launch/fast_lio.launch.py`. Keep the standalone-launch assertions, and rename the test to `test_standalone_launch_mount_policy`.
+  - `Makefile` (full rewrite).
+  - `README.md`: remove the deleted `make` targets (`run`, `sim`, `replay`, `dataset-check`, …).
+  - `.agents/skills/build-and-test/SKILL.md`: point it to `make build|test|gate`.
 
 **Interfaces:**
 - Produces:
   - `make build`, `make test`, `make gate`, `make clean`, with variable `PKGS` (default `uavnav_core uavnav_interfaces`)
-  - `tools/uavnav/gate.sh [static|python|ros|all]`, which prints the final line `GATE_RESULT=PASS|FAIL`
+  - `tools/uavnav/gate.sh [static|python|ros|all]`, whose last line is `GATE_RESULT=PASS|FAIL`
 
-- [ ] **Step 1: Delete and move the paths listed above, then confirm nothing kept references a deleted package**
+- [ ] **Step 1: Reference sweep, then resolve every hit before deleting anything**
 
-  Run: `grep -rlE "navigation_(runtime|execution|contracts|bringup)|px4_(navigation_external_mode|odometry_bridge)|fast_lio_(ros|tools)" src --include=package.xml --include=CMakeLists.txt`
+  Run:
+
+  ```bash
+  DEL='src/runtime|src/execution|src/px4/|fast_lio_ros|fast_lio_tools|navigation_contracts|navigation_bringup|navigation_runtime|navigation_execution|px4_navigation_external_mode|px4_odometry_bridge|tools/runtime|tools/tests|tools/gate\.sh|tools/data\.py|validate_runtime_safety_ledger|check_mission_authority_cut|check_dependency_direction|verify_baseline_migration|docs/evidence'
+  grep -rnE "$DEL" src/common src/contracts/navigation_mission src/mapping src/planning src/estimation/fast_lio_core \
+    src/estimation/ikfom_vendor src/estimation/ikd_tree_vendor src/uav_simulation src/uav_description src/external/livox_ros_driver2 \
+    config tools/simulation tools/datasets tools/setup.sh tools/check_documentation.py .agents README.md
+  ```
+
+  Resolve each hit as below, then rerun. The expected remaining hits are text-only (docs and comments) and are listed here:
+
+  | Hit | Resolution |
+  |---|---|
+  | `navigation_mapping`/`navigation_planning_backend` CMake → `planner.yaml` | Move the file and edit the paths (see Files) |
+  | `uav_description` test → `navigation_bringup` launch | Edit the test (see Files) |
+  | `.agents/skills/build-and-test`, `README.md` | Rewrite (see Files) |
+  | `config/runtime/{mapping,sim,external_mode}.yaml` keys named after old nodes | Keep. They are reference inputs for S1/S3 and no kept build reads their node keys |
+  | `navigation_planning_backend/UPSTREAM.md`, `tools/simulation/README.md`, `tools/simulation/run_px4_mid360.sh` (echo text) | Keep. Text only; S1 rewrites the SITL launch |
+
+  Then confirm no build or test file of a kept package reads a deleted path:
+
+  `grep -rlE "$DEL" src --include=package.xml --include=CMakeLists.txt --include='*.py' --include='*.launch.py' | grep -vE '^src/(runtime|execution|px4|navigation_bringup|contracts/navigation_contracts|estimation/fast_lio_(ros|tools))/'`
 
   Expected: no output.
 
-- [ ] **Step 2: Rewrite `Makefile`**
+- [ ] **Step 2: Prepare the deletion script, dry-run it, and hand it to the owner (OWNER ACTION)**
+
+  Write `tools/uavnav/s0_prune.sh` as follows:
+  - `set -euo pipefail`; run from the repo root;
+  - one `git rm -r --quiet "$@" --` command per path from the Delete list;
+  - it forwards its arguments, so `tools/uavnav/s0_prune.sh -n` performs a dry run.
+
+  The agent runs only the dry run:
+
+  `tools/uavnav/s0_prune.sh -n`
+
+  Expected: one `rm '<path>'` line per tracked file under the listed paths, and nothing else. Then the agent **stops and asks the owner** to run `tools/uavnav/s0_prune.sh`. Every deleted file is tracked and stays recoverable from `main` and from `HEAD~`.
+
+  After the owner confirms, the agent runs `git status --short | grep -c '^D '`. Expected: a non-zero count, and `git status` shows no deletion outside the listed paths.
+
+- [ ] **Step 3: Rewrite `Makefile`**
 
   - Targets: `help`, `setup` (keeps `tools/setup.sh`), `build`, `test`, `gate`, `clean`.
   - `build` sources `/opt/ros/jazzy/setup.bash`, then runs:
@@ -124,28 +167,28 @@ Spec §7.1, §7.2 S0, D13, D15. Delete only what no kept package depends on. The
     `nice -n 10 env MAKEFLAGS=-j3 colcon build --packages-up-to $(PKGS) --parallel-workers 2 --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON`
   - `test` runs `colcon test --packages-select $(PKGS) --parallel-workers 2`, then `colcon test-result --verbose`.
   - `gate` runs `tools/uavnav/gate.sh all`.
-  - `clean` removes `log/` only. It keeps `build/` and `install/`, which are a shared incremental build (CLAUDE.local.md).
+  - `clean` prints the paths it would remove (`log/`) and asks the user to delete them. It deletes nothing itself, because `build/` and `install/` are a shared incremental build (CLAUDE.local.md).
 
-- [ ] **Step 3: Write `tools/uavnav/gate.sh`**
+- [ ] **Step 4: Write `tools/uavnav/gate.sh`**
 
   Use `set -euo pipefail`, run from the repo root, and use the Python at `${PYTHON:-/usr/bin/python3}`. Three stages:
   - `static`: `git diff --check`, `git diff --cached --check`, `$PYTHON tools/check_documentation.py . docs`.
-  - `python`: `$PYTHON -m unittest discover -s tools/uavnav/tests -t . -v`.
+  - `python`: if `tools/uavnav/tests` contains no `test_*.py`, print `gate: python: no tests` and pass. Python 3.12 `unittest` exits with status 1 when it finds no tests. Otherwise run `$PYTHON -m unittest discover -s tools/uavnav/tests -t . -v`.
   - `ros`: `make build && make test`.
 
   `all` runs all three stages in order. The script prints `GATE_RESULT=PASS` only when every selected stage passes, and `GATE_RESULT=FAIL` otherwise (through an `EXIT` trap).
 
-- [ ] **Step 4: Run the static and python stages**
+- [ ] **Step 5: Run the static and python stages**
 
   Run: `tools/uavnav/gate.sh static && tools/uavnav/gate.sh python`
 
-  Expected: both stages end with `GATE_RESULT=PASS`. The python stage reports `Ran 0 tests`, which is acceptable here.
+  Expected: both stages end with `GATE_RESULT=PASS`, and the python stage prints `gate: python: no tests`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
   ```bash
   git add -u src tools docs Makefile README.md .agents/skills/build-and-test/SKILL.md
-  git add src/vendor src/sim tools/uavnav Makefile
+  git add config/runtime/planner.yaml tools/uavnav Makefile
   git commit -m "build!: drop main-only packages and tooling, add rebuild gate"
   ```
 
@@ -168,8 +211,8 @@ Spec §6, AGENTS.md §2.2.
   ```
 
   - CMake target `uavnav_core::uavnav_core`. It is an INTERFACE library in this task; Task 3 turns it into a STATIC library when it adds the first source file.
-  - It uses `cxx_std_23`, `-Wall -Wextra -Wpedantic -Werror`, and links `yaml-cpp`.
-  - Dependencies: `ament_cmake`, `yaml-cpp`, `ament_cmake_gtest` (test only).
+  - It uses `cxx_std_23` and `-Wall -Wextra -Wpedantic -Werror`, and links `yaml-cpp::yaml-cpp` (`find_package(yaml-cpp REQUIRED)`; the target name was verified on this host).
+  - `package.xml` dependencies: `ament_cmake`, `yaml-cpp`, and `ament_cmake_gtest` (test only).
 
 - [ ] **Step 1: Write the failing test `test/test_result.cpp`**
 
@@ -354,7 +397,8 @@ Spec §6.1, D25, AGENTS.md §2.3 and §2.6. Covers Review Focus items 1 and 2.
   TEST(EventRecorder, DeliversRecordsInOrder) { /* emit 3 records "A","B","C"; flush(); sink saw events A,B,C; stats.written==3 */ }
   TEST(EventRecorder, AddValueRejectsSeventeenth) { /* 16 add_value() true, 17th false, value_count==16 */ }
   TEST(EventRecorder, FullRingDropsWithoutBlockingAndReportsCount) {
-    // capacity 4, sink blocked on a latch: 10 emits return within 50 ms total;
+    // capacity 4, sink blocked on a latch: run 10 emits inside std::async and require
+    // future.wait_for(2s) == ready (detects blocking without a tight wall-clock bound);
     // at least 6 return false; stats.dropped == number of false returns;
     // release latch, flush(): sink received an "EventsDropped" record whose value "count" == stats.dropped
   }
@@ -376,7 +420,7 @@ Spec §6.1, D25, AGENTS.md §2.3 and §2.6. Covers Review Focus items 1 and 2.
 
   Run: `make build PKGS=uavnav_core && for i in 1 2 3 4 5; do make test PKGS=uavnav_core || break; done`
 
-  Expected: every run passes. The repeat checks that the thread timing is stable.
+  Expected: every run passes. The repeat checks that the thread timing is stable. No test may assert a wall-clock bound tighter than 1 s, because the machine is often loaded by SITL.
 
 - [ ] **Step 5: Commit**
 
@@ -403,7 +447,8 @@ Spec §6.1. Covers Review Focus items 3 and 4.
   namespace uavnav::events {
   class JsonlSink final : public EventSink {
    public:
-    static Result<std::unique_ptr<JsonlSink>, SinkError> open(const std::filesystem::path& file);  // append mode, creates parent dirs
+    static Result<std::unique_ptr<JsonlSink>, SinkError> open(const std::filesystem::path& file);  // append mode, creates parent dirs;
+                                     // uses the std::error_code overloads of <filesystem>, so no exception escapes (kIo instead)
     Result<void, SinkError> write(std::span<const EventRecord> batch) override;           // one line per record, flushed per batch
   };
   std::string to_json_line(const EventRecord& record);   // no trailing newline
