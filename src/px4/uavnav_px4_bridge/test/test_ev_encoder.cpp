@@ -123,16 +123,22 @@ TEST(EvEncoder, CopiesQuality) {
   EXPECT_EQ(MustEncode(in).quality, 0);
   in.quality = 100;
   EXPECT_EQ(MustEncode(in).quality, 100);
-  in.quality = 127;
-  EXPECT_EQ(MustEncode(in).quality, 127);
 }
 
-TEST(EvEncoder, QualityAbove127ClampsToInt8Max) {
+TEST(EvEncoder, QualityAbove100MapsToInvalidZero) {
   EvInput in = Good();
+  in.quality = 100;
+  EXPECT_EQ(MustEncode(in).quality, 100);
+  in.quality = 101;
+  EXPECT_EQ(MustEncode(in).quality, 0);
+  in.quality = 127;
+  EXPECT_EQ(MustEncode(in).quality, 0);
   in.quality = 128;
-  EXPECT_EQ(MustEncode(in).quality, 127);
+  EXPECT_EQ(MustEncode(in).quality, 0);
   in.quality = 255;
-  EXPECT_EQ(MustEncode(in).quality, 127);
+  EXPECT_EQ(MustEncode(in).quality, 0);
+  in.quality = 0;
+  EXPECT_EQ(MustEncode(in).quality, 0);
 }
 
 TEST(EvEncoder, PositionAndVelocityAreFlippedIntoFrd) {
@@ -203,16 +209,120 @@ TEST(EvEncoder, VariancesAreDiagonalsOfBlocks) {
   EXPECT_FLOAT_EQ(s.velocity_variance[2], 0.06F);
 }
 
-TEST(EvEncoder, OnlyDiagonalsAreUsedAsymmetricAndNonFiniteOffDiagonalIgnored) {
+TEST(EvEncoder, PositionAndVelocityUseOnlyDiagonals) {
+  // The position and velocity variances are the diagonals; off-diagonals (asymmetric, NaN, inf)
+  // and the position/rotation cross blocks are ignored. (The orientation block is different: its
+  // off-diagonals are needed for the world->body rotation, see the tests below.)
   EvInput in = Good();
   in.pose_cov(0, 1) = 5.0;   // asymmetric: (1,0) stays 0
-  in.pose_cov(4, 2) = kNan;  // off-diagonal garbage, including the cross block
-  in.pose_cov(3, 5) = -9.0;
+  in.pose_cov(1, 2) = kNan;
+  in.pose_cov(4, 2) = kNan;  // cross block
+  in.pose_cov(0, 5) = kInf;
   in.vel_cov(0, 2) = kInf;
   const EvSample s = MustEncode(in);
   EXPECT_FLOAT_EQ(s.position_variance[0], 0.01F);
+  EXPECT_FLOAT_EQ(s.position_variance[1], 0.02F);
   EXPECT_FLOAT_EQ(s.orientation_variance[2], 0.003F);
   EXPECT_FLOAT_EQ(s.velocity_variance[0], 0.04F);
+}
+
+namespace {
+
+// Explicit 3x3 arithmetic, independent of the encoder: R = Rz(yaw) Ry(pitch) Rx(roll), body->world.
+Eigen::Matrix3d ExplicitRzyx(double yaw, double pitch, double roll) {
+  const double cy = std::cos(yaw), sy = std::sin(yaw);
+  const double cp = std::cos(pitch), sp = std::sin(pitch);
+  const double cr = std::cos(roll), sr = std::sin(roll);
+  Eigen::Matrix3d r;
+  r << cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr,
+       sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr,
+       -sp,     cp * sr,                cp * cr;
+  return r;
+}
+
+Eigen::Quaterniond QuatZyx(double yaw, double pitch, double roll) {
+  return Eigen::Quaterniond{Eigen::AngleAxisd{yaw, Eigen::Vector3d::UnitZ()}} *
+         Eigen::Quaterniond{Eigen::AngleAxisd{pitch, Eigen::Vector3d::UnitY()}} *
+         Eigen::Quaterniond{Eigen::AngleAxisd{roll, Eigen::Vector3d::UnitX()}};
+}
+
+// out = R^T S R with plain loops.
+Eigen::Matrix3d ExplicitRtSR(const Eigen::Matrix3d& r, const Eigen::Matrix3d& s) {
+  Eigen::Matrix3d out = Eigen::Matrix3d::Zero();
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j)
+      for (int k = 0; k < 3; ++k)
+        for (int l = 0; l < 3; ++l) out(i, j) += r(k, i) * s(k, l) * r(l, j);
+  return out;
+}
+
+}  // namespace
+
+TEST(EvEncoder, OrientationVarianceIsRotatedFromWorldIntoBodyAxes) {
+  const double d2r = std::numbers::pi / 180.0;
+  const double yaw = 50 * d2r, pitch = 20 * d2r, roll = 30 * d2r;
+  Eigen::Matrix3d world;  // SPD, non-isotropic, nonzero off-diagonals
+  world << 0.040, 0.010, -0.008,
+           0.010, 0.010, 0.004,
+           -0.008, 0.004, 0.002;
+  EvInput in = Good();
+  in.q = QuatZyx(yaw, pitch, roll);
+  in.pose_cov.block<3, 3>(3, 3) = world;
+  const Eigen::Matrix3d body = ExplicitRtSR(ExplicitRzyx(yaw, pitch, roll), world);
+  const EvSample s = MustEncode(in);
+  // The diagonal of the body block differs from the world diagonal: the old diagonal copy fails here.
+  EXPECT_GT(std::fabs(body(0, 0) - world(0, 0)), 1e-3);
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_NEAR(s.orientation_variance[static_cast<std::size_t>(i)], body(i, i), 1e-7) << i;
+  }
+  // The FLU->FRD flip D S D^T leaves a diagonal unchanged, so the same numbers are FRD body variances.
+  // The trace is invariant under rotation.
+  EXPECT_NEAR(s.orientation_variance[0] + s.orientation_variance[1] + s.orientation_variance[2],
+              world.trace(), 1e-7);
+}
+
+TEST(EvEncoder, OrientationBlockIsSymmetrisedBeforeRotation) {
+  const double d2r = std::numbers::pi / 180.0;
+  Eigen::Matrix3d sym;
+  sym << 0.040, 0.010, -0.008,
+         0.010, 0.010, 0.004,
+         -0.008, 0.004, 0.002;
+  Eigen::Matrix3d skew = sym;
+  skew(0, 1) += 0.004;  // asymmetric by +-0.004 around the symmetric value
+  skew(1, 0) -= 0.004;
+  EvInput a = Good(), b = Good();
+  a.q = b.q = QuatZyx(50 * d2r, 20 * d2r, 30 * d2r);
+  a.pose_cov.block<3, 3>(3, 3) = sym;
+  b.pose_cov.block<3, 3>(3, 3) = skew;
+  const EvSample sa = MustEncode(a), sb = MustEncode(b);
+  EXPECT_EQ(sa.orientation_variance, sb.orientation_variance);
+}
+
+TEST(EvEncoder, RotatedNonPositiveBodyVarianceIsRejected) {
+  // Non-PSD world block with an all-positive diagonal: with yaw 45 deg the body y axis is
+  // (-1,1,0)/sqrt2 in world, and (1 + 1 - 2*3)/2 = -2 < 0.
+  Eigen::Matrix3d world = Eigen::Matrix3d::Identity();
+  world(0, 1) = world(1, 0) = 3.0;
+  EvInput in = Good();
+  in.q = QuatZyx(std::numbers::pi / 4, 0, 0);
+  in.pose_cov.block<3, 3>(3, 3) = world;
+  ExpectReason(in, EvReason::kBadCovariance);
+  // The same block with identity attitude is accepted (diagonal all positive): the rotation matters.
+  in.q = Eigen::Quaterniond::Identity();
+  EXPECT_TRUE(encode_ev(in, ClockMode::kSimulationIdentity).has_value());
+}
+
+TEST(EvEncoder, NonFiniteOrientationOffDiagonalIsRejected) {
+  for (double bad : {kNan, kInf, -kInf}) {
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        if (i == j) continue;
+        EvInput in = Good();
+        in.pose_cov(3 + i, 3 + j) = bad;
+        ExpectReason(in, EvReason::kBadCovariance);
+      }
+    }
+  }
 }
 
 TEST(EvEncoder, PositionBlockUsesUpperLeftAndOrientationBlockLowerRight) {

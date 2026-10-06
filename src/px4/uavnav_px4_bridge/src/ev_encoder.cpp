@@ -1,6 +1,5 @@
 #include "uavnav/px4bridge/ev_encoder.hpp"
 
-#include <algorithm>
 #include <cmath>
 #include <expected>
 #include <limits>
@@ -10,6 +9,7 @@
 namespace uavnav::px4bridge {
 namespace {
 
+constexpr std::uint8_t kMaxQuality = 100;
 constexpr double kFloatMax = static_cast<double>(std::numeric_limits<float>::max());
 /// |norm - 1| above this means the quaternion is not a rotation (zero, runaway or garbage).
 constexpr double kQuaternionNormTolerance = 1e-3;
@@ -29,7 +29,9 @@ std::array<float, 3> to_f3(const Eigen::Vector3d& v) {
   return {static_cast<float>(v.x()), static_cast<float>(v.y()), static_cast<float>(v.z())};
 }
 
-/// Variances of a covariance block: the diagonal, which the FRD flip D S D^T leaves unchanged.
+/// Variances taken from the diagonal of a covariance block. The FLU->FRD flip D S D^T (D = diag(1,-1,-1))
+/// only changes the signs of off-diagonal entries, so a diagonal is the same in FLU and FRD axes and no
+/// explicit flip is applied (flu_to_frd_cov is not needed here).
 /// Returns false unless every entry is finite, representable and > 0 as a float32.
 bool diagonal_variances(const Eigen::Vector3d& diag, std::array<float, 3>& out) {
   for (int i = 0; i < 3; ++i) {
@@ -56,14 +58,26 @@ Result<EvSample, EvReason> encode_ev(const EvInput& in, ClockMode mode) {
   const double qn = qv.norm();
   if (!(std::fabs(qn - 1.0) <= kQuaternionNormTolerance)) return std::unexpected(EvReason::kNonFiniteState);
 
+  const Eigen::Quaterniond q_flu{qv[0] / qn, qv[1] / qn, qv[2] / qn, qv[3] / qn};
+
+  // Orientation: the producer's rotation block is a small-rotation covariance in lio_odom (world) axes,
+  // VehicleOdometry.orientation_variance is in body axes: S_body = R^T S_world R, R = body->world.
+  // The rotation needs the off-diagonals, so the whole block must be finite. It is symmetrised first so a
+  // slightly asymmetric input gives a deterministic result.
+  const Eigen::Matrix3d orient_world = in.pose_cov.block<3, 3>(3, 3);
+  if (!orient_world.allFinite()) return std::unexpected(EvReason::kBadCovariance);
+  const Eigen::Matrix3d orient_sym = 0.5 * (orient_world + orient_world.transpose());
+  const Eigen::Matrix3d r_world_body = q_flu.toRotationMatrix();
+  const Eigen::Matrix3d orient_body = r_world_body.transpose() * orient_sym * r_world_body;
+
   EvSample s{};
   if (!diagonal_variances(in.pose_cov.diagonal().head<3>(), s.position_variance) ||
-      !diagonal_variances(in.pose_cov.diagonal().tail<3>(), s.orientation_variance) ||
+      !diagonal_variances(orient_body.diagonal(), s.orientation_variance) ||
       !diagonal_variances(in.vel_cov.diagonal(), s.velocity_variance)) {
     return std::unexpected(EvReason::kBadCovariance);
   }
 
-  Eigen::Quaterniond q = flu_to_frd(Eigen::Quaterniond{qv[0] / qn, qv[1] / qn, qv[2] / qn, qv[3] / qn});
+  Eigen::Quaterniond q = flu_to_frd(q_flu);
   if (q.w() < 0.0) q.coeffs() *= -1.0;  // canonical hemisphere: same rotation, w >= 0
 
   s.timestamp_sample_us = to_px4_us(*px4_time);
@@ -74,7 +88,8 @@ Result<EvSample, EvReason> encode_ev(const EvInput& in, ClockMode mode) {
   s.velocity_frame = kVelocityFrameFrd;
   s.velocity = to_f3(flu_to_frd(in.v_mps));
   s.reset_counter = static_cast<std::uint8_t>(in.epoch % 256U);
-  s.quality = static_cast<std::int8_t>(std::min<unsigned>(in.quality, 127U));
+  // D28 range is 0..100; anything above is out of contract and becomes 0, "invalid" in VehicleOdometry.
+  s.quality = static_cast<std::int8_t>(in.quality <= kMaxQuality ? in.quality : 0);
   return s;
 }
 
