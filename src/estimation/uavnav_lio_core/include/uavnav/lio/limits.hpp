@@ -48,7 +48,7 @@ inline constexpr std::size_t kImuHistoryCapacity = 1024;
 /// 10 Hz: one health sample per scan period at the 10 Hz scan rate (SYSTEM_DESIGN §6.4).
 inline constexpr time::Duration kHealthPeriod = time::milliseconds(100);
 
-/// ESKF rebase after a failed prediction (IMU gap, history dropped, scan ahead of the IMU) or a math
+/// ESKF rebase after a failed prediction (IMU gap, IMU history dropped) or a math
 /// exception: the state is kept, its time moves to the scan end and the covariance is multiplied by this
 /// factor (sigma x 3.2), then each eigenvalue is capped at kRebaseMaxCovarianceEigenvalue. Both values are
 /// main's pipeline (PROPAGATION_STATE_TIME_REBASED: tracking.discontinuity_covariance_inflation = 10 in

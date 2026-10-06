@@ -53,9 +53,9 @@ enum class Stream : int { kImu = 0, kScan = 1, kRestart = 2 };
 /// The report of a scan without a correction (empty, failed prediction): no information.
 constexpr DegeneracyReport kNoReport{0.0, 0.0, true, 0};
 /// Rate-limited per-sample events: one slot per EstimatorReason, plus ImuDuplicate.
-constexpr std::size_t kDuplicateSlot = 5;
-constexpr std::size_t kSpamSlots = 6;
-static_assert(static_cast<std::size_t>(EstimatorReason::kWrongState) + 1 == kDuplicateSlot);
+constexpr std::size_t kDuplicateSlot = 6;
+constexpr std::size_t kSpamSlots = 7;
+static_assert(static_cast<std::size_t>(EstimatorReason::kScanAheadOfImu) + 1 == kDuplicateSlot);
 
 fl::Timestamp stamp(time::SensorTime t) { return fl::Timestamp(t.ns); }
 double seconds(time::SensorTime t) { return static_cast<double>(t.ns) / 1e9; }
@@ -94,7 +94,7 @@ LioEvent::Kind kind_of(EstimatorEventReason r) {
     case EstimatorEventReason::kMapBootstrap:
       return LioEvent::Kind::kMapReady;
     default:
-      return LioEvent::Kind::kScanDegenerate;  // ahead of IMU, prediction/deskew failure, math exception
+      return LioEvent::Kind::kScanDegenerate;  // prediction/deskew failure, math exception
   }
 }
 
@@ -350,11 +350,6 @@ struct LioEstimator::Impl {
   ScanOutcome process(ScanInput& in, const time::TimeSnapshot& now) {
     ScanOutcome o{EstimatorEventReason::kScanDegenerate, std::nullopt, {}, in.points.size()};
     const time::SensorTime trajectory_start = *eskf_t;
-    if (!last_imu || last_imu->t < in.end) {  // precondition broken: never trust it, never extrapolate
-      rebase_to(trajectory_start, in.end, now);
-      o.reason = EstimatorEventReason::kScanAheadOfImu;
-      return o;
-    }
     const auto trajectory = predict_to(in.end);
     if (!trajectory) {
       rebase_to(trajectory_start, in.end, now);
@@ -616,6 +611,11 @@ Result<StepOutputs, EstimatorReason> LioEstimator::push_scan(ScanInput&& in, con
   }
   if (in.end < in.start || (m.last_scan_end && in.end < *m.last_scan_end)) {
     return m.reject(EstimatorReason::kOutOfOrder, Stream::kScan, in.end, now);
+  }
+  // F22 invariant: a scan never ends after the newest IMU sample, so neither last_scan_end nor the
+  // lifecycle's last-scan time can run ahead of IMU time and hide a LiDAR gap. Refused before any change.
+  if (!m.last_imu || in.end > m.last_imu->t) {
+    return m.reject(EstimatorReason::kScanAheadOfImu, Stream::kScan, in.end, now);
   }
   m.last_scan_end = in.end;
 

@@ -114,6 +114,7 @@ class Harness {
   }
 
   LioEstimator& est() { return *est_; }
+  const LioEstimator& est() const { return *est_; }
   time::SensorTime now() const { return next_imu_ - imu_period_; }
 
   /// Event clocks deliberately on other time bases than sensor time (x3, +7 s), so a decision that used the
@@ -181,12 +182,10 @@ class Harness {
     }
   }
 
-  /// A scan whose end is after the newest IMU sample (S1b precondition broken).
-  Result<StepOutputs, EstimatorReason> ScanAheadOfImu() {
-    const time::SensorTime end = scan_end_ + kScanPeriod;
-    auto r = Scan(MakeScan(ScanKind::kRoom, scan_end_, end));
-    scan_end_ = end;
-    return r;
+  /// A room scan from the last scan end to `ahead` past the newest IMU sample. The harness's scan schedule is
+  /// not advanced: the next Run() scans continue as if this scan never arrived.
+  Result<StepOutputs, EstimatorReason> ScanAhead(time::Duration ahead) {
+    return Scan(MakeScan(ScanKind::kRoom, scan_end_, now() + ahead));
   }
 
   /// IMU pushed this far past each scan end before the scan (the IMU stream leads the LiDAR).
@@ -236,6 +235,35 @@ class Harness {
   int state_changes_{0};
   bool all_finite_{true};
 };
+
+// Bitwise equality of every output of two harnesses, and of their final state.
+void ExpectSameOutputs(const Harness& a, const Harness& b) {
+  ASSERT_EQ(a.outputs().size(), b.outputs().size());
+  for (std::size_t i = 0; i < a.outputs().size(); ++i) {
+    const StepOutputs& x = a.outputs()[i];
+    const StepOutputs& y = b.outputs()[i];
+    ASSERT_EQ(x.states.size(), y.states.size()) << i;
+    for (std::size_t k = 0; k < x.states.size(); ++k) {
+      EXPECT_EQ(x.states[k].sample.p_world_m, y.states[k].sample.p_world_m) << i;
+      EXPECT_EQ(x.states[k].sample.v_world_mps, y.states[k].sample.v_world_mps) << i;
+      EXPECT_EQ(x.states[k].sample.q_world_imu.coeffs(), y.states[k].sample.q_world_imu.coeffs()) << i;
+      EXPECT_EQ(x.states[k].state, y.states[k].state) << i;
+    }
+    ASSERT_EQ(x.odometry.has_value(), y.odometry.has_value()) << i;
+    if (x.odometry) {
+      EXPECT_EQ(x.odometry->p_world_m, y.odometry->p_world_m) << i;
+      EXPECT_EQ(x.odometry->pose_cov, y.odometry->pose_cov) << i;
+      EXPECT_EQ(x.odometry->quality, y.odometry->quality) << i;
+    }
+    ASSERT_EQ(x.health.has_value(), y.health.has_value()) << i;
+    if (x.health) {
+      EXPECT_EQ(x.health->reason, y.health->reason) << i;
+      EXPECT_EQ(x.health->translation_min_eigenvalue, y.health->translation_min_eigenvalue) << i;
+    }
+  }
+  EXPECT_EQ(a.est().state(), b.est().state());
+  EXPECT_EQ(a.est().epoch(), b.est().epoch());
+}
 
 std::vector<LioReason> HealthReasons(const std::vector<StepOutputs>& outputs, std::size_t from = 0) {
   std::vector<LioReason> reasons;
@@ -439,24 +467,66 @@ TEST(LioEstimator, EmptyScanIsAnEventNotAnException) {
   EXPECT_TRUE(h.Events("OdometryInvalid").empty());
 }
 
-// The S1b precondition (IMU reached scan.end) broken: the scan is never trusted, the ESKF is rebased with an
-// inflated covariance, and operation continues once the IMU leads again.
-TEST(LioEstimator, ScanAheadOfImuIsDegenerateAndRebased) {
+// The S1b precondition (IMU reached scan.end) broken: the scan is refused before any state change, and the
+// estimator then behaves bit for bit like a twin that never saw it.
+TEST(LioEstimator, ScanAheadOfImuIsRefusedAndChangesNothing) {
+  Harness a;
+  Harness b;
+  a.RunUntilTracking();
+  b.RunUntilTracking();
+  for (const time::Duration ahead : {time::nanoseconds(1), time::milliseconds(100), time::seconds(10)}) {
+    const auto r = a.ScanAhead(ahead);
+    ASSERT_FALSE(r.has_value());
+    EXPECT_EQ(r.error(), EstimatorReason::kScanAheadOfImu);
+  }
+  EXPECT_EQ(a.est().state(), LioState::kTracking);
+  EXPECT_EQ(a.est().epoch(), 1U);
+  const auto rejected = a.Events("LioInputRejected");
+  ASSERT_EQ(rejected.size(), 1U);  // rate-limited: first occurrence only
+  EXPECT_EQ(rejected[0].reason, "SCAN_AHEAD_OF_IMU");
+  EXPECT_TRUE(a.Events("EskfRebased").empty());
+  a.Run(5);
+  b.Run(5);
+  ExpectSameOutputs(a, b);
+}
+
+// F22 hazard: one scan stamped 10 s ahead of the IMU must not move the LiDAR-gap reference. The gap rule
+// still fires from the last real scan end: DEGRADED at +0.255 s, LOST at +0.505 s of IMU time.
+TEST(LioEstimator, ScanAheadOfImuDoesNotHideALidarGap) {
   Harness h;
   h.RunUntilTracking();
+  const time::SensorTime last = h.now();
+  const auto at = [&](std::int64_t ms) { return last + time::milliseconds(ms); };
+  (void)h.ScanAhead(time::seconds(10));
+  EXPECT_EQ(h.est().state(), LioState::kTracking);
+  h.ImuUntil(at(250));
+  EXPECT_EQ(h.est().state(), LioState::kTracking);
+  h.ImuUntil(at(255));
+  EXPECT_EQ(h.est().state(), LioState::kDegraded);
+  ASSERT_TRUE(h.outputs().back().health.has_value());
+  EXPECT_EQ(h.outputs().back().health->t, at(255));
+  EXPECT_EQ(h.outputs().back().health->reason, LioReason::kLidarGapDegraded);
+  h.ImuUntil(at(500));
+  EXPECT_EQ(h.est().state(), LioState::kDegraded);
+  h.ImuUntil(at(505));
+  EXPECT_EQ(h.est().state(), LioState::kLost);
+  ASSERT_TRUE(h.outputs().back().health.has_value());
+  EXPECT_EQ(h.outputs().back().health->t, at(505));
+  EXPECT_EQ(h.outputs().back().health->reason, LioReason::kLidarGapLost);
+}
+
+// After a refused ahead-scan the next normal scans are accepted (no kOutOfOrder) and tracking continues.
+TEST(LioEstimator, NormalScansAreAcceptedAfterAScanAheadOfImu) {
+  Harness h;
+  h.RunUntilTracking();
+  (void)h.ScanAhead(time::seconds(10));
   const std::size_t from = h.outputs().size();
-  const auto r = h.ScanAheadOfImu();
-  ASSERT_TRUE(r.has_value());
-  EXPECT_FALSE(r->odometry.has_value());
-  const auto scans = h.Events("LioScan");
-  EXPECT_EQ(scans.back().reason, "SCAN_AHEAD_OF_IMU");
-  const auto rebased = h.Events("EskfRebased");
-  ASSERT_EQ(rebased.size(), 1U);
-  EXPECT_DOUBLE_EQ(Value(rebased[0], "skipped_s"), 0.1);
-  EXPECT_GT(Value(rebased[0], "position_sigma_m"), 0.0);
-  EXPECT_LT(Value(rebased[0], "position_sigma_m"), 0.5);  // one rebase does not lose the state
-  EXPECT_EQ(h.est().state(), LioState::kTracking);        // one degenerate scan of three
-  h.Run(3);
+  for (int i = 0; i < 3; ++i) {
+    const time::SensorTime start = h.now();
+    h.ImuUntil(start + kScanPeriod);
+    const auto r = h.Scan(h.MakeScan(ScanKind::kRoom, start, start + kScanPeriod));
+    ASSERT_TRUE(r.has_value()) << i << ": " << to_string(r.error());
+  }
   EXPECT_EQ(h.est().state(), LioState::kTracking);
   bool odometry = false;
   for (std::size_t i = from; i < h.outputs().size(); ++i) odometry = odometry || h.outputs()[i].odometry.has_value();
@@ -736,30 +806,7 @@ TEST(LioEstimator, IdenticalRunsProduceIdenticalOutputs) {
   Harness b;
   scenario(a);
   scenario(b);
-  ASSERT_EQ(a.outputs().size(), b.outputs().size());
-  for (std::size_t i = 0; i < a.outputs().size(); ++i) {
-    const StepOutputs& x = a.outputs()[i];
-    const StepOutputs& y = b.outputs()[i];
-    ASSERT_EQ(x.states.size(), y.states.size()) << i;
-    for (std::size_t k = 0; k < x.states.size(); ++k) {
-      EXPECT_EQ(x.states[k].sample.p_world_m, y.states[k].sample.p_world_m) << i;
-      EXPECT_EQ(x.states[k].sample.v_world_mps, y.states[k].sample.v_world_mps) << i;
-      EXPECT_EQ(x.states[k].sample.q_world_imu.coeffs(), y.states[k].sample.q_world_imu.coeffs()) << i;
-      EXPECT_EQ(x.states[k].state, y.states[k].state) << i;
-    }
-    ASSERT_EQ(x.odometry.has_value(), y.odometry.has_value()) << i;
-    if (x.odometry) {
-      EXPECT_EQ(x.odometry->p_world_m, y.odometry->p_world_m) << i;
-      EXPECT_EQ(x.odometry->pose_cov, y.odometry->pose_cov) << i;
-      EXPECT_EQ(x.odometry->quality, y.odometry->quality) << i;
-    }
-    ASSERT_EQ(x.health.has_value(), y.health.has_value()) << i;
-    if (x.health) {
-      EXPECT_EQ(x.health->reason, y.health->reason) << i;
-      EXPECT_EQ(x.health->translation_min_eigenvalue, y.health->translation_min_eigenvalue) << i;
-    }
-  }
-  EXPECT_EQ(a.est().state(), b.est().state());
+  ExpectSameOutputs(a, b);
 }
 
 TEST(LioEstimator, CreateRejectsAnExtrinsicThatDisagreesWithTheConfig) {

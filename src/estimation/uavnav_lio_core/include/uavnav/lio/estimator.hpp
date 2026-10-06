@@ -95,7 +95,14 @@ struct StepOutputs {
 };
 
 /// Why an input was rejected. A rejected input changes nothing (no state, no history, no lifecycle event).
-enum class EstimatorReason : std::uint8_t { kAccepted, kOutOfOrder, kTooManyPoints, kNotFinite, kWrongState };
+enum class EstimatorReason : std::uint8_t {
+  kAccepted,
+  kOutOfOrder,
+  kTooManyPoints,
+  kNotFinite,
+  kWrongState,
+  kScanAheadOfImu
+};
 
 constexpr std::string_view to_string(EstimatorReason r) {
   switch (r) {
@@ -109,6 +116,8 @@ constexpr std::string_view to_string(EstimatorReason r) {
       return "NOT_FINITE";
     case EstimatorReason::kWrongState:
       return "WRONG_STATE";
+    case EstimatorReason::kScanAheadOfImu:
+      return "SCAN_AHEAD_OF_IMU";
   }
   return "";
 }
@@ -117,9 +126,10 @@ static_assert(ReasonEnum<EstimatorReason>);
 
 /// Reason of the facade's own decision events (not lifecycle transitions). Event names:
 ///   "LioScan"            one per accepted scan: kScanGood, kScanDegenerate, kScanEmpty, kMapBootstrap,
-///                        kScanAheadOfImu, kPredictionFailed, kDeskewFailed, kMathException, kBeforeImuInit,
+///                        kPredictionFailed, kDeskewFailed, kMathException, kBeforeImuInit,
 ///                        kBeforeEstimatorTime (values: translation/rotation min eigenvalue, quality, points)
-///   "EskfRebased"        after a failed prediction or a math exception: the ESKF is moved to the scan end
+///   "EskfRebased"        after a failed prediction (IMU gap or history dropped) or a math exception: the ESKF is moved
+///   to the scan end
 ///                        with an inflated covariance (values skipped_s, position_sigma_m)
 ///   "ImuInitialized" / "ImuInitRejected" (once) / "ImuGap" / "ImuRateTooHigh" (once per epoch)
 ///   "OdometryInvalid"    the base_link conversion of a TRACKING scan failed (no odometry)
@@ -133,7 +143,6 @@ enum class EstimatorEventReason : std::uint8_t {
   kScanDegenerate,
   kScanEmpty,
   kMapBootstrap,
-  kScanAheadOfImu,
   kPredictionFailed,
   kDeskewFailed,
   kMathException,
@@ -159,8 +168,6 @@ constexpr std::string_view to_string(EstimatorEventReason r) {
       return "SCAN_EMPTY";
     case EstimatorEventReason::kMapBootstrap:
       return "MAP_BOOTSTRAP";
-    case EstimatorEventReason::kScanAheadOfImu:
-      return "SCAN_AHEAD_OF_IMU";
     case EstimatorEventReason::kPredictionFailed:
       return "PREDICTION_FAILED";
     case EstimatorEventReason::kDeskewFailed:
@@ -217,13 +224,17 @@ class LioEstimator {
   /// Scan: predict -> deskew -> preprocess -> correct -> degeneracy -> lifecycle -> map insert/crop ->
   /// predictor correction. Rejects (changing nothing) more than limits::kMaxScanPoints points
   /// (kTooManyPoints), a non-finite point (kNotFinite), end < start or end before the previous scan's end
-  /// (kOutOfOrder). An empty scan (before or after preprocessing) is the lifecycle event kScanEmpty and an
-  /// Ok result. `odometry` is set only for a GOOD scan (kScanGood) that leaves the state in TRACKING
-  /// (degenerate scans publish nothing, even while the lifecycle still counts them in TRACKING).
+  /// (kOutOfOrder), and a scan ending after the newest IMU sample, or before any IMU sample (kScanAheadOfImu). An empty
+  /// scan (before or after preprocessing) is the lifecycle event kScanEmpty and an Ok result. `odometry` is set only
+  /// for a GOOD scan (kScanGood) that leaves the state in TRACKING (degenerate scans publish nothing, even while the
+  /// lifecycle still counts them in TRACKING).
   ///
-  /// Precondition (S1b): push a scan only after the IMU stream has reached scan.end. A scan ending after the
-  /// newest IMU sample is never trusted: it is degenerate (LioScan reason kScanAheadOfImu) and the ESKF is
-  /// rebased to scan.end with an inflated covariance (EskfRebased), as after any failed prediction.
+  /// Precondition (S1b): push a scan only after the IMU stream has reached scan.end; when the ingest's bounded
+  /// wait times out, DROP the scan with an event. The facade refuses such a scan (kScanAheadOfImu, one
+  /// rate-limited LioInputRejected event) before any state change.
+  /// Invariant (F22): neither the newest accepted scan end nor the lifecycle's last-scan time is ever ahead of
+  /// the newest IMU time, so a scan stamped in the future cannot push the LiDAR-gap reference forward and
+  /// hide a real gap (the gap rule measures IMU time - last scan end on every IMU sample).
   Result<StepOutputs, EstimatorReason> push_scan(ScanInput&& scan, const time::TimeSnapshot& now);
 
   /// Restart (§3.4), only in RESTARTING (kWrongState otherwise; kNotFinite for a non-finite seed): clears
