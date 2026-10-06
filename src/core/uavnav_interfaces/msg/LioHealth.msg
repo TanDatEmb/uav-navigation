@@ -5,7 +5,7 @@ uint8 DEGRADED=2
 uint8 LOST=3
 uint8 RESTARTING=4
 
-builtin_interfaces/Time stamp
+builtin_interfaces/Time stamp  # SensorTime of the newest IMU sample evaluated
 uint8 state
 uint32 epoch
 uint16 reason

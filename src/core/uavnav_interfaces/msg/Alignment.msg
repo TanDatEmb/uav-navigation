@@ -5,7 +5,7 @@ uint8 VALID=1
 uint8 FROZEN=2
 uint8 INVALID=3
 
-builtin_interfaces/Time stamp
+builtin_interfaces/Time stamp  # SensorTime of the LIO sample in the newest pair
 uint8 state
 float64 x_m
 float64 y_m

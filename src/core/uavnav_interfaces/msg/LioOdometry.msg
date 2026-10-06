@@ -7,3 +7,4 @@ geometry_msgs/Pose pose
 geometry_msgs/Vector3 velocity
 float64[36] pose_covariance
 float64[9] velocity_covariance
+uint8 quality  # 0-100 from LIO degeneracy margin (D28)

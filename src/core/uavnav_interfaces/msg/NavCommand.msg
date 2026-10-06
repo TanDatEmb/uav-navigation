@@ -5,8 +5,8 @@ uint8 BACKUP=1
 uint8 BRAKE=2
 uint8 HOLD=3
 
-builtin_interfaces/Time stamp  # ROS time
-int64 sample_time_ns  # the time the command sample refers to (ns)
+builtin_interfaces/Time stamp  # RosTime
+int64 sample_time_ns  # RosTime; the time the command sample refers to (ns)
 uint32 lio_epoch
 uint64 bundle_id
 uint8 phase  # MAIN/BACKUP/BRAKE/HOLD
