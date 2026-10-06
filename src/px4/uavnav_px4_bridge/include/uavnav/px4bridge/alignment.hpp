@@ -75,7 +75,8 @@ enum class AlignmentReason : std::uint8_t {
   kStale,              ///< VALID -> INVALID: no accepted pair for valid_stale
   kFrozenTooLong,      ///< FROZEN -> INVALID: FROZEN for longer than frozen_max
   kNoPx4Sample,        ///< no PX4 sample within kPairingWindow on both sides of the scan; nothing changed
-  kInputRejected       ///< non-finite value, negative stamp, or stamp not newer than the previous one
+  kInputRejected       ///< non-finite value, negative stamp, or stamp not newer than the previous one;
+                       ///< also a refused unlisted state change (a programming error, state unchanged)
 };
 
 constexpr std::string_view to_string(AlignmentState s) {
@@ -171,7 +172,8 @@ struct AlignmentOutput {
   AlignmentReason reason{AlignmentReason::kNone};
 };
 
-/// A legal state change. Anything not listed cannot happen: AlignmentEstimator refuses an unlisted edge.
+/// A legal state change. Anything not listed cannot happen: AlignmentEstimator refuses an unlisted edge,
+/// keeps its state and reports kInputRejected (fail closed, never a silent transition reason).
 struct AlignmentEdge {
   AlignmentState from;
   AlignmentState to;
@@ -246,7 +248,9 @@ class AlignmentEstimator {
     double yaw;
   };
 
-  void go(AlignmentState to, AlignmentReason reason, time::SensorTime t) noexcept;
+  /// The one writer of state_. Returns false, leaving the state unchanged, for an edge not in
+  /// kAlignmentTransitions (a programming error; asserted in debug builds, reported as kInputRejected).
+  bool go(AlignmentState to, AlignmentReason reason, time::SensorTime t) noexcept;
   AlignmentOutput output(AlignmentReason reason, const std::optional<Pose4>& raw = std::nullopt) const noexcept;
   std::optional<Interpolated> px4_at(time::SensorTime t) const noexcept;
   void restart_accumulation() noexcept;

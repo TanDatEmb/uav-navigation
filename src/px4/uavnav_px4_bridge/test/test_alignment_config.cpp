@@ -198,10 +198,10 @@ TEST(AlignmentConfig, FrozenMaxJustAboveValidStaleIsAccepted) {
 
 TEST(AlignmentConfig, TierAInvariantsHoldForEveryLoadableConfig) {
   // alpha = dt / tau <= 1 for every dt the filter can see (dt is clamped to kFilterDtMax).
-  static_assert(kAlignmentSpecs[0].key == "alignment_tau_s");
-  static_assert(kAlignmentSpecs[0].min * 1e9 >= static_cast<double>(limits::kFilterDtMax.ns));
+  static_assert(find_alignment_spec("alignment_tau_s")->min * 1e9 >= static_cast<double>(limits::kFilterDtMax.ns));
   // The INIT accumulation is a fixed array sized for the largest allowed consistent_pairs.
-  static_assert(kAlignmentSpecs[1].key == "alignment_consistent_pairs");
-  static_assert(kAlignmentSpecs[1].max == static_cast<double>(limits::kMaxConsistentPairs));
+  static_assert(find_alignment_spec("alignment_consistent_pairs")->max ==
+                static_cast<double>(limits::kMaxConsistentPairs));
+  static_assert(find_alignment_spec("alignment_no_such_key") == nullptr);
   SUCCEED();
 }

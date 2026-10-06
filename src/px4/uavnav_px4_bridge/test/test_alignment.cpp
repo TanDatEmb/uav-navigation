@@ -5,6 +5,9 @@
 #include <limits>
 #include <numbers>
 #include <optional>
+#include <random>
+#include <set>
+#include <tuple>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -236,7 +239,9 @@ DriftResult DriftAndCheck(AlignmentConfig cfg, double drift_mps, double drift_ra
 
 TEST(Alignment, RateLimitsSlowDrift) {
   // The brief's case with the beta config: the truth drifts 2 m/s, the filtered T moves <= 0.5 m/s.
-  // (With the beta values the bound also follows from jump/tau = 0.25 m/s: see the report.)
+  // NOTE: with the beta values this sub-case only exercises jump rejection, never the limiter: the largest
+  // accepted step is (dt / tau) x jump = 0.05 x 0.5 m = 0.025 m per scan (0.25 m/s < 0.5 m/s). The
+  // tau = 0.2 s sub-cases below (alpha = 0.5) are the ones that exercise the translation and yaw limiters.
   const DriftResult beta = DriftAndCheck(BetaConfig(), 2.0, 0.0);
   EXPECT_GT(beta.moved_m, 0.0);
   // tau = 0.2 s (alpha = 0.5 per scan): the limiter itself is what bounds the step.
@@ -889,4 +894,228 @@ TEST(Alignment, TransitionTableIsTheSpecDiagram) {
   EXPECT_TRUE(listed(S::kFrozen, S::kInvalid, R::kFrozenTooLong));
   EXPECT_TRUE(listed(S::kFrozen, S::kInvalid, R::kPx4ResetWhileFrozen));
   EXPECT_TRUE(listed(S::kInvalid, S::kInit, R::kLioTracking));
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Boundary behaviour (review fix round 1).
+
+namespace {
+
+Px4PoseSample Px4At(time::SensorTime t, Eigen::Vector3d p, double yaw) {
+  Px4PoseSample s{};
+  s.t = t;
+  s.p_ned_m = p;
+  s.yaw_rad = yaw;
+  return s;
+}
+
+// LIO at the origin with yaw 0, so the instant T is exactly the PX4 pose (no rotation, no rounding).
+LioPoseSample LioOrigin(time::SensorTime t, bool tracking = true) { return LioPoseSample{t, {0, 0, 0}, 0.0, tracking}; }
+
+}  // namespace
+
+TEST(AlignmentBoundary, PairingWindowBeforeTheScanIsInclusive) {
+  constexpr time::SensorTime kScan{100'000'000'000};
+  for (const std::int64_t extra_ns : {0LL, 1LL}) {
+    AlignmentEstimator est(BetaConfig());
+    est.on_px4(Px4At(kScan - limits::kPairingWindow - time::nanoseconds(extra_ns), {0, 0, 0}, 0.0));
+    est.on_px4(Px4At(kScan + time::milliseconds(10), {0, 0, 0}, 0.0));
+    EXPECT_EQ(est.on_lio(LioOrigin(kScan)).reason,
+              extra_ns == 0 ? AlignmentReason::kPairAccepted : AlignmentReason::kNoPx4Sample)
+        << "a-side 50 ms + " << extra_ns << " ns";
+  }
+}
+
+TEST(AlignmentBoundary, PairingWindowAfterTheScanIsInclusive) {
+  constexpr time::SensorTime kScan{100'000'000'000};
+  for (const std::int64_t extra_ns : {0LL, 1LL}) {
+    AlignmentEstimator est(BetaConfig());
+    est.on_px4(Px4At(kScan - time::milliseconds(10), {0, 0, 0}, 0.0));
+    est.on_px4(Px4At(kScan + limits::kPairingWindow + time::nanoseconds(extra_ns), {0, 0, 0}, 0.0));
+    EXPECT_EQ(est.on_lio(LioOrigin(kScan)).reason,
+              extra_ns == 0 ? AlignmentReason::kPairAccepted : AlignmentReason::kNoPx4Sample)
+        << "b-side 50 ms + " << extra_ns << " ns";
+  }
+}
+
+TEST(AlignmentBoundary, ValidStaleFiresOnlyAfterTheLimit) {
+  Sim sim;
+  sim.run_until_valid();
+  const AlignmentOutput last = sim.step();
+  ASSERT_EQ(last.reason, AlignmentReason::kPairAccepted);
+  const time::SensorTime limit = last.stamp + time::seconds(1);
+  EXPECT_EQ(sim.est.on_tick(limit).state, AlignmentState::kValid);  // exactly valid_stale: not stale
+  const AlignmentOutput o = sim.est.on_tick(limit + time::nanoseconds(1));
+  EXPECT_EQ(o.state, AlignmentState::kInvalid);
+  EXPECT_EQ(o.reason, AlignmentReason::kStale);
+}
+
+TEST(AlignmentBoundary, FrozenTimeoutFiresOnlyAfterTheLimit) {
+  Sim sim;
+  sim.run_until_valid();
+  const time::SensorTime lost_at = At(sim.t_lio_next);
+  ASSERT_EQ(sim.step(false).state, AlignmentState::kFrozen);
+  const time::SensorTime limit = lost_at + time::seconds(10);
+  EXPECT_EQ(sim.est.on_tick(limit).state, AlignmentState::kFrozen);  // exactly frozen_max: still FROZEN
+  const AlignmentOutput o = sim.est.on_tick(limit + time::nanoseconds(1));
+  EXPECT_EQ(o.state, AlignmentState::kInvalid);
+  EXPECT_EQ(o.reason, AlignmentReason::kFrozenTooLong);
+}
+
+TEST(AlignmentBoundary, JumpThresholdIsInclusive) {
+  // consistent_pairs = 1: the first exact pair (T = 0) makes VALID with filtered T exactly 0.
+  AlignmentConfig cfg = BetaConfig();
+  cfg.consistent_pairs = 1;
+  constexpr time::SensorTime kT0{100'000'000'000};
+  constexpr time::SensorTime kT1{100'100'000'000};
+  struct Case {
+    Eigen::Vector3d p;
+    double yaw;
+    AlignmentReason expected;
+  };
+  const double jp = cfg.jump_position_m;
+  const double jy = cfg.jump_yaw_rad;
+  const Case cases[] = {
+      {{jp, 0, 0}, 0.0, AlignmentReason::kPairAccepted},
+      {{std::nextafter(jp, 1.0), 0, 0}, 0.0, AlignmentReason::kPairRejectedJump},
+      {{0, 0, jp}, 0.0, AlignmentReason::kPairAccepted},
+      {{0, 0, std::nextafter(jp, 1.0)}, 0.0, AlignmentReason::kPairRejectedJump},
+      {{0, 0, 0}, jy, AlignmentReason::kPairAccepted},
+      {{0, 0, 0}, -jy, AlignmentReason::kPairAccepted},
+      {{0, 0, 0}, std::nextafter(jy, 1.0), AlignmentReason::kPairRejectedJump},
+      {{0, 0, 0}, -std::nextafter(jy, 1.0), AlignmentReason::kPairRejectedJump},
+  };
+  for (const Case& c : cases) {
+    AlignmentEstimator est(cfg);
+    est.on_px4(Px4At(kT0, {0, 0, 0}, 0.0));
+    const AlignmentOutput v = est.on_lio(LioOrigin(kT0));
+    ASSERT_EQ(v.state, AlignmentState::kValid);
+    ASSERT_EQ(v.filtered.x_m, 0.0);
+    ASSERT_EQ(v.filtered.yaw_rad, 0.0);
+    est.on_px4(Px4At(kT1, c.p, c.yaw));
+    const AlignmentOutput o = est.on_lio(LioOrigin(kT1));
+    EXPECT_EQ(o.reason, c.expected) << c.p.transpose() << " yaw " << c.yaw;
+    EXPECT_EQ(o.state, AlignmentState::kValid);
+  }
+}
+
+TEST(AlignmentBoundary, InitFinalMeanRecheckRestartsTheAccumulation) {
+  // Each pair is within 0.5 m of the running mean at its arrival (0 | 0.5 vs 0 | 0.75 vs 0.25 |
+  // 0.91 vs 0.4167), but the final mean 0.54 is 0.54 m from the first member: the re-check fails and
+  // the accumulation restarts from the newest pair.
+  AlignmentConfig cfg = BetaConfig();
+  cfg.consistent_pairs = 4;
+  AlignmentEstimator est(cfg);
+  std::int64_t t_ns = 100'000'000'000;
+  auto pair = [&](double x) {
+    t_ns += 100'000'000;
+    est.on_px4(Px4At(time::SensorTime{t_ns}, {x, 0, 0}, 0.0));
+    return est.on_lio(LioOrigin(time::SensorTime{t_ns}));
+  };
+  EXPECT_EQ(pair(0.0).reason, AlignmentReason::kPairAccepted);
+  EXPECT_EQ(pair(0.5).reason, AlignmentReason::kPairAccepted);
+  EXPECT_EQ(pair(0.75).reason, AlignmentReason::kPairAccepted);
+  const AlignmentOutput restarted = pair(0.91);
+  EXPECT_EQ(restarted.state, AlignmentState::kInit);
+  EXPECT_EQ(restarted.reason, AlignmentReason::kPairRejectedJump);
+  EXPECT_NEAR(restarted.filtered.x_m, 0.91, 1e-12);  // the accumulation holds only the newest pair
+  EXPECT_EQ(pair(0.91).state, AlignmentState::kInit);
+  EXPECT_EQ(pair(0.91).state, AlignmentState::kInit);
+  const AlignmentOutput v = pair(0.91);
+  EXPECT_EQ(v.state, AlignmentState::kValid);
+  EXPECT_EQ(v.reason, AlignmentReason::kPairsConsistent);
+  EXPECT_NEAR(v.filtered.x_m, 0.91, 1e-12);
+}
+
+TEST(AlignmentBoundary, Px4ResetWhileInvalidAppliesGAndStaysInvalid) {
+  Sim sim;
+  sim.run_until_valid();
+  const AlignmentOutput last = sim.step();
+  ASSERT_EQ(sim.est.on_tick(last.stamp + time::milliseconds(1100)).state, AlignmentState::kInvalid);
+  sim.t_px4_next = time::to_seconds(time::Duration{last.stamp.ns}) + 1.2;
+  sim.schedule_reset(1, 0, 0, {0.8, -0.2}, 0.0, 0.0);
+  const AlignmentOutput r = sim.one_px4();
+  EXPECT_EQ(r.state, AlignmentState::kInvalid);
+  EXPECT_EQ(r.reason, AlignmentReason::kPx4ResetApplied);
+  EXPECT_EQ(r.filtered.x_m, last.filtered.x_m + 0.8);  // G applied to the kept (untrusted) T
+  EXPECT_EQ(r.filtered.y_m, last.filtered.y_m - 0.2);
+  // No VALID output follows directly: the next tracking scan only re-enters INIT.
+  sim.t_lio_next = time::to_seconds(time::Duration{last.stamp.ns}) + 1.203;
+  const AlignmentOutput n = sim.step();
+  EXPECT_EQ(n.state, AlignmentState::kInit);
+  EXPECT_EQ(n.reason, AlignmentReason::kLioTracking);
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Allow-list fuzz: random but VALID input sequences (monotonic stamps, finite values). Every state change
+// observed in an output must be a listed edge carrying the output's reason, an input that is valid is never
+// reported kInputRejected (which would reveal a refused, unlisted edge), and every listed edge is reached.
+
+TEST(AlignmentFuzz, EveryStateChangeIsAListedEdge) {
+  using Edge = std::tuple<AlignmentState, AlignmentState, AlignmentReason>;
+  auto listed = [](const Edge& e) {
+    for (const auto& l : kAlignmentTransitions) {
+      if (l.from == std::get<0>(e) && l.to == std::get<1>(e) && l.reason == std::get<2>(e)) return true;
+    }
+    return false;
+  };
+  AlignmentConfig cfg = BetaConfig();
+  cfg.consistent_pairs = 5;
+  cfg.valid_stale = time::milliseconds(500);
+  cfg.frozen_max = time::seconds(2);
+  std::set<Edge> seen;
+  for (std::uint32_t seed = 1; seed <= 20; ++seed) {
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<double> u(0.0, 1.0);
+    Sim sim(cfg);
+    sim.v = {1.0, 0.5, 0.0};
+    bool lost = false;
+    double t = 100.0;
+    auto check = [&](AlignmentState before, const AlignmentOutput& o, bool lio_lost_sample) {
+      ExpectFinite(o);
+      ASSERT_NE(o.reason, AlignmentReason::kInputRejected) << "seed " << seed << " t " << t;
+      if (lio_lost_sample) {
+        ASSERT_NE(o.state, AlignmentState::kValid);
+      }
+      if (o.state != before) {
+        const Edge e{before, o.state, o.reason};
+        ASSERT_TRUE(listed(e)) << "seed " << seed << " " << to_string(before) << " -> " << to_string(o.state)
+                               << " (" << to_string(o.reason) << ")";
+        seen.insert(e);
+      }
+    };
+    for (int step = 0; step < 6000; ++step) {
+      t += 0.01;
+      const double g = u(rng);
+      if (g < 0.002) t += 1.5;          // a gap longer than valid_stale
+      else if (g < 0.0025) t += 3.0;    // a gap longer than frozen_max
+      if (u(rng) < 0.002) sim.truth.x_m += 2.0;  // a jump of the truth (PX4 re-initialised)
+      if (u(rng) < 0.95) {
+        sim.t_px4_next = t;
+        if (u(rng) < 0.004) {
+          const auto step_of = [&] { return static_cast<std::uint8_t>(u(rng) < 0.5 ? 0 : 1 + static_cast<int>(u(rng) * 3)); };
+          sim.schedule_reset(step_of(), step_of(), step_of(), {u(rng) - 0.5, u(rng) - 0.5}, u(rng) - 0.5,
+                             0.2 * (u(rng) - 0.5));
+        }
+        const AlignmentState before = sim.est.state();
+        check(before, sim.est.on_px4(sim.px4_at(t)), false);
+      }
+      if (step % 10 == 3) {
+        if (u(rng) < (lost ? 0.08 : 0.03)) lost = !lost;
+        const AlignmentState before = sim.est.state();
+        // The scan is stamped in the past (LIO latency), so PX4 samples exist on both sides of it.
+        check(before, sim.est.on_lio(sim.lio_at(t - 0.0495, !lost)), lost);
+      }
+      if (step % 5 == 0) {
+        const AlignmentState before = sim.est.state();
+        check(before, sim.est.on_tick(At(t + 0.001)), false);
+      }
+      if (::testing::Test::HasFatalFailure()) return;
+    }
+  }
+  for (const auto& l : kAlignmentTransitions) {
+    EXPECT_TRUE(seen.contains(Edge{l.from, l.to, l.reason}))
+        << "fuzz never reached " << to_string(l.from) << " -> " << to_string(l.to) << " (" << to_string(l.reason)
+        << ")";
+  }
 }

@@ -1,6 +1,7 @@
 #include "uavnav/px4bridge/alignment.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <numbers>
 
@@ -27,18 +28,22 @@ bool finite(const Px4PoseSample& s) {
          std::isfinite(s.delta_z_m) && std::isfinite(s.delta_heading_rad);
 }
 
-bool within_spec(std::size_t index, double v) {
-  const config::ParamSpec& spec = kAlignmentSpecs[index];
-  return std::isfinite(v) && v >= spec.min && v <= spec.max;
+bool within_spec(std::string_view key, double v) {
+  const config::ParamSpec* spec = find_alignment_spec(key);
+  return spec != nullptr && std::isfinite(v) && v >= spec->min && v <= spec->max;
 }
 
-/// The same bounds load_alignment_config enforces (single source: kAlignmentSpecs), so a hand-built config
-/// is held to them too. The cross-field rule is not needed for the estimator's own safety.
+/// The same bounds load_alignment_config enforces (single source: kAlignmentSpecs, looked up by name), so a
+/// hand-built config is held to them too. The cross-field rule is not needed for the estimator's own safety.
 bool valid_config(const AlignmentConfig& c) {
-  return within_spec(0, time::to_seconds(c.tau)) && within_spec(1, static_cast<double>(c.consistent_pairs)) &&
-         within_spec(2, c.jump_position_m) && within_spec(3, c.jump_yaw_rad) && within_spec(4, c.max_rate_mps) &&
-         within_spec(5, c.max_yaw_rate_rad_s) && within_spec(6, time::to_seconds(c.valid_stale)) &&
-         within_spec(7, time::to_seconds(c.frozen_max)) && c.tau >= limits::kFilterDtMax;
+  return within_spec("alignment_tau_s", time::to_seconds(c.tau)) &&
+         within_spec("alignment_consistent_pairs", static_cast<double>(c.consistent_pairs)) &&
+         within_spec("alignment_jump_position_m", c.jump_position_m) &&
+         within_spec("alignment_jump_yaw_rad", c.jump_yaw_rad) &&
+         within_spec("alignment_max_rate_mps", c.max_rate_mps) &&
+         within_spec("alignment_max_yaw_rate_rad_s", c.max_yaw_rate_rad_s) &&
+         within_spec("alignment_valid_stale_s", time::to_seconds(c.valid_stale)) &&
+         within_spec("alignment_frozen_max_s", time::to_seconds(c.frozen_max)) && c.tau >= limits::kFilterDtMax;
 }
 
 /// Instant T of one pair (header comment): yaw = wrap(yaw_px4 - yaw_lio), t_xy = p_px4_xy - Rz(yaw) p_lio_xy,
@@ -65,13 +70,17 @@ AlignmentEstimator::AlignmentEstimator(const AlignmentConfig& cfg) noexcept
 
 // ---- state machine -------------------------------------------------------------------------------------------
 
-void AlignmentEstimator::go(AlignmentState to, AlignmentReason reason, time::SensorTime t) noexcept {
+bool AlignmentEstimator::go(AlignmentState to, AlignmentReason reason, time::SensorTime t) noexcept {
   bool listed = false;
   for (const AlignmentEdge& e : kAlignmentTransitions) {
     if (e.from == state_ && e.to == to && e.reason == reason) listed = true;
   }
-  // Every state change must be a listed edge; an unlisted one is a bug here and is refused.
-  if (!listed) return;
+  // Every state change must be a listed edge. An unlisted one is a programming error (code and table
+  // drifted apart): it is refused, the state stays as it is, and the caller reports kInputRejected instead
+  // of the transition's reason, so the drift is visible in the output and the event log. The assert
+  // stops a debug build at the drift; the allow-list fuzz test pins it as unreachable.
+  assert(listed && "alignment transition not in kAlignmentTransitions");
+  if (!listed) return false;
   state_ = to;
   // Entry actions.
   switch (to) {
@@ -80,16 +89,17 @@ void AlignmentEstimator::go(AlignmentState to, AlignmentReason reason, time::Sen
     case AlignmentState::kInit: restart_accumulation(); break;
     case AlignmentState::kInvalid: break;
   }
+  return true;
 }
 
 std::optional<AlignmentReason> AlignmentEstimator::timeouts(time::SensorTime now) noexcept {
   // Both stamps are >= 0 (rejected otherwise), so the differences cannot overflow.
   if (state_ == AlignmentState::kValid && now - stale_since_ > cfg_.valid_stale) {
-    go(AlignmentState::kInvalid, AlignmentReason::kStale, now);
+    if (!go(AlignmentState::kInvalid, AlignmentReason::kStale, now)) return AlignmentReason::kInputRejected;
     return AlignmentReason::kStale;
   }
   if (state_ == AlignmentState::kFrozen && now - frozen_since_ > cfg_.frozen_max) {
-    go(AlignmentState::kInvalid, AlignmentReason::kFrozenTooLong, now);
+    if (!go(AlignmentState::kInvalid, AlignmentReason::kFrozenTooLong, now)) return AlignmentReason::kInputRejected;
     return AlignmentReason::kFrozenTooLong;
   }
   return std::nullopt;
@@ -175,7 +185,9 @@ AlignmentOutput AlignmentEstimator::on_px4(const Px4PoseSample& s) noexcept {
 
   switch (state_) {
     case AlignmentState::kFrozen:
-      go(AlignmentState::kInvalid, AlignmentReason::kPx4ResetWhileFrozen, s.t);
+      if (!go(AlignmentState::kInvalid, AlignmentReason::kPx4ResetWhileFrozen, s.t)) {
+        return output(AlignmentReason::kInputRejected);
+      }
       return output(AlignmentReason::kPx4ResetWhileFrozen);
     case AlignmentState::kInit:
       restart_accumulation();
@@ -244,8 +256,8 @@ AlignmentReason AlignmentEstimator::accumulate(const Pose4& inst, time::SensorTi
       return AlignmentReason::kPairRejectedJump;
     }
   }
+  if (!go(AlignmentState::kValid, AlignmentReason::kPairsConsistent, t)) return AlignmentReason::kInputRejected;
   filtered_ = mean;
-  go(AlignmentState::kValid, AlignmentReason::kPairsConsistent, t);
   return AlignmentReason::kPairsConsistent;
 }
 
@@ -293,7 +305,9 @@ AlignmentOutput AlignmentEstimator::on_lio(const LioPoseSample& s) noexcept {
   if (!s.tracking) {
     switch (state_) {
       case AlignmentState::kValid:
-        go(AlignmentState::kFrozen, AlignmentReason::kLioLost, s.t);
+        if (!go(AlignmentState::kFrozen, AlignmentReason::kLioLost, s.t)) {
+          return output(AlignmentReason::kInputRejected);
+        }
         return output(AlignmentReason::kLioLost);
       case AlignmentState::kInit:
         restart_accumulation();
@@ -306,12 +320,13 @@ AlignmentOutput AlignmentEstimator::on_lio(const LioPoseSample& s) noexcept {
   }
 
   if (state_ == AlignmentState::kInvalid) {
-    go(AlignmentState::kInit, AlignmentReason::kLioTracking, s.t);  // new accumulation from the next pair
+    // The new accumulation starts with the next pair.
+    if (!go(AlignmentState::kInit, AlignmentReason::kLioTracking, s.t)) return output(AlignmentReason::kInputRejected);
     return output(AlignmentReason::kLioTracking);
   }
   std::optional<AlignmentReason> transition;
   if (state_ == AlignmentState::kFrozen) {
-    go(AlignmentState::kValid, AlignmentReason::kLioTracking, s.t);
+    if (!go(AlignmentState::kValid, AlignmentReason::kLioTracking, s.t)) return output(AlignmentReason::kInputRejected);
     transition = AlignmentReason::kLioTracking;
   }
 
