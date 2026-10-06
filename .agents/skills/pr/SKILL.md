@@ -18,14 +18,15 @@ allowed-tools: Bash Read Glob Grep
 5. **Body**, as short as possible, in order: `## Summary`, `## Problem`,
    `## Solution`, one or two sentences each. No file lists or code snippets.
    `fixes #<N>` first line of Summary when closing an issue.
-6. `## Safety impact` (required when the diff touches estimation, mapping,
-   planning, control, PX4 integration, budgets, gates, or thresholds): which
-   invariants in `docs/safety/runtime_safety_current.md` are affected, and the
-   ledger entry for any bypass/relaxed gate (owner, scope, evidence, removal
-   condition, verification command).
-7. `## Testing` only for real evidence: SITL, dataset replay, or recorded
-   sensor data (targets: see `make help`). Report the distribution
-   and run count, not a single run. Unit tests and builds are not testing here.
-   Never report testing that did not happen; ask the user.
-8. `git push -u origin <branch>`, `gh pr create` (base `main`), return the URL.
+6. `## Design` (required for code changes) covers:
+   - the spec sections (`docs/architecture/SYSTEM_DESIGN.md` §) implemented;
+   - the TRACEABILITY rows updated;
+   - any design deviation, with its DECISIONS entry. An undecided deviation
+     blocks the PR.
+7. `## Testing` lists only evidence that exists:
+   - unit tests of state machines and safety decisions;
+   - SITL smoke or beta-gate runs, each with its event-log KPI output.
+
+   Never report testing that did not happen; ask the user instead.
+8. `git push -u origin <branch>`, `gh pr create` (base `rebuild/v2` while the rebuild is in progress), return the URL.
    End the body with the PR attribution line given by the session/user config.

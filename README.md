@@ -99,12 +99,17 @@ reported as unavailable.
 
 ## Documentation
 
-- [Safety contract](docs/safety/runtime_safety_current.md): read before
-  changing estimation, mapping, planning, control, PX4 integration, budgets,
-  gates or thresholds;
-- [System design](docs/architecture/SYSTEM_DESIGN.md): current ownership, interfaces,
-  budgets and unimplemented proposals;
-- [Roadmap](docs/ROADMAP.md): new evidence-first refactor milestones;
+Branch `rebuild/v2` rebuilds the stack against a new architecture; `main` is
+the reference baseline only.
+
+- [System design](docs/architecture/SYSTEM_DESIGN.md): the architecture map
+  (components, state machines, interfaces, conventions, build order);
+- [Decisions](docs/architecture/DECISIONS.md): agreed decisions, open
+  questions and verified facts behind the design;
+- [Traceability](docs/TRACEABILITY.md): requirement → design → work package →
+  status checklist;
+- [Code-quality report](docs/analysis/P9_REPORT.md): evidence from the
+  baseline review;
 - [Working contract](AGENTS.md): repository rules for contributors and agents.
 
 ## Licensing

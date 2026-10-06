@@ -20,9 +20,10 @@ for large diffs.
 - existing inline and conversation comments via `gh api`
 
 Read linked issues. Full post-change file: `git fetch origin pull/<PR>/head`,
-`git show FETCH_HEAD:<path>`. **Always read
-`docs/safety/runtime_safety_current.md` before judging any diff under `src/`**
-and cite its invariants by number in findings; read `docs/architecture/SYSTEM_DESIGN.md` and `docs/ROADMAP.md`.
+`git show FETCH_HEAD:<path>`. **Before judging any diff under `src/`, always
+read the spec sections it implements in `docs/architecture/SYSTEM_DESIGN.md`,
+the decisions they cite in `docs/architecture/DECISIONS.md`, and AGENTS.md
+§2–§3.** Cite spec sections (§) and decisions (D\*) in findings.
 
 ## Review
 
@@ -38,15 +39,23 @@ Never judge a hunk without its enclosing function and callers.
   Candidate committed without atomic goal/localization/lease/latest-world/
   corridor/swept checks? Newer world not invalidating old candidate? Finite,
   continuous P/V/A to External Mode? Fail-closed paths intact?
-- **Hidden bypasses:** relaxed gate, diagnostic-only flag leaking to product,
-  fallback-only path, test-specific branch, without a ledger record.
-- **Ownership:** logic lives in the layer that owns the data, per the
-  ownership chain in the safety contract's purpose section and
-  `docs/architecture/SYSTEM_DESIGN.md`; check current source ownership and unresolved debt.
+- **Hidden bypasses:** relaxed gate, experiment flag leaking into the product,
+  fallback-only path, or test-specific branch that is not listed in
+  DECISIONS.
+- **Design fit:** look for behaviour the spec does not describe (an
+  undeclared deviation) and check the structural rules:
+  - state encoded as flags;
+  - results that are not typed `Result<T, Reason>`;
+  - decisions that emit no event;
+  - config values in the wrong tier;
+  - mixed clock domains;
+  - publishing while holding a lock.
+- **Ownership:** logic lives in the component that owns the decision (spec
+  §1–§5).
 - **Runtime:** latency tails, allocations/locks in real-time paths, budgets.
 - **Evidence:** thresholds tuned from one SITL run? Tests that prove the
   contract, not just the happy path? "QUALIFIED" claimed without evidence?
-- **Compatibility:** msg/param/config contract changes (the canonical design configuration section); every new parameter is a burden.
+- **Compatibility:** message, parameter or config changes must follow spec §6.2 and §6.5. Every new parameter is a burden.
 - Behavior changes mixed with refactors/observability in one PR: flag.
 
 ## Deliver (post nothing)

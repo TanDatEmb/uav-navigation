@@ -1,279 +1,443 @@
-# Thiết kế hệ thống UAV Navigation
+# Thiết kế hệ thống UAV Navigation (rebuild v2)
 
-Baseline thiết kế ngày 2026-10-05. Đây là bản thiết kế tổng thể duy nhất.
-[Safety contract](../safety/runtime_safety_current.md) sở hữu invariant, gate và
-bypass; [roadmap](../ROADMAP.md) sở hữu thứ tự công việc tiếp theo. Khi văn bản
-khác source/config, ghi sai lệch và giữ fail-closed; không tự đổi behavior.
+Trạng thái: **đã được owner duyệt 2026-10-06** (D27), branch `rebuild/v2`.
+Đây là bản đồ duy nhất cho việc xây lại hệ thống.
 
-## 1. Mục tiêu và trạng thái
+- Lý do và lịch sử của từng quyết định nằm trong [DECISIONS.md](DECISIONS.md). Mỗi mục dưới đây ghi rõ mã quyết định D\*.
+- Tiến độ được theo dõi trong [TRACEABILITY.md](../TRACEABILITY.md).
+- Quy trình làm việc (dừng lại khi lệch thiết kế, các quy tắc cấu trúc) nằm trong [AGENTS.md](../../AGENTS.md).
+- Branch `main` chỉ dùng làm nguồn tham khảo (D13, D15).
 
-Sản phẩm dùng FAST-LIO, world model do sản phẩm sở hữu, MAIN kèm certified
-BACKUP và PX4 ROS 2 External Mode. Phạm vi được kiểm tra là SITL; hardware
-Mid-360 bị chặn cho tới khi có immutable visibility certificate và verifier.
-Component test hoặc mission COMPLETE riêng lẻ không phải flight qualification.
+## §0. Mục tiêu, phạm vi, profile
 
-Mục tiêu dài hạn kế thừa để xem xét: mission ổn định tới 10 m/s, UAV radius
-0.50 m, MAIN có policy known-free hoặc explicit UNKNOWN, BACKUP luôn known-free,
-GPS bật và PX4 sở hữu fallback khi LIO không còn hợp lệ. 10 m/s là mục tiêu
-chưa nghiệm thu; cấu hình MAIN hiện hành là 5/5/8, không được nâng bằng docs.
-Không chấp nhận policy cho BACKUP đi vào UNKNOWN/OUT_OF_MAP.
+### Mục tiêu
 
-| Nhãn | Nghĩa |
-|---|---|
-| IMPLEMENTED | Có đường source; không tự chứng minh an toàn hoặc tốc độ |
-| COMPONENT_VERIFIED | Test có phạm vi cụ thể; không thay runtime distribution |
-| PROPOSED | Ý tưởng cần review/đo trước khi đổi sản phẩm |
-| DIAGNOSTIC_ONLY | Đo/report/replay; không cấp command authority |
-| NOT_MEASURED / NOT_EVALUABLE | Thiếu phép đo hoặc evidence hợp lệ; không phải PASS |
+Bay mission nhiều waypoint trong môi trường có vật cản. Các thành phần chính:
 
-## 2. Ownership và layout
+- định vị bằng LiDAR-inertial (FAST-LIO, Mid-360);
+- world model do sản phẩm tự sở hữu;
+- quỹ đạo MAIN đi kèm một BACKUP có chứng nhận;
+- PX4 External Mode nhận lệnh.
 
-```text
-LiDAR + IMU -> FAST-LIO
-  -> RegisteredScan + propagated odometry + typed health
-  -> navigation_runtime (mapping actor + planning worker)
-  -> immutable committed MAIN/BACKUP bundle -> command sampler
-  -> NavigationCommand -> PX4 External Mode -> TrajectorySetpoint
-```
+Mục tiêu dài hạn là 10 m/s. Bản **beta** chạy SITL trên PX4 **v1.17** (D5, P8), ở tốc độ 1–5 m/s. Phần cứng nằm ngoài phạm vi beta.
 
-| Boundary | Owner và trách nhiệm |
-|---|---|
-| Estimation | fast_lio_core/fast_lio_ros: synchronization, initialization, correction, propagation, health, reset epoch; registration map không phải planning map |
-| Mapping | navigation_mapping: bounded observation worker, mutable ROG-backed integration, immutable WorldModelView; UNKNOWN/OOM semantics |
-| Planning contracts | navigation_planning: ROS/vendor-free C++20 request/outcome, kinematic state, identity và limits |
-| Solver | navigation_planning_backend: A*, CIRI corridor, MINCO, yaw, certified stop synthesis; candidate không tự sở hữu command |
-| Execution | navigation_execution: identity/lease/commit/exposure, immutable timeline và sampling |
-| Composition | navigation_runtime: ingress, worker scheduling, mission and publication wiring; backend history còn là extraction debt |
-| Mission | navigation_mission: C++ YAML validation, waypoint identity/frame/limits/policy; Python parser chỉ orchestration/report |
-| PX4 adapters | px4_external_odometry_bridge, px4_odometry_bridge, px4_navigation_external_mode: conversion, local admission, bounded Hold handover |
-| Tooling | tools/runtime: runner, monitor, report; simulator truth chỉ evidence |
+### Profile
 
-Source được nhóm trong `src/common`, `src/contracts`, `src/estimation`,
-`src/mapping`, `src/planning`, `src/execution`, `src/runtime`, `src/px4`.
-`src/navigation_bringup` sở hữu launch/RViz, `src/uav_description` sensor frames,
-`src/uav_simulation` Gazebo assets. Vendor giữ license/provenance riêng;
-`src/external` chứa dependencies pinned, không phải public product API.
+Profile là tham số tầng (c) theo D22. Profile được chọn khi chạy; không có trạng thái riêng cho profile.
 
-Không có MappingWorldNode/PlanningControllerNode hoặc snapshot/bundle ROS
-transport riêng trong sản phẩm hiện tại. Không dùng tên package `nav_*` của
-thiết kế cũ như bằng chứng đã triển khai. Core mission-progress ownership phải
-đọc cùng [mission authority cut](../safety/mission_authority_cut.md).
+| Trục | Giá trị | Ảnh hưởng | Mã quyết định |
+|---|---|---|---|
+| Bay | **mặc định** | MAIN được đi vào UNKNOWN; BACKUP bắt buộc known-free | D1, D2 |
+| Bay | **khéo léo** | Cả MAIN và BACKUP được đi vào UNKNOWN. Đây là chế độ **chấp nhận rủi ro do owner phê duyệt**: phải chọn tường minh, ghi vào metadata của mỗi lần chạy, không bao giờ là mặc định | D1, D2 |
+| Định vị | **có GPS** | EKF2 luôn fuse GNSS. EV gửi FRD, tắt EV yaw (`EKF2_EV_CTRL=7`). Frame mission là toạ độ GPS | D3, D19, D20 |
+| Định vị | **không GPS** | Chỉ dùng ở môi trường LIO duy trì được. EV gửi FRD, bật EV yaw (`EKF2_EV_CTRL=15`). Frame mission là toạ độ local của PX4 | D3, D19, D20 |
+| Yaw | **Y1 khoá heading** (mặc định) / **Y3a theo hướng đoạn bay** | Xem §2.5 | D24 |
 
-## 3. Interfaces và pipeline
+### Hành vi an toàn không được nới
 
-| Interface | Producer → consumer | Hợp đồng |
-|---|---|---|
-| /lio/mapping_observation | FAST-LIO → mapping | RegisteredScan ghép corrected pose và cloud nguyên tử theo source time/frame; empty-valid khác absent |
-| /lio/odometry_propagated | FAST-LIO → runtime/PX4 bridges | High-rate propagated state, epoch/sequence và source time; không thay bằng callback time |
-| /lio/health | FAST-LIO → runtime/bridge/adapter | Typed navigation/covariance/observability/correction/propagation validity; newer-invalid đóng gate |
-| /navigation/navigation_command | runtime → adapter | P/V/A/J, yaw/rate, source time, lease, epoch/goal/request/activation/sample, world và bundle identity |
-| /navigation/mission_progress | core → adapter | Measured ordered progress, terminal receipt; planned endpoint không phải acceptance |
-| /navigation/command_admission | adapter → core | Local admission receipt; không tạo mission owner thứ hai |
-| /px4_adapter/mode_status | adapter → core | Mode activation and local state; không tự chứng minh mission complete |
-| /fmu/in/vehicle_visual_odometry | external odometry bridge → EKF2 | NED/FRD frame/covariance/time conversion, exact source validity |
-| /fmu/in/trajectory_setpoint | External Mode → PX4 | Finite frame-correct continuous P/V/A+yaw/yaw_rate; jerk không gửi cho PX4 |
-| /navigation/diagnostics, /px4/diagnostics | runtime/adapters → tools | Observability; chuỗi KeyValue không được tạo quyền bay mới |
-| /sim/ground_truth/odometry | Gazebo → monitor/report | Evaluation-only; không input vào FAST-LIO hoặc external vision |
+- **Fail-closed.** Thiếu dữ liệu, hoặc dữ liệu cũ hay mơ hồ về thời gian, frame, identity, epoch, world hay certificate, thì bị từ chối. Không bao giờ coi là đạt.
+- **BACKUP known-free** ở profile mặc định.
+- **Không bàn giao im lặng.** Mọi lần bàn giao cho PX4 và mọi lần huỷ đều có `Reason` trong event log (D11).
+- **Không có bypass ẩn.** Một lối tắt tạm thời phải: nằm trong config, được log, và được liệt kê trong DECISIONS.
 
-Schema thực nằm trong [navigation contracts](../../src/contracts/navigation_contracts/msg)
-được xem là source của field/QoS. Cleanup không thay schema hoặc subscriptions.
-Các đề xuất evidence topics và mission-only entrypoint là PROPOSED, không phải
-interface đã có. Goal/test và velocity-only diagnostic không được promote.
-
-Nominal pipeline: validate ingress → pin source/epoch/mission/world → submit
-bounded request → solve/certify candidate → final identity/latest-world/lease
-check → atomic commit → sample committed bundle → adapter-local admission → PX4.
-Candidate lỗi không mutate committed generation. Worker result cũ bị discard.
-World mới cần validation/recertification trước khi command tiếp tục có quyền.
-
-## 4. Estimation, frames và time
-
-Estimator giữ IKFoM-compatible nominal state:
-`(p_odom_imu, R_odom_imu, R_imu_lidar, p_imu_lidar, v, gyro_bias, accel_bias, gravity)`.
-Rotations là SO3, gravity là S2; 23-DoF tangent covariance có blocks p(0:3),
-R(3:6), extrinsic R(6:9), extrinsic p(9:12), v(12:15), bg(15:18), ba(18:21),
-g(21:23). ManifoldState chỉ là output/interchange, không phải filter thứ hai.
-Online extrinsic estimation không thuộc baseline runtime.
-
-Pipeline: adapters → scan/IMU synchronization → stationary initialization →
-propagation → deskew hoặc declared simultaneous-scan bypass → preprocessing →
-correspondences/residuals → iterated correction → corrected outputs → insert
-accepted registration points. Init/lost/rejected không phát zero odometry như
-state hợp lệ. Corrected odometry chỉ sau correction trong Tracking; propagated
-output có gate riêng. Reset do FastLioNode processing owner thực thi, xoá
-history/ingress/visibility cũ và đổi epoch; component evidence không chứng minh
-lifecycle recovery trong chuyến bay.
-
-TF sở hữu bởi repo: `lio_odom -> base_link -> livox_frame -> livox_imu_frame`.
-LIO corrected/propagated: `lio_odom -> base_link`. PX4 ingress ROS dùng
-`px4_odom -> base_link`. ROS internal ENU/FLU, PX4 world NED/body FRD:
+## §1. Thành phần và process (D17)
 
 ```text
-C_ned_enu = [[0,1,0], [1,0,0], [0,0,-1]]
-C_frd_flu = [[1,0,0], [0,-1,0], [0,0,-1]]
+ LiDAR 10Hz + IMU 200Hz
+        │
+ ┌──────▼───────────┐  /lio/odometry 10Hz (đã correction, stamp = thời điểm scan, epoch)  ┌───────────────────┐
+ │ lio              ├────────────────────────────────────────────────────────────────────► px4_bridge        │──EV FRD──► PX4 EKF2
+ │ (§3)             │  /lio/state 100Hz (output predictor), /lio/health, /lio/scan        │ (§4.1)            │◄─odometry + reset PX4
+ └──────┬───────────┘                                                                     └─────────┬─────────┘
+        │                                                                                           │ /alignment (T, trạng thái, tuổi)
+ ┌──────▼─────────────────────────────────────────────────────────┐                                 │
+ │ navigation (1 process, 3 thread)                                │                                 │
+ │  Mapping actor (§5.2) ──WorldView bất biến──► Planner worker (§5.3)                               │
+ │        └──revalidate──► Supervisor (§2) ◄──Result<Bundle,Reason>─┘                               │
+ │                          sampler 50Hz → /nav/command (P/V/A + yaw, frame LIO)                     │
+ └──────┬─────────────────────────────────────────────────────────┘                                 │
+ ┌──────▼──────────────────────────┐◄─────────────────────────────────────────────────────────────────┘
+ │ px4_mode (§4.2)                  │  P/V/A biến đổi qua T ──► TrajectorySetpoint ──► PX4
+ └─────────────────────────────────┘
+ Mọi process ──► /events + JSONL (§6.1)
 ```
 
-Basis conversion không phải world-origin/yaw alignment. Bridge rejects unsupported
-POSE_FRAME_FRD; quaternion PX4 là body-FRD → world-NED. Pose covariance ở
-lio_odom, twist covariance ở base_link; missing/nonpositive variance không được
-chấp nhận. Initial prior là LIO-local zero, stationary IMU; PX4/simulator không
-là estimator startup input.
+Mapping, Planner và Supervisor nằm chung một process. Chúng chia sẻ world và bundle bất biến qua bộ nhớ chung, nên không phải serialize map. Ranh giới giữa ba khối là ranh giới thread và kiểu dữ liệu.
 
-SITL launcher tắt SIM_GZ_EN_ODOM, bật normal GNSS/baro/magnetometer/range aiding
-và EV fusion. GNSS/EV bias có thể làm PX4 local origin khác lio_odom. Yaw/bias
-witness và pure frame-transform contract hiện là DIAGNOSTIC_ONLY; chưa phải
-continuous T3 authority. Không suy từ witness rằng setpoint đã được compensate.
+## §2. Supervisor: một nơi ghi duy nhất cho điều khiển bay (D18, D24)
 
-PROPOSED T3: transform phải có source/frame/time/epoch/version, bounded bias
-và derivatives, bảo toàn identity/order/time, tính cả tác động lên V/A và
-certificate. Thiếu/reset/stale/innovation-failed phải reject theo fail-closed
-boundary. Không cho transform tự giữ, thay hoặc reorder command. Chọn firmware
-bias topic hoặc measured fit chỉ sau matched evidence, không dùng LPF τ như
-một safety constant chưa đo.
+### §2.1 Timeline đã commit
 
-Absolute timestamp là signed integer nanoseconds kèm clock domain; chỉ local
-duration chuyển sang seconds ở calculation boundary. Backend bundle còn double
-seconds/closures là debt, không được tuyên bố đã chuyển hết sang pure data.
-Sensor time là measurement time; scan header semantics explicit, scan interval
-phải được IMU bracket, không đoán relative time từ point index.
-SITL/replay dùng ROS /clock, dương/monotonic/fresh, UXRCE_DDS_SYNCT=0.
-Realtime dùng ROS system clock với transport synchronization thuộc PX4; không
-cộng estimated_offset lần hai hoặc tự đổi clock khi mất timesync. Hardware
-vẫn bị chặn. Wall-time budgets và source/sim-time freshness là hai phép đo khác.
+- Mỗi `Bundle` (§5.1) là **một quỹ đạo liên tục**: MAIN prefix dài ≥ 1.0 s, nối sang BACKUP suffix, kết thúc ở trạng thái đứng yên.
+- Supervisor chỉ làm một việc với timeline: quyết định **có thay timeline hay không**. Việc thay là commit nguyên tử, nối PVAJ liên tục tại một điểm tương lai trên timeline đang chạy.
+- Sampler lấy mẫu timeline theo thời gian. Hết timeline thì giữ điểm cuối; đó chính là "hold".
+- `phase(bundle, t) ∈ {MAIN, BACKUP, BRAKE, HOLD}` là hàm **dẫn xuất**, chỉ dùng cho log và KPI. Không có code nào ghi phase.
 
-## 5. World, planning và certificates
+### §2.2 Trạng thái
 
-Mutable registration NN map của FAST-LIO không phải WorldModel. Mapping actor
-xuất immutable view và pin generation/revision/observation stamp cho request.
-UNKNOWN/OCCUPIED/OUT_OF_MAP phải được bảo toàn cả base và inflated layers.
-BACKUP/EMERGENCY require known-free; explicit MAIN UNKNOWN policy không áp sang
-suffix. Mission chỉ được hạ dynamic limit, không tăng physical limit.
+```text
+Session:          IDLE ──MissionLoaded ∧ Px4Active──► RUNNING ──waypoint cuối đạt (đo)──► COMPLETED
+                                                         └──── guard bỏ cuộc (Reason) ────► HANDED_OVER
+NavAvailability:  AVAILABLE ──LIO LOST──► LOST(since) ──LIO TRACKING, epoch mới──► REACQUIRING(since)
+    (khi RUNNING)     ▲                                                              │ ResetMap; T ổn định 3 s
+                      └──────────────────────────────────────────────────────────────┘
+```
 
-Snapshot hiện là full export hoặc immutable parent/patch; PROPOSED fixed-size
-COW chunks cần full-export oracle cho mọi cell state, inflation/virtual planes,
-positive/negative slide, boundaries và OOM. Metadata-only successor không làm
-mất identity; revision gap hoặc missing dirty history dùng full fallback.
-AABB touched region không thay exact dirty-cell/chunk certificate. Worker hóa
-snapshot export phải chứng minh supersession/cancellation và không publish stale.
+- Hàm chuyển trạng thái `transition(state, event) → (state, effects)` là hàm thuần.
+- Mỗi lần chuyển trạng thái phát một `EventRecord` (§6.1).
+- **Quy tắc chống phình.** Mọi yêu cầu mới phải được diễn đạt bằng một trong các cách sau:
+  - event, guard hoặc effect mới;
+  - thuộc tính của bundle;
+  - phase dẫn xuất;
+  - chính sách của một thành phần.
 
-Independent boundaries phải giữ: dynamics, flatness, continuous corridor planes,
-swept-world, route regression, certified stop, PVAJ anchor continuity, identity,
-lease và latest-world commit. Retained heading rebind không miễn MAIN route
-certificate và không vay minimum MAIN reserve. Retained valid command được giữ
-qua failed replacement; candidate uncertified không được expose.
+  Thêm trạng thái mới bắt buộc phải review thiết kế.
 
-Stop authorization cần concrete minimum-snap polynomial và support/extrema,
-không chỉ scalar S-curve estimate. Steady a=j=0 và nonzero measured PVAJ là hai
-nhánh khác; closed-form `d=0.9375*v²/a` không đại diện mọi braking state.
-Interior duration retry family mới đã DEFER khỏi baseline: thiếu proof deadline/
-cancellation; existing retries vẫn chưa qualified về latency tails. Paired yaw-stop
-phải recertify position V/A/J và executed support/horizon khi đổi duration.
-External `/lio/reset` đã DEFER; existing lifecycle helpers không cung cấp service
-reset mới. Publication fence/topic-prior rearm cần R0 review trước khi mở lại.
+### §2.3 Quy tắc trong RUNNING
 
-PROPOSED independent certifier extraction: chuyển validator không đổi semantics,
-chạy shadow trên pinned world và boundary, so disagreement theo failure kind
-trước switch authority. CertificateRecord cần bind bundle digest, complete
-required checks, world identity, profile fingerprint và certification version.
-Data-only bundle, typed polynomial time và removal of evaluator/world-validator
-closures cần parity oracle; không thay bool/callback authority bằng docs.
-
-## 6. Execution và failure behavior
-
-Hiện execution authority giữ committed/staged timeline, lifecycle/exposure,
-lease và epoch. Backend private history chỉ phục vụ continuity, không command
-publisher thứ hai. Publication phải giữ command-source stamp ≥ state-source
-stamp; future source time reject, không clamp evidence.
-
-| Tình huống | Boundary phải giữ |
-|---|---|
-| Candidate failed/stale | Discard; committed command chỉ giữ khi certificates/lease còn hợp lệ |
-| World stale/revised | Suspend/recertify hoặc reject; không dùng old world identity |
-| MAIN không còn usable | Certified positive BACKUP suffix, hoặc certified measured-state emergency theo clearance |
-| Tracking/anchor pressure | Reject/reanchor theo contract; riêng pressure không authorize emergency |
-| Emergency | Clearance witness + current KNOWN_FREE; one-shot recovery episode; failed synthesis không rearm mỗi tick |
-| Localization reset | Invalidate old generation/history, cancel stale work, require current valid state |
-| Command/state/health lease expired | Fail closed; không refresh lease bằng rejected sample |
-| Measured waypoint acceptance | Core ordered progress; adapter receipt không tự advance mission |
-| Terminal stop | STOP-only suppression/hold; PASS_THROUGH restart từ measured state |
-| Hold handover failure | Bounded AUTO_LOITER attempts; release mode để PX4 native fallback chọn mode runnable |
-
-PROPOSED reducer extraction: pure event→state/effects, single writer, immutable
-jobs/results và explicit stale-result rejection. Đích trạng thái gồm Idle,
-TrackingMain, SafetySuffix(Backup/Emergency), StoppedHold, Px4Hold; exposure chỉ
-có nghĩa khi có command. Đây chưa là type/API hiện hành.
-EpochReset, StateSample, WorldRevised, CandidateCertified/Failed, CommandTick,
-AdmissionReceipt, StopObserved, DeadlineMissed phải được characterized từ source
-trước extraction. Effects commit/discard/publish/suspend/recertify/cancel/Hold
-thực thi trong shell sau reducer. Exit-site/line-number coverage không phải
-semantic oracle. Preserve predicates, event→effect traces và fault controls.
-
-Fast lane tách recert/emergency khỏi planning lane vẫn PROPOSED: phải đo
-trigger→exposure, lock-wait và cancellation trước chọn scheduling. Không đổi
-thread/timer chỉ vì thiết kế nói single writer. Dependency guard còn allow-list
-cụ thể; roadmap phải đóng từng violation, không mở exemption blanket.
-
-## 7. Budgets và configuration
-
-[Planner configuration](../../src/runtime/navigation_runtime/config/planner.yaml)
-và [typed timing](../../src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp)
-là source triển khai; safety contract sở hữu interpretation.
-
-| Đại lượng | Hiện hành | Giới hạn bằng chứng |
+| Event | Guard | Effect |
 |---|---|---|
-| MAIN nominal V/A/J | 5/5/8 | Không phải PX4 physical capability |
-| Physical/BACKUP V/A/J | 12/9/30 | 9 m/s² horizontal configuration bound; thrust/vertical/3-D/ramp chưa được qualify |
-| Radius sum | 0.50+0.227+0.05+0.173+0.05=1.00 m | Tracking term derived/provisional; không phải measured margin |
-| Corridor-plane violation | 0.01 m | Continuous polynomial certificate; conditioning debt còn mở |
-| A* attempt/total | 20/40 ms | Reserve finalization 40 ms trong solve 80 ms |
-| Solve/forward stitch | 80 ms / 400 ms | Không lẫn future lead hay wall/source-time clock |
-| Planning/command/snapshot | 10 Hz / 50 Hz / 100 ms | Producer rate không chứng minh receive freshness |
-| Minimum MAIN reserve | 80+400+100+20=600 ms | Không vay reserve cho heading rebind |
-| Command stream/adapter state | 100 ms / 200 ms | Distinct source/receive boundaries |
-| Runtime observation freshness | 500 ms | Exact timestamp pairing tại ingress |
-| Visibility floor/cap | 14/20 m | Actual stop support + reaction + radius phải fit horizon |
-| Watchdog/completion tolerance | 1.0 s / 0.20 m | Không tune từ smoke test |
-| World sweep | 0.5 inflated-map resolution; 2–50 ms | Không dùng sampled guide penalty thay world certificate |
+| `Tick(t)` | AVAILABLE, world sẵn sàng, worker còn chỗ | `SubmitPlan`; anchor = timeline(t + 200 ms), hoặc trạng thái đứng yên đo được |
+| `PlanResult(Ok)` | Cùng epoch và mission; world của bundle ≥ world của request; certificate đạt; nối liền với timeline | `Commit(bundle)` |
+| `PlanResult(Err)` | | Giữ timeline cũ. `Emit(reason)` |
+| `WorldUpdated` | `revalidate` phần sẽ thực thi trên vùng thay đổi: vẫn sạch | Không làm gì |
+| `WorldUpdated` | Va chạm trong quãng cần để dừng, vị trí hiện tại KNOWN_FREE, chưa phanh trong episode này | Bộ tổng hợp phanh (§5.4), rồi `Commit(BRAKE)` |
+| `WorldUpdated` | Va chạm, phanh không chứng nhận được | → HANDED_OVER(`EMERGENCY_UNCERTIFIED`) |
+| `LioHealth(LOST)` | | → LOST(t). Ngừng submit, bỏ kết quả còn treo. Timeline tự chạy hết qua `T` FROZEN |
+| `LioHealth(TRACKING, epoch mới)` | Đang LOST | → REACQUIRING, effect `ResetMap` |
+| `Alignment(VALID, ổn định 3 s)` | Đang REACQUIRING | → AVAILABLE, plan lại từ trạng thái đứng yên |
+| `WaypointReached(đo)` | | Mission tracker tiến tới waypoint kế. Waypoint cuối thì → COMPLETED |
+| `Px4Mode(Inactive)` | | → HANDED_OVER(`OPERATOR` hoặc `PX4_FAILSAFE`) |
 
-Units: s, m, m/s, m/s², m/s³, rad; clock boundary dùng integer ns. Derived robot
-radius và search geometry không có YAML owner thứ hai. `config/runtime/mapping.yaml`
-là canonical runtime profile; CMake copy vào install, không có hand-edited twin.
-Objective/route-reference weights quality-only; không relax hard certificates.
-Mission parser product là C++; Python chỉ tooling. Không gộp các age limits
-khác clock/producer/consumer bằng cách sao chép một hằng số.
+**Guard bỏ cuộc**, đánh giá ở mỗi `Tick`, mỗi guard dẫn tới HANDED_OVER với một `Reason` riêng:
 
-Tracking experiment default `off`; explicit `relaxed` là declared diagnostic
-health/tracking suppression và qualification-ineligible. Không dùng default
-relaxed mô tả cũ. Hardware deployment remains blocked; configuration fingerprint
-không tương đương full cross-process ConfigWitness/SafetyProfile implementation.
+| Điều kiện | Reason |
+|---|---|
+| LOST lâu hơn `lio_recovery_timeout_s` (profile GPS, mặc định 10 s) | `LIO_RECOVERY_TIMEOUT` |
+| PX4 báo mất vị trí (profile không GPS) | `PX4_POSITION_LOST` |
+| PX4 reset trong lúc `T` đang FROZEN | `ALIGNMENT_INVALIDATED` |
+| Đứng yên mà không commit được bundle nào trong `no_path_timeout_s` (mặc định 15 s) | `NO_PATH_TIMEOUT` |
 
-## 8. Verification và unresolved debt
+### §2.4 Chống chuyển nhánh liên tục (P10)
 
-Build/test và gate chạy trên system Python/ROS Jazzy, Release và root artifacts.
-Ledger/doc/dependency/mission checks bảo vệ cấu trúc/contract, không qualification.
-SITL + representative recorded data cần complete provenance: source/build,
-scenario/route/speed/policy/fusion, timestamp/clock, cleanup và failure retained.
-No-sample, at-rest requested high speed, stale-install hoặc infrastructure-invalid
-không được đưa vào distribution như pass. Đo achieved speed, coverage và tails.
+| Quy tắc | Thành phần sở hữu |
+|---|---|
+| R1. MAIN prefix ≥ 1.0 s | Planner, là bất biến của bundle |
+| R2. Worker giữ 1 request đang chạy và 1 request chờ (bản mới nhất). Chỉ huỷ khi request cũ hết hợp lệ (đổi epoch, goal hoặc mission) | Worker queue |
+| R3. World mới chỉ dẫn tới `revalidate` trên vùng thay đổi. World cũ đơn thuần không thu hồi command khi lease còn hạn | Mapping và Supervisor |
+| R4. Tracking error chỉ dẫn tới re-anchor; không bao giờ tự kích hoạt BACKUP hay phanh | Planner |
+| R5. Nối PVAJ tại điểm tương lai, dù điểm đó đang ở MAIN hay BACKUP | Planner và Supervisor |
+| R6. KPI tính từ event log | Công cụ (§6.1) |
 
-Debt chuyển sang roadmap mới:
+### §2.5 Yaw (D24)
 
-- Safe forward successor/liveness và full mission completion chưa nghiệm thu.
-- Tracking/frame-error decomposition U1, bias/reset U2, physical reaction U4,
-  yaw/alignment U6, actual braking/horizon U9 còn thiếu representative distributions.
-- T3 continuous product authority, certificate transport, full profile witness,
-  independent certifier và reducer replay chưa được triển khai đầy đủ.
-- Dependency extraction, private backend history và double-time bundle còn mở.
-- Các branch-only safety fixes chưa được chọn vẫn giữ trong local Git bundle,
-  không được xem là redundant chỉ vì khác HEAD. Roadmap triage từng counterexample.
-- TB-003 CIRI two-pass reference không promoted; HG-011 hardware block còn nguyên.
+`YawPolicy` là hàm thuần, chạy khi lấy mẫu lệnh. Yaw **không** nằm trong bundle. Certifier kiểm flatness với yaw rate xấu nhất ±ω_max, nên bundle hợp lệ với mọi profile yaw trong giới hạn đó.
 
-Runtime artifacts cũ vẫn ở máy nhưng không thuộc code backup theo yêu cầu owner.
-Không gắn qualification với file đã bị xoá hoặc với legacy ID không có record.
-Chẩn đoán/checkpoint cũ được bảo toàn trong backup, không tiếp tục làm authority.
+- **Y1 (mặc định):** yaw là hằng số trong cả mission. Lấy yaw lúc bắt đầu, hoặc yaw do mission chỉ định.
+- **Y3a (option của mission):**
+  - Ở mỗi đoạn, yaw đích là `atan2(wp[i+1] − wp[i])`.
+  - Xoay trong lúc bay với tốc độ ω (mặc định 45°/s), có giới hạn gia tốc xoay 90°/s².
+  - Khi phase là BACKUP hoặc BRAKE: giữ yaw hiện tại và giảm ω về 0.
+- ω_max = 90°/s là hằng số trong code. ω vận hành nằm trong YAML, giới hạn trong (0, ω_max].
+- **Y3b** (bám hướng vận tốc, perception-aware) để sau beta, chỉ khi có sensor FOV hẹp. Kiến trúc đã có sẵn điểm mở rộng:
+  - `yaw(t)` trong Bundle;
+  - `yaw_policy` trong request;
+  - bước kiểm tầm nhìn trong certifier.
 
-U1/U2 evaluators trả NOT_EVALUABLE trong baseline, không có trusted summaries:
-frame witness identity/time/basis và source-order/bounded-horizon còn thiếu.
-Host telemetry background recorder đã hoãn để tránh ghi đè metadata và poll-time
-RTF giả freshness; raw artifacts không trở thành distributions. U4 deduplicate
-exact event identity, conflicting duplicates invalidate evidence.
+### §2.6 Mission
+
+`MissionDefinition` gồm frame (GPS hoặc local PX4, D19) và danh sách waypoint với behavior `STOP` hoặc `PASS_THROUGH`.
+
+- Mission tracker là thành phần thuần do Supervisor sở hữu, và chỉ Supervisor được gọi nó.
+- Tiến độ được tính từ trạng thái **đo được**, theo thứ tự waypoint. Điểm cuối của một quỹ đạo không phải bằng chứng đã tới waypoint.
+- Waypoint được đổi từ frame mission sang frame LIO qua `T` hiện tại khi tạo request.
+
+## §3. `lio` (D20)
+
+### Giữ và viết lại
+
+- **Giữ:** IKFoM ESKF, ikd-tree, residual point-to-plane, toán propagation.
+- **Viết lại:** lifecycle, health, ingest, output.
+
+### §3.1 State machine
+
+```text
+INITIALIZING ──map đủ ∧ 5 scan tốt liên tiếp──► TRACKING ◄──5 scan tốt──┐
+     ▲                                              │ suy biến 3 scan, hoặc gap > 0.25 s
+     │                                              ▼                    │
+     │                                           DEGRADED ───────────────┘
+     │ epoch mới, map rỗng, seed                    │ suy biến kéo dài > 1.0 s, gap > 0.5 s,
+     │                                              │ hoặc σ vị trí > 0.5 m
+ RESTARTING ◄── scan đủ hình học trở lại ──────── LOST
+```
+
+- **LiDAR gap** tính theo **sensor time trên mỗi mẫu IMU** (stamp IMU − điểm cuối scan gần nhất).
+- Mọi lối vào TRACKING đều qua bước xác nhận.
+- Scan rỗng là một event, không phải exception.
+- `/lio/scan` chỉ được phát khi TRACKING.
+- Các con số trong sơ đồ là giá trị beta, thuộc tầng (b), sẽ chỉnh từ log.
+
+### §3.2 Phát hiện suy biến
+
+- Mỗi scan, tính ma trận 6×6 `HᵀR⁻¹H` và tách thành khối **tịnh tiến** và khối **xoay**. Trị riêng nhỏ nhất của mỗi khối so với ngưỡng (tầng b), có hysteresis.
+- Giá trị khởi đầu của ngưỡng là một việc của lát S1: lấy từ log trị riêng trên scene mở và scene suy biến (bay cao) trong SITL.
+- Mọi scan đều ghi log các trị riêng này.
+
+### §3.3 Output predictor `/lio/state` 100 Hz
+
+Làm theo đủ cơ chế của EKF2 (F35):
+
+1. Hai mốc thời gian: ESKF ở thời điểm scan, predictor ở thời điểm IMU mới nhất.
+2. Ring buffer trạng thái output cùng trục thời gian với IMU, độ trễ tối đa 300 ms. Sai số được tính **tại timestamp của scan**: tra buffer theo thời gian, không lấy mẫu cũ nhất.
+3. Attitude hiệu chỉnh qua delta-angle với gain `0.5·dt/delay`.
+4. Vel/pos hiệu chỉnh bằng PI (`dt/τ`, tích phân `0.1·gain²`), áp lên **toàn bộ buffer**. τ_vel = τ_pos = 0.25 s (tầng b).
+5. Kênh dọc riêng.
+6. dt được lấy trung bình và kẹp.
+7. Reset tường minh: phát `reset_counter` kèm delta pos, vel, yaw.
+8. Xuất output tracking error vào `/lio/health`.
+
+### §3.4 Khởi động lại
+
+- Seed = `T⁻¹ × pose PX4`, với `T` đang FROZEN.
+- Bắt đầu epoch mới; map được reset ở `navigation`.
+- **Luôn** tăng `reset_counter` theo epoch của chính mẫu dữ liệu.
+- Phát event `LioRestart` gồm: epoch cũ, epoch mới, seed, `T`.
+
+### §3.5 Thread
+
+- **ingest:** IMU, LiDAR, predictor, kiểm gap.
+- **estimator:** xử lý scan.
+- **events writer.**
+
+Hai thread chính trao đổi qua hàng đợi có giới hạn. Hàng đợi tràn là một event có reason.
+
+## §4. PX4 (D21, D7, D20)
+
+### §4.1 `px4_bridge`
+
+**EV gửi EKF2**
+
+- Nguồn là `/lio/odometry` 10 Hz, **chỉ gửi khi LIO ở TRACKING**.
+- Nhãn frame `LOCAL_FRAME_FRD`.
+- `reset_counter` lấy từ epoch của chính mẫu.
+- `timestamp_sample` là thời điểm scan, đổi sang đồng hồ PX4 qua timesync.
+- Covariance và quality lấy từ LIO.
+
+**Alignment `T_px4←lio`, 4-DoF (x, y, z, yaw)**
+
+- Mỗi cặp mẫu cùng thời điểm (pose LIO tại thời điểm scan, pose PX4 nội suy tại đúng thời điểm đó) cho một `T` tức thời.
+- `T` được lọc với `τ_T` = 2 s (tầng b) và giới hạn tốc độ biến thiên. `T` tức thời lệch khỏi `T` đã lọc quá 0.5 m hoặc 5° (tầng b) thì bị bỏ qua và phát event.
+- Log cả `T` thô và `T` đã lọc.
+- PX4 reset: cộng **tất định** các delta `xy/z/heading` từ `vehicle_local_position` vào `T`. Không giả định mỗi lần counter chỉ tăng 1.
+- Trạng thái `T`:
+
+```text
+INIT ──20 cặp nhất quán liên tiếp──► VALID ──LIO LOST──► FROZEN ──LIO TRACKING──► VALID
+                               │                  └──PX4 reset hoặc FROZEN quá lio_recovery_timeout_s──► INVALID
+                               ├──PX4 reset: cộng delta (vẫn VALID)
+                               └──VALID không có cặp mới > 1.0 s──► INVALID
+```
+
+- Xuất `/alignment` gồm: `T`, trạng thái, tuổi, residual.
+
+### §4.2 `px4_mode`
+
+```text
+UNREGISTERED ─► IDLE ──PX4 kích hoạt──► ACTIVE ──bàn giao(Reason)──► RELEASING ──► RELEASED
+                  ▲                       │
+                  └── PX4 tự huỷ (Reason: OPERATOR | PX4_FAILSAFE) ┘
+```
+
+**Mỗi tick setpoint**
+
+1. Lấy `/nav/command` mới nhất.
+2. Nếu tuổi vượt lease 100 ms thì bàn giao với reason `COMMAND_STREAM_LOST`.
+3. Biến đổi P/V/A và yaw qua `T`, chấp nhận khi `T` là VALID hoặc FROZEN.
+4. Nếu `T` là INVALID thì bàn giao với reason `ALIGNMENT_INVALID`.
+5. Gửi `TrajectorySetpoint`.
+
+**Các quy định khác**
+
+- `px4_mode` không tự quyết định hold; hold là lệnh do Supervisor gửi.
+- Trạng thái "đang bay" lấy từ `vehicle_land_detected`.
+- **Cách bàn giao:**
+  - PX4 còn vị trí: chuyển sang AUTO_LOITER qua mode executor, tối đa 3 lần thử.
+  - PX4 không còn vị trí: kết thúc mode với lỗi để failsafe của PX4 tự chọn mode (ví dụ Descend).
+- Input đi qua mailbox kiểu latest-value. Không publish khi đang giữ khoá.
+
+## §5. World, Planner, Bundle (D23, D24)
+
+### §5.1 Bundle (bất biến)
+
+```text
+Bundle {
+  identity:    mission_id, goal_seq, lio_epoch, request_id, world_revision, profile
+  time:        start_ns, backup_start_ns, end_ns             // int64 ns
+  segments[]:  { role: MAIN | BACKUP | BRAKE, đa thức vị trí P(t) 3D }
+  certificate: { checks_passed (bitset đầy đủ), certifier_version, unknown_policy_main, unknown_policy_backup }
+}
+Bất biến: MAIN prefix ≥ 1.0 s (trừ BRAKE); kết thúc ở trạng thái đứng yên; PVAJ liên tục tại mọi chỗ nối
+```
+
+### §5.2 Mapping actor
+
+- Nhận `/lio/scan`, dùng ROG-map backend (vendor).
+- Kết quả cập nhật có kiểu: `UPDATED` hoặc `NO_CHANGE(reason)`. **Không bao giờ poison.** Gặp exception thì reset map, tăng `world_generation` và phát event.
+- Chỉ có **một** cài đặt WorldView và **một** bộ duyệt voxel (DDA). Luôn tôn trọng `unknown_policy` được truyền vào.
+- Bán kính inflation lấy từ một nguồn duy nhất.
+- Xuất snapshot bất biến kèm `revision` và vùng thay đổi.
+- API: `classify`, `traversable(segment, policy)`, `swept(trajectory, policy)`, `revalidate(timeline, changed_region)`.
+- `ResetMap` khi epoch LIO đổi.
+
+### §5.3 Planner (worker, hàm thuần)
+
+```text
+PlanningRequest { anchor PVAJ, goal (frame LIO), world snapshot, profile, limits, deadline }
+  → A* guide → CIRI corridor → MINCO MAIN (UNKNOWN theo profile)
+  → BACKUP: seed phanh tất định → tối ưu (known-free ở mặc định / UNKNOWN ở khéo léo)
+  → Certifier ĐỘC LẬP: dynamics và flatness (yaw rate ±ω_max) · corridor liên tục · swept world ·
+                       route regression (đóng khi dữ liệu route hỏng) · R1 · nối liên tục
+  → Result<Bundle, Reason>
+```
+
+- Kết quả optimizer là enum: `Converged`, `Cancelled`, `DeadlineExceeded`, `Infeasible`, …
+- Planner không giữ state ẩn giữa các request. Warm-start là input tường minh, có khoá theo identity.
+- Không có đường heading rebind.
+- Nhịp 10 Hz, deadline solve 80 ms (tầng a).
+- Giới hạn động học:
+  - MAIN nominal 5/5/8 (tốc độ/gia tốc/jerk) cho beta;
+  - vật lý và BACKUP 12/9/30.
+
+  Cả hai lấy từ config. Không ghi đè ngầm.
+
+**Tận dụng và bỏ từ `main`**
+
+| Tận dụng (dọn và sửa khi tách) | Bỏ |
+|---|---|
+| `astar`, `ciri`, lõi `corridor_generator`, `minco`, `lbfgs`, `sdlp`/`sdqp`, giải nghiệm đa thức (sửa lỗi nghiệm bội), toán phanh BACKUP, flatness map, swept check (gộp lại thành một) | Phần điều phối `planner.cpp`, `planner_facade`, `Config`, `log_utils`, các hook viz, `quickhull`, `yaw_traj_opt` |
+
+### §5.4 Bộ tổng hợp phanh
+
+- Hàm thuần: (trạng thái đo được, world, giới hạn vật lý) → `Result<Bundle(BRAKE), Reason>`.
+- Dùng đa thức dừng min-snap cộng swept check.
+- Chạy trên thread Supervisor, budget 10 ms (hằng số tầng a). Vượt budget thì coi như không chứng nhận được.
+
+## §6. Quy ước chung (D12, D22, D25)
+
+### §6.1 Event log
+
+```text
+EventRecord { t_steady_ns, t_ros_ns, component, event, state_before, state_after, reason,
+              identity {mission_id, lio_epoch, request_id, bundle_id, world_revision},
+              values[≤16] (key, double) }
+```
+
+- Mỗi process có một ring buffer, cộng một thread writer ghi ra `/events` và file JSONL cho mỗi lần chạy.
+- Ring đầy thì đếm số bản ghi bị bỏ và phát event `EventsDropped`.
+- Script `tools/uavnav` dùng event log để:
+  - tính KPI;
+  - đếm theo từng reason;
+  - dựng lại timeline.
+
+### §6.2 Ba tầng tham số
+
+| Tầng | Ở đâu | Đổi thế nào |
+|---|---|---|
+| (a) Hằng số | `limits.hpp` của từng thành phần, có comment ghi cách suy ra | Review thiết kế |
+| (b) YAML có giới hạn | Struct có kiểu, đơn vị nằm trong tên (`_s`, `_mps`, `_m`), schema có min/max | Sửa YAML. Giá trị ngoài phạm vi thì process từ chối khởi động |
+| (c) Profile và mission | File profile, file mission. Runner đặt tham số PX4 theo profile | Chọn khi chạy |
+
+Mỗi giá trị chỉ có **một** nguồn.
+
+### §6.3 Thời gian
+
+- Bốn kiểu riêng: `SensorTime`, `RosTime`, `SteadyTime`, `Px4Time`. Mọi giá trị là int64 ns.
+- Mỗi cycle tạo **một** `TimeSnapshot`.
+- Budget được đo không tính thời gian chờ khoá.
+
+### §6.4 Thread và nhịp
+
+| Process | Thread | Nhịp |
+|---|---|---|
+| `lio` | ingest+predictor, estimator, events | IMU 200 Hz, state 100 Hz, scan 10 Hz |
+| `px4_bridge` | executor, events | EV 10 Hz |
+| `navigation` | mapping, planner, supervisor, events | map 10 Hz, plan ≤ 10 Hz, command 50 Hz |
+| `px4_mode` | vòng px4_ros2, events | 50–100 Hz |
+
+- Giữa các thread chỉ truyền dữ liệu bất biến.
+- Không publish và không gọi callback khi đang giữ khoá.
+- Lỗi của worker luôn có đường phục hồi hoặc fail-closed tường minh.
+
+### §6.5 Message v2
+
+`LioState`, `LioHealth`, `LioOdometry`, `Alignment`, `NavCommand` (P/V/A + yaw, frame LIO, epoch, `bundle_id`, phase, lease), `EventRecord`, `MissionDefinition`.
+
+### §6.6 Khi một process chết (beta)
+
+Beta không tự khởi động lại process. Các thành phần khác phát hiện qua health stale và đi theo guard tương ứng:
+- `lio` chết được coi là LIO LOST;
+- `navigation` chết dẫn tới `COMMAND_STREAM_LOST` ở `px4_mode`.
+
+## §7. Bố cục, thứ tự xây, theo dõi (D26, D16)
+
+### §7.1 Package
+
+```text
+src/external/  px4_msgs, px4_ros2_interface_lib, livox_ros_driver2
+src/vendor/    ikfom_vendor, ikd_tree_vendor, rog_map_vendor
+src/sim/       uav_simulation, uav_description
+src/core/      uavnav_core, uavnav_interfaces
+src/estimation/uavnav_lio_core (thuần), uavnav_lio
+src/navigation/uavnav_world, uavnav_planning, uavnav_supervisor (thuần), uavnav_navigation
+src/px4/       uavnav_px4_bridge, uavnav_px4_mode
+src/uavnav_bringup             tools/uavnav/
+```
+
+Logic quyết định nằm trong thư viện thuần, test được không cần ROS. Package ROS chỉ là vỏ.
+
+### §7.2 Lát cắt dọc
+
+| Lát | Nội dung | Kiểm tra |
+|---|---|---|
+| S0 | `uavnav_core`, `uavnav_interfaces`, khung build, gate tối giản (thay `gate.sh` và các validator của `main`) | Unit test |
+| S1 | `uavnav_lio` và `uavnav_px4_bridge`, tham số PX4 theo profile | Hover ở mode Position của PX4, EKF2 fuse EV, log `T`. Kiểm giả thuyết F34 |
+| S2 | `uavnav_px4_mode`, Supervisor tối giản, quỹ đạo thẳng, yaw Y1/Y3a, reason bàn giao | Bay tới waypoint trong môi trường trống |
+| S3 | `uavnav_world`, `uavnav_planning`, commit timeline, R1–R5 | Scene có vật cản |
+| S4 | LIO LOST/REACQUIRING/khởi động lại, phanh, guard bỏ cuộc, cắt LiDAR trong sim | Fault injection |
+| S5 | Gate beta (§7.3) | KPI trên các scene cố định |
+
+### §7.3 Gate beta (D14, D18)
+
+| Hạng mục | Ngưỡng |
+|---|---|
+| Va chạm trên các scene cố định | 0 |
+| Mission chạy hết ở 1–5 m/s | Có |
+| Bàn giao không có Reason | 0 |
+| Unit test cho mọi state machine và mọi hàm quyết định an toàn | Có |
+| Thời gian ở phase MAIN trên tổng thời gian di chuyển | ≥ 95% |
+| Số lần vào BACKUP | ≤ 1 / mission |
+| BRAKE trên scene tĩnh | 0 |
+| HOLD không do waypoint STOP | 0 |
+| Tốc độ trung bình / cruise trên đoạn thẳng | ≥ 0.85 |
+
+Bảng tiêu chí đầy đủ để đánh giá sau beta là O4 trong DECISIONS.
+
+### §7.4 Theo dõi bám thiết kế
+
+- Mỗi work package trỏ tới mục § của spec mà nó hiện thực.
+- [TRACEABILITY.md](../TRACEABILITY.md) ghi: yêu cầu → mục spec → WP → trạng thái → bằng chứng.
+- Cuối mỗi WP có bước review so code với spec. Mỗi chỗ lệch thành một mục O\*.
+- **Quy tắc dừng:** có ≥ 3 chỗ lệch đang mở, hoặc bất kỳ chỗ lệch nào chạm §2, thì dừng lại sửa thiết kế tổng.
+
+## §8. Hoãn lại sau beta
+
+| Hạng mục | Mã |
+|---|---|
+| Bảng tiêu chí đo đầy đủ | O4 |
+| Chiến lược lên 10 m/s và đo vùng known-free | O7 |
+| Y3b | D24 |
+| Respawn process | §6.6 |
+| Relocalize vào map cũ | D20 |
+| Đo lại lựa chọn EV 10 Hz và τ | O2 |
+| Ngưỡng suy biến | O6 |
+| Lọc `T` | D21 |
