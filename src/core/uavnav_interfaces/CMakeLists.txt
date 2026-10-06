@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
+# rosidl code generation requires both C and CXX language support
 project(uavnav_interfaces LANGUAGES C CXX)
 
 find_package(ament_cmake REQUIRED)
@@ -19,5 +20,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     builtin_interfaces
     geometry_msgs
 )
+
+ament_export_dependencies(rosidl_default_runtime)
 
 ament_package()

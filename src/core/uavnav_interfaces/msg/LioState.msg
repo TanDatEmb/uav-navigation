@@ -1,4 +1,4 @@
-# LiDAR-inertial state at IMU timestamp
+# LiDAR-inertial state at sensor time
 # frame: lio_odom (pose), base_link (velocity, angular_velocity)
 builtin_interfaces/Time stamp
 uint32 epoch
