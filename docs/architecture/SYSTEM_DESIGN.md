@@ -372,6 +372,17 @@ Mỗi giá trị chỉ có **một** nguồn.
 
 `LioState`, `LioHealth`, `LioOdometry`, `Alignment`, `NavCommand` (P/V/A + yaw, frame LIO, epoch, `bundle_id`, phase, lease), `EventRecord`, `MissionDefinition`.
 
+Quy ước bắt buộc (D28):
+- **Miền thời gian của từng trường:**
+  - `LioState.stamp`, `LioOdometry.stamp`: SensorTime.
+  - `LioHealth.stamp`: SensorTime của mẫu IMU mới nhất được đánh giá.
+  - `Alignment.stamp`: SensorTime của mẫu LIO trong cặp mới nhất.
+  - `NavCommand.stamp` và `NavCommand.sample_time_ns`: RosTime.
+- **`LioOdometry.quality`:** uint8, 0–100, lấy từ biên độ suy biến của LIO. Bridge chép sang `VehicleOdometry.quality`. Beta đặt `EKF2_EV_QMIN=0`, nên giá trị này chỉ được ghi log.
+- **`MissionDefinition`:**
+  - `yaw_rad` là yaw cho Y1; NaN nghĩa là dùng yaw lúc bắt đầu mission.
+  - Với frame GPS, `z` là độ cao so với home của PX4.
+
 ### §6.6 Khi một process chết (beta)
 
 Beta không tự khởi động lại process. Các thành phần khác phát hiện qua health stale và đi theo guard tương ứng:
