@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import re
+import subprocess
 from urllib.parse import unquote
 
 LINK = re.compile(r'!?\[[^\]]*\]\(([^)]+)\)')
@@ -45,6 +46,16 @@ def check_document(root: Path, doc: Path) -> list[str]:
                 errors.append(f'{doc.relative_to(root)}:{number}: citation out of range {match.group(0)}')
     return errors
 
+def tracked_documents(root: Path, directory: Path) -> list[Path]:
+    """Return git-tracked Markdown files under directory (rglob outside a git repo)."""
+    try:
+        result = subprocess.run(
+            ['git', '-C', str(root), 'ls-files', '-z', '--', f'{directory.relative_to(root)}/*.md'],
+            check=True, capture_output=True, text=True)
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return sorted(directory.rglob('*.md'))
+    return sorted(root / name for name in result.stdout.split('\0') if name)
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('root', nargs='?', default='.')
@@ -55,7 +66,7 @@ def main() -> int:
     if not directory.is_dir():
         print(f'documentation validation: FAIL (missing directory {args.docs})')
         return 1
-    documents = sorted(directory.rglob('*.md'))
+    documents = tracked_documents(root, directory)
     if not documents:
         print('documentation validation: FAIL (no documentation)')
         return 1
