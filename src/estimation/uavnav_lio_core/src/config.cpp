@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "uavnav/core/time_convert.hpp"
 
@@ -18,19 +19,38 @@ std::unexpected<ConfigError> fail(Kind kind, std::string_view key, std::string d
   return std::unexpected(ConfigError{kind, std::string(key), std::move(detail)});
 }
 
-// A count key: a whole number within the spec bounds (already checked by load_params).
-Result<std::uint32_t, ConfigError> count(const config::ParamValues& values, std::string_view key) {
+// The value of `key`, re-checked against its kLioSpecs entry. load_lio_config is public and may be
+// handed hand-built ParamValues that never went through load_params, so nothing is assumed.
+Result<double, ConfigError> checked(const config::ParamValues& values, std::string_view key) {
   const auto v = config::value(values, key);
+  if (!v) return std::unexpected(v.error());
+  if (!std::isfinite(*v)) return fail(Kind::kNotFinite, key, std::string(key) + " must be finite");
+  for (const config::ParamSpec& spec : kLioSpecs) {
+    if (spec.key == key && (*v < spec.min || *v > spec.max)) {
+      return fail(Kind::kOutOfRange, key,
+                  std::string(key) + " = " + std::to_string(*v) + " is outside [" + std::to_string(spec.min) +
+                      ", " + std::to_string(spec.max) + "]");
+    }
+  }
+  return *v;
+}
+
+// A count key: a whole number within the spec bounds, so the cast below cannot be undefined.
+Result<std::uint32_t, ConfigError> count(const config::ParamValues& values, std::string_view key) {
+  const auto v = checked(values, key);
   if (!v) return std::unexpected(v.error());
   if (std::floor(*v) != *v) return fail(Kind::kWrongType, key, std::string(key) + " must be a whole number");
   return static_cast<std::uint32_t>(*v);
 }
 
 Result<time::Duration, ConfigError> seconds_key(const config::ParamValues& values, std::string_view key) {
-  const auto v = config::value(values, key);
+  const auto v = checked(values, key);
   if (!v) return std::unexpected(v.error());
   const auto d = time::duration_from_seconds(*v);
-  if (!d) return fail(Kind::kOutOfRange, key, std::string(key) + " is not a valid duration: " + std::string(to_string(d.error())));
+  if (!d) {
+    return fail(Kind::kOutOfRange, key,
+                std::string(key) + " is not a valid duration: " + std::string(to_string(d.error())));
+  }
   return *d;
 }
 
@@ -47,7 +67,7 @@ Result<LioConfig, ConfigError> load_lio_config(const config::ParamValues& values
   if (!gap_lost) return std::unexpected(gap_lost.error());
   const auto degeneracy_lost = seconds_key(values, "lifecycle_degeneracy_lost_s");
   if (!degeneracy_lost) return std::unexpected(degeneracy_lost.error());
-  const auto sigma = config::value(values, "lifecycle_position_sigma_lost_m");
+  const auto sigma = checked(values, "lifecycle_position_sigma_lost_m");
   if (!sigma) return std::unexpected(sigma.error());
 
   if (*gap_lost <= *gap_degraded) {

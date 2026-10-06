@@ -26,10 +26,10 @@ static_assert(static_cast<std::uint8_t>(LioState::kRestarting) == 4);
 
 enum class LioReason : std::uint8_t {
   kNone,
-  kScanAccepted,
+  kScanAccepted,  // reserved for estimator/health output; never returned by LioLifecycle::on()
   kConfirmationReached,
   kDegenerateScans,
-  kScanEmpty,
+  kScanEmpty,  // reserved for estimator/health output; never returned by LioLifecycle::on()
   kLidarGapDegraded,
   kLidarGapLost,
   kDegeneracyPersisted,
@@ -74,7 +74,10 @@ static_assert(ReasonEnum<LioReason>);
 /// One per scan result or IMU-time tick.
 struct LioEvent {
   enum class Kind : std::uint8_t { kScanGood, kScanDegenerate, kScanEmpty, kImuTick, kMapReady, kRestartSeeded } kind;
-  time::SensorTime t;           ///< IMU or scan sensor time.
+  /// IMU sample stamp, or for scan events the scan END time (what the §3.1 gap rule measures from).
+  /// Must come from the range-checked converters (time::from_stamp<SensorTag>: non-negative and
+  /// at most time::kMaxStampSeconds), so `t - last_scan_time()` cannot overflow int64.
+  time::SensorTime t;
   double position_sigma_m{0.0};  ///< sqrt(max diag of position covariance). NaN counts as exceeded.
 };
 
@@ -124,10 +127,15 @@ class LioLifecycle {
   /// The only writer of the state. Applies at most one transition per event.
   /// Guards (in each state, in this order): position sigma first, then the event itself.
   /// LiDAR gaps are evaluated on kImuTick only; scans never evaluate a gap.
+  ///
+  /// Preconditions: every `e.t` was built by the range-checked converters (see LioEvent::t);
+  /// a raw or garbage stamp can overflow the gap subtraction (undefined behaviour). "Newest scan"
+  /// means most recently received (arrival order): last_scan_time() is plain assignment, so an
+  /// out-of-order older stamp moves it backward.
   Transition on(const LioEvent& e) noexcept;
 
   LioState state() const noexcept { return state_; }
-  /// Stamp of the newest scan event of any kind (good, degenerate, empty); the reference for gap checks.
+  /// Stamp of the most recently received scan event of any kind (good, degenerate, empty); the reference for gap checks.
   time::SensorTime last_scan_time() const noexcept { return last_scan_; }
 
  private:
@@ -139,6 +147,9 @@ class LioLifecycle {
   Transition on_lost(const LioEvent& e) noexcept;
   Transition on_restarting(const LioEvent& e) noexcept;
 
+  /// Progress inside INITIALIZING. Reset to kWaitingForMap by every state change.
+  enum class InitPhase : std::uint8_t { kWaitingForMap, kConfirming };
+
   LifecycleConfig cfg_;
   LioState state_{LioState::kInitializing};  // the one and only state
   time::SensorTime last_scan_{};
@@ -146,7 +157,7 @@ class LioLifecycle {
   // Counters and time points below are data about recent events, not state. Each is reset
   // by go() (a state change), except degenerate_since_, which survives TRACKING -> DEGRADED
   // because that transition does not end the degenerate run that caused it.
-  std::optional<time::SensorTime> map_ready_at_;      // INITIALIZING: when the map became ready; none = still waiting
+  InitPhase init_phase_{InitPhase::kWaitingForMap};    // INITIALIZING only: scans count once the map is ready
   std::uint32_t good_run_{0};                         // INITIALIZING (after map ready) / DEGRADED: consecutive good scans
   std::uint32_t bad_run_{0};                          // TRACKING: consecutive degenerate or empty scans
   std::optional<time::SensorTime> degenerate_since_;  // first degenerate/empty scan of the current run

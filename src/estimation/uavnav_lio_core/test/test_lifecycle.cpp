@@ -487,3 +487,120 @@ TEST(LioLifecycle, TransitionsAlwaysFollowTheTable) {
     }
   }
 }
+
+// --- rule precedence (sigma first) ---------------------------------------------------------
+
+TEST(LioLifecyclePrecedence, SigmaBeatsGapLostOnTheSameImuTick) {
+  Rig r;
+  r.ToDegraded();
+  // Gap 0.6 s > gap_lost AND sigma 0.9 > limit: both rules fire; sigma is checked first.
+  ExpectChange(r.lc.on(Ev(Kind::kImuTick, r.now_ms + 600, 0.9)), LioState::kDegraded, LioState::kLost,
+               LioReason::kCovarianceExceeded);
+}
+
+TEST(LioLifecyclePrecedence, SigmaBeatsGapDegradedOnTheSameImuTick) {
+  Rig r;
+  r.ToTracking();
+  ExpectChange(r.lc.on(Ev(Kind::kImuTick, r.now_ms + 300, 0.9)), LioState::kTracking, LioState::kLost,
+               LioReason::kCovarianceExceeded);
+}
+
+TEST(LioLifecyclePrecedence, SigmaBeatsDegenerateScanThatWouldDegrade) {
+  Rig r;
+  r.ToTracking();
+  r.Scan(Kind::kScanDegenerate);
+  r.Scan(Kind::kScanDegenerate);
+  // The third degenerate scan would degrade, but its sigma is exceeded.
+  ExpectChange(r.Scan(Kind::kScanDegenerate, 0.9), LioState::kTracking, LioState::kLost,
+               LioReason::kCovarianceExceeded);
+}
+
+TEST(LioLifecyclePrecedence, SigmaBeatsDegeneracyPersistedAndConfirmation) {
+  Rig r;
+  r.ToDegraded();
+  r.Scan(Kind::kScanDegenerate);
+  r.now_ms += 1'500;  // far beyond degeneracy_lost since the first degenerate scan
+  ExpectChange(r.lc.on(Ev(Kind::kScanDegenerate, r.now_ms, 0.9)), LioState::kDegraded, LioState::kLost,
+               LioReason::kCovarianceExceeded);
+  Rig r2;
+  r2.ToDegraded();
+  for (int i = 0; i < 4; ++i) r2.Scan(Kind::kScanGood);
+  // The fifth good scan would confirm TRACKING, but its sigma is exceeded.
+  ExpectChange(r2.Scan(Kind::kScanGood, 0.9), LioState::kDegraded, LioState::kLost, LioReason::kCovarianceExceeded);
+}
+
+// --- IMU ticks between scans must not touch the scan counters ---------------------------------
+
+namespace {
+
+// 19 IMU ticks at 5 ms (200 Hz) between 10 Hz scans, then the scan itself.
+Transition ScanWithTicks(Rig& r, Kind k) {
+  for (int i = 1; i < 20; ++i) {
+    const auto tick = r.lc.on(Ev(Kind::kImuTick, r.now_ms + 5 * i));
+    EXPECT_FALSE(tick.changed) << "tick changed state at " << r.now_ms + 5 * i;
+  }
+  return r.Scan(k);
+}
+
+}  // namespace
+
+TEST(LioLifecycleTicks, TicksDoNotResetInitializingConfirmation) {
+  Rig r;
+  r.lc.on(Ev(Kind::kMapReady, 0));
+  for (int i = 0; i < 4; ++i) ExpectUnchanged(ScanWithTicks(r, Kind::kScanGood), LioState::kInitializing);
+  ExpectChange(ScanWithTicks(r, Kind::kScanGood), LioState::kInitializing, LioState::kTracking,
+               LioReason::kConfirmationReached);
+}
+
+TEST(LioLifecycleTicks, TicksDoNotResetTrackingDegenerateRun) {
+  Rig r;
+  r.ToTracking();
+  ExpectUnchanged(ScanWithTicks(r, Kind::kScanDegenerate), LioState::kTracking);
+  ExpectUnchanged(ScanWithTicks(r, Kind::kScanEmpty), LioState::kTracking);
+  ExpectChange(ScanWithTicks(r, Kind::kScanDegenerate), LioState::kTracking, LioState::kDegraded,
+               LioReason::kDegenerateScans);
+}
+
+TEST(LioLifecycleTicks, TicksDoNotResetDegradedConfirmation) {
+  Rig r;
+  r.ToDegraded();
+  for (int i = 0; i < 4; ++i) ExpectUnchanged(ScanWithTicks(r, Kind::kScanGood), LioState::kDegraded);
+  ExpectChange(ScanWithTicks(r, Kind::kScanGood), LioState::kDegraded, LioState::kTracking,
+               LioReason::kConfirmationReached);
+}
+
+TEST(LioLifecycleTicks, TicksDoNotResetTheDegenerateClockInDegraded) {
+  Rig r;
+  r.ToDegraded();
+  // Degenerate scans with ticks in between: the run clock keeps running to LOST.
+  Transition tr{};
+  for (int i = 0; i < 20 && r.lc.state() == LioState::kDegraded; ++i) tr = ScanWithTicks(r, Kind::kScanDegenerate);
+  ExpectChange(tr, LioState::kDegraded, LioState::kLost, LioReason::kDegeneracyPersisted);
+}
+
+// --- sigma fails closed ---------------------------------------------------------------------
+
+TEST(LioLifecycleSigma, OnlyZeroToLimitIsAcceptable) {
+  const double inf = std::numeric_limits<double>::infinity();
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  struct Case { double sigma; bool lost; };
+  for (const Case c : {Case{0.0, false}, Case{0.5, false}, Case{0.25, false}, Case{-0.0, false},
+                       Case{std::nextafter(0.5, 1.0), true}, Case{-1e-12, true}, Case{-1.0, true}, Case{-inf, true},
+                       Case{inf, true}, Case{nan, true}}) {
+    Rig r;
+    r.ToTracking();
+    const auto tr = r.lc.on(Ev(Kind::kImuTick, r.now_ms + 10, c.sigma));
+    if (c.lost) {
+      ExpectChange(tr, LioState::kTracking, LioState::kLost, LioReason::kCovarianceExceeded);
+    } else {
+      ExpectUnchanged(tr, LioState::kTracking);
+    }
+  }
+}
+
+TEST(LioLifecycleSigma, NegativeSigmaAlsoFailsClosedInDegraded) {
+  Rig r;
+  r.ToDegraded();
+  ExpectChange(r.lc.on(Ev(Kind::kImuTick, r.now_ms + 10, -0.1)), LioState::kDegraded, LioState::kLost,
+               LioReason::kCovarianceExceeded);
+}

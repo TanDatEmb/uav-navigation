@@ -146,3 +146,57 @@ TEST(LioConfig, LoadLioConfigReportsMissingKeyWithoutThrowing) {
 }
 
 TEST(LioLimits, ScanPointCap) { EXPECT_EQ(limits::kMaxScanPoints, 200'000U); }
+
+// --- hand-built ParamValues (load_lio_config is public) ----------------------------------------
+
+namespace {
+
+config::ParamValues Beta() {
+  const auto values = config::load_params(kBeta, kLioSpecs);
+  EXPECT_TRUE(values.has_value());
+  return *values;
+}
+
+}  // namespace
+
+TEST(LioConfigHandBuilt, CountKeysRejectHostileValuesWithoutUndefinedCasts) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  struct Case { double value; Kind kind; };
+  for (const std::string_view key : {"lifecycle_confirm_scans", "lifecycle_degenerate_scans"}) {
+    for (const Case c : {Case{1e30, Kind::kOutOfRange}, Case{-3.0, Kind::kOutOfRange}, Case{0.0, Kind::kOutOfRange},
+                         Case{51.0, Kind::kOutOfRange}, Case{2.5, Kind::kWrongType}, Case{nan, Kind::kNotFinite},
+                         Case{inf, Kind::kNotFinite}, Case{-inf, Kind::kNotFinite}}) {
+      auto values = Beta();
+      values[std::string(key)] = c.value;
+      const auto r = load_lio_config(values);
+      ASSERT_FALSE(r.has_value()) << key << " = " << c.value;
+      EXPECT_EQ(r.error().kind, c.kind) << key << " = " << c.value << ": " << r.error().detail;
+      EXPECT_EQ(r.error().key, key) << c.value;
+    }
+  }
+}
+
+TEST(LioConfigHandBuilt, SecondsAndMetersKeysAreRangeCheckedToo) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  for (const std::string_view key : {"lifecycle_gap_degraded_s", "lifecycle_gap_lost_s", "lifecycle_degeneracy_lost_s",
+                                     "lifecycle_position_sigma_lost_m"}) {
+    for (const double bad : {-1.0, 1e30, nan}) {
+      auto values = Beta();
+      values[std::string(key)] = bad;
+      const auto r = load_lio_config(values);
+      ASSERT_FALSE(r.has_value()) << key << " = " << bad;
+      EXPECT_EQ(r.error().key, key);
+    }
+  }
+}
+
+TEST(LioConfigHandBuilt, BoundsAreInclusive) {
+  auto values = Beta();
+  values["lifecycle_confirm_scans"] = 1.0;
+  values["lifecycle_degenerate_scans"] = 10.0;
+  EXPECT_TRUE(load_lio_config(values).has_value());
+  values["lifecycle_confirm_scans"] = 50.0;
+  values["lifecycle_degenerate_scans"] = 50.0;
+  EXPECT_TRUE(load_lio_config(values).has_value());
+}

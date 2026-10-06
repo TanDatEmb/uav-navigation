@@ -19,9 +19,9 @@ constexpr bool is_bad_scan(LioEvent::Kind k) {
   return k == LioEvent::Kind::kScanDegenerate || k == LioEvent::Kind::kScanEmpty;
 }
 
-// A NaN sigma is "exceeded": the comparison is written so that anything that is not a
-// finite-or-infinite number at or below the limit fails closed.
-constexpr bool sigma_exceeded(double sigma, double limit) { return !(sigma <= limit); }
+// Fails closed: a sigma is acceptable only when it is a number in [0, limit]. NaN, negative
+// and -inf (a sqrt of a diagonal cannot be negative, so these are corrupt) count as exceeded.
+constexpr bool sigma_exceeded(double sigma, double limit) { return !(sigma >= 0.0 && sigma <= limit); }
 
 static_assert(is_listed(LioState::kLost, LioState::kRestarting, LioReason::kGeometryReturned));
 static_assert(!is_listed(LioState::kLost, LioState::kTracking, LioReason::kConfirmationReached));
@@ -36,7 +36,7 @@ Transition LioLifecycle::go(LioState to, LioReason reason) noexcept {
   state_ = to;
   good_run_ = 0;
   bad_run_ = 0;
-  map_ready_at_.reset();
+  init_phase_ = InitPhase::kWaitingForMap;
   // The degenerate run that degraded TRACKING is still the current run in DEGRADED.
   if (!(from == LioState::kTracking && to == LioState::kDegraded)) degenerate_since_.reset();
   return Transition{from, to, reason, true};
@@ -57,12 +57,12 @@ Transition LioLifecycle::on(const LioEvent& e) noexcept {
 Transition LioLifecycle::on_initializing(const LioEvent& e) noexcept {
   using Kind = LioEvent::Kind;
   if (e.kind == Kind::kMapReady) {
-    if (map_ready_at_) return unchanged();  // already counting; do not restart the confirmation
-    map_ready_at_ = e.t;
+    if (init_phase_ == InitPhase::kConfirming) return unchanged();  // already counting; do not restart
+    init_phase_ = InitPhase::kConfirming;
     good_run_ = 0;
     return Transition{state_, state_, LioReason::kMapReady, false};
   }
-  if (!map_ready_at_) return unchanged();  // scans are not counted before the map is ready
+  if (init_phase_ == InitPhase::kWaitingForMap) return unchanged();  // scans are not counted before the map is ready
   if (e.kind == Kind::kScanGood) {
     if (++good_run_ >= cfg_.confirm_scans) return go(LioState::kTracking, LioReason::kConfirmationReached);
   } else if (is_bad_scan(e.kind)) {
