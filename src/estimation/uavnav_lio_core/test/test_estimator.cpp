@@ -61,6 +61,8 @@ constexpr time::SensorTime kT0{1'000'000'000};                   // sensor time 
 constexpr double kTranslationMinInfo = 1.1e5;
 constexpr double kRotationMinInfo = 2.8e6;
 
+constexpr time::Duration kHealthPeriodForTest = time::milliseconds(100);  // limits::kHealthPeriod
+
 constexpr time::Duration Times(time::Duration d, std::int64_t n) { return time::Duration{d.ns * n}; }
 
 double Value(const events::EventRecord& r, std::string_view key) {
@@ -461,7 +463,7 @@ TEST(LioEstimator, ScanAheadOfImuIsDegenerateAndRebased) {
   EXPECT_TRUE(odometry);
 }
 
-// D28 (the IMU leads each scan by 120 ms, so a periodic health at scan end + 100 ms precedes the scan-path\n//
+// D28 (the IMU leads each scan by 120 ms, so a periodic health at scan end + 100 ms precedes the scan-path
 // transition): health stamps follow the newest IMU time, so they never decrease, even when the IMU leads the LiDAR and
 // a scan-path transition reports health for an older scan end.
 TEST(LioEstimator, HealthStampsNeverDecrease) {
@@ -497,6 +499,31 @@ TEST(LioEstimator, RejectsOutOfOrderInput) {
   EXPECT_TRUE(h.Imu(scene::make_imu({}, time::SensorTime{t1.ns + 5'000'000})).has_value());
   EXPECT_EQ(h.Events("ImuDuplicate").size(), 1U);
   EXPECT_EQ(h.Events("LioInputRejected").size(), 1U);
+}
+
+// A forward jump of the IMU stamps (one period, ten periods, a 1.7e9 s clock-domain jump) costs one health
+// output for that sample and the grid continues at 100 ms afterwards. The catch-up is closed-form: an
+// iterative catch-up would loop 1.7e10 times on the large jump.
+TEST(LioEstimator, HealthGridSurvivesForwardTimeJumps) {
+  for (const std::int64_t jump_ns :
+       {std::int64_t{100'000'000}, std::int64_t{1'000'000'000}, std::int64_t{1'700'000'000} * 1'000'000'000}) {
+    Harness h;
+    h.ImuUntil(kT0 + time::milliseconds(300));  // health grid anchored at kT0, next point kT0 + 400 ms
+    const time::SensorTime jumped{h.now().ns + jump_ns};
+    const auto r = h.Imu(scene::make_imu({}, jumped));
+    ASSERT_TRUE(r.has_value()) << jump_ns;
+    ASSERT_TRUE(r->health.has_value()) << jump_ns;
+    EXPECT_EQ(r->health->t, jumped);
+    std::vector<time::SensorTime> stamps;
+    for (int k = 1; k <= 40; ++k) {
+      const auto next = h.Imu(scene::make_imu({}, jumped + Times(kImuPeriod, k)));
+      ASSERT_TRUE(next.has_value());
+      if (next->health) stamps.push_back(next->health->t);
+    }
+    ASSERT_EQ(stamps.size(), 2U) << jump_ns;  // 200 ms of samples after the jump: two grid points
+    EXPECT_EQ(stamps[0], jumped + kHealthPeriodForTest);
+    EXPECT_EQ(stamps[1] - stamps[0], kHealthPeriodForTest);
+  }
 }
 
 // Per-sample events are rate-limited: 1st, 1000th, 2000th occurrence per reason and epoch.

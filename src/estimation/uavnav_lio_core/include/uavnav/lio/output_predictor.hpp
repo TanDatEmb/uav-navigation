@@ -164,6 +164,13 @@ class OutputPredictor {
   /// Number of reset_to calls so far (the value the next output sample carries). 0 before any reset.
   std::uint32_t reset_counter() const noexcept { return reset_counter_; }
 
+  /// The newest buffered output, including the shifts of applied corrections and resets since on_imu
+  /// returned it; nullopt before align.
+  std::optional<OutputSample> latest() const noexcept {
+    if (size_ == 0) return std::nullopt;
+    return newest().out;
+  }
+
   /// Vertical velocity (world z, m/s) of the separate vertical channel at the newest output (PX4
   /// z_deriv): unlike v_world_mps.z(), its integral is the channel's vertical position, which tracks
   /// the estimator's p.z through velocity corrections only. 0 before align.

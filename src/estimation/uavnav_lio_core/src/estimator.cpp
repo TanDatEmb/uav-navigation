@@ -479,7 +479,6 @@ struct LioEstimator::Impl {
 
   std::deque<fl::ImuSample> imu_history;          // bounded by limits::kImuHistoryCapacity
   std::optional<ImuInput> last_imu;               // newest accepted IMU sample
-  std::optional<OutputSample> last_output;        // newest predictor output
   std::optional<time::SensorTime> eskf_t;         // ESKF state time; nullopt until the IMU initialiser succeeds
   std::optional<time::SensorTime> last_scan_end;  // newest accepted scan end (ordering check)
   std::optional<time::SensorTime> next_health_t;
@@ -549,6 +548,7 @@ Result<StepOutputs, EstimatorReason> LioEstimator::push_imu(const ImuInput& imu,
   if (m.last_imu && imu.t < m.last_imu->t) return m.reject(EstimatorReason::kOutOfOrder, Stream::kImu, imu.t, now);
 
   StepOutputs out;
+  std::optional<OutputSample> produced;  // this sample's predictor output (tagged after the tick)
   if (m.last_imu && imu.t == m.last_imu->t) {
     if (m.spam_due(kDuplicateSlot)) {
       m.emit(m.event("ImuDuplicate", now)
@@ -579,25 +579,29 @@ Result<StepOutputs, EstimatorReason> LioEstimator::push_imu(const ImuInput& imu,
       const double dt_s = time::to_seconds(imu.t - m.last_imu->t);
       const ImuDelta delta{imu.t, 0.5 * (m.last_imu->gyro_rad_s + imu.gyro_rad_s) * dt_s,
                            0.5 * (m.last_imu->accel_mps2 + imu.accel_mps2) * dt_s, dt_s};
-      if (const auto o = m.predictor.on_imu(delta)) m.last_output = *o;
+      produced = m.predictor.on_imu(delta);
     }
     m.last_imu = imu;
   }
 
   const Transition tr = m.lifecycle.on(LioEvent{LioEvent::Kind::kImuTick, imu.t, m.position_sigma_m});
   m.on_transition(tr, imu.t, now, &out, std::nullopt);
-  if (m.last_output && m.last_output->t == imu.t) {
+  if (produced) {
     try {
-      out.states.push_back(StateOutput{*m.last_output, m.epoch, m.lifecycle.state()});
+      out.states.push_back(StateOutput{*produced, m.epoch, m.lifecycle.state()});
     } catch (...) {  // never throws: this output is dropped
       m.emit(m.event("AllocationFailed", now).reason(EstimatorEventReason::kAllocationFailed).value("site", 1));
     }
   }
-  // Periodic health on the sensor-time grid next_health_t + k * kHealthPeriod (no drift with jitter).
+  // Periodic health on the sensor-time grid next_health_t + k * kHealthPeriod (no drift with jitter): one
+  // health per sample at most, and the grid advances past imu.t in closed form, so a forward jump of the
+  // stamps (clock-domain jump, restamp) costs O(1). No overflow: stamps are range-checked (0 <= t <=
+  // time::kMaxStampSeconds = 9e18 ns), so 0 <= imu.t - next < 9.3e18 and next + (n * period) <= imu.t + period.
   if (!m.next_health_t || imu.t >= *m.next_health_t) {
     out.health = m.health(imu.t);
     if (!m.next_health_t) m.next_health_t = imu.t;
-    while (*m.next_health_t <= imu.t) m.next_health_t = *m.next_health_t + limits::kHealthPeriod;
+    const std::int64_t periods = (imu.t - *m.next_health_t).ns / limits::kHealthPeriod.ns + 1;
+    m.next_health_t = *m.next_health_t + time::Duration{periods * limits::kHealthPeriod.ns};
   }
   return out;
 }
@@ -686,8 +690,10 @@ Result<ResetDelta, EstimatorReason> LioEstimator::restart(const SeedPose& seed, 
     // Biases, gravity and extrinsics carry over from the old epoch. The velocity is the predictor's
     // dead-reckoned one at the newest IMU time, rotated from the old world into the seed's.
     fl::ManifoldState carried = m.eskf.stateView();
-    const Eigen::Quaterniond q_old = m.last_output ? m.last_output->q_world_imu : carried.orientation_odom_imu();
-    const Eigen::Vector3d v_old = m.last_output ? m.last_output->v_world_mps : carried.velocity_odom_imu_m_s();
+    // latest(): the newest output including the last applied correction (not the value on_imu returned).
+    const std::optional<OutputSample> latest = m.predictor.latest();
+    const Eigen::Quaterniond q_old = latest ? latest->q_world_imu : carried.orientation_odom_imu();
+    const Eigen::Vector3d v_old = latest ? latest->v_world_mps : carried.velocity_odom_imu_m_s();
     const Eigen::Quaterniond q_new_imu = q_seed * m.q_base_imu;
     carried.set_velocity_odom_imu_m_s((q_new_imu * q_old.conjugate()) * v_old);
 
@@ -721,7 +727,6 @@ Result<ResetDelta, EstimatorReason> LioEstimator::restart(const SeedPose& seed, 
   m.flush_spam(now);  // end of the old epoch: summaries of rate-limited events, under the old epoch id
   const std::uint32_t old_epoch = m.epoch;
   ++m.epoch;
-  m.last_output.reset();
   m.last_report = kNoReport;
   m.rate_reported = false;
   m.imu_period_samples = 0;

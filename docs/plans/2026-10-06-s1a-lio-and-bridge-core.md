@@ -674,9 +674,9 @@ Spec §3 (all subsections), D20. This is the single class the S1b ROS node calls
     static Result<std::unique_ptr<LioEstimator>, config::ConfigError>
         create(const LioConfig&, const Eigen::Isometry3d& base_T_imu, const Eigen::Isometry3d& imu_T_lidar,
                events::EventRecorder& events);
-    Result<StepOutputs, EstimatorReason> push_imu(const ImuInput&);    // runs predictor + gap check (kImuTick)
-    Result<StepOutputs, EstimatorReason> push_scan(ScanInput&&);       // predict -> deskew -> correct -> degeneracy -> lifecycle
-    Result<void, EstimatorReason> restart(const SeedPose& seed, const time::TimeSnapshot& now);  // only in RESTARTING
+    Result<StepOutputs, EstimatorReason> push_imu(const ImuInput&, const time::TimeSnapshot& now);  // runs predictor + gap check (kImuTick)
+    Result<StepOutputs, EstimatorReason> push_scan(ScanInput&&, const time::TimeSnapshot& now);     // predict -> deskew -> correct -> degeneracy -> lifecycle
+    Result<ResetDelta, EstimatorReason> restart(const SeedPose& seed, const time::TimeSnapshot& now);  // only in RESTARTING
     LioState state() const noexcept; std::uint32_t epoch() const noexcept;
   };
   ```
@@ -686,7 +686,7 @@ Spec §3 (all subsections), D20. This is the single class the S1b ROS node calls
   - **IMU-only gap check (F22):** every accepted IMU feeds `LioEvent{kImuTick, t}` to the lifecycle.
   - **Empty scan (F20/P5):** a scan with no points after preprocessing produces `kScanEmpty` and is never an exception.
   - **When `odometry` is produced:** only on a scan that leaves the state in TRACKING. It carries `quality` from the degeneracy report and the scan end time.
-  - **Restart (§3.4):**
+  - **Restart (§3.4):** `restart` returns `Result<ResetDelta, EstimatorReason>` (the predictor's reset delta, published with `reset_counter`).
     1. clears the map;
     2. applies the seed through `InitialStatePriorApplicator`;
     3. increments `epoch` and the predictor's `reset_counter` (`reset_to`);
