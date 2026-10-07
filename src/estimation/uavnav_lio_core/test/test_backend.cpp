@@ -11,6 +11,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <numbers>
 #include <optional>
 #include <span>
 #include <sstream>
@@ -131,6 +132,13 @@ class BackendHarness {
     return out;
   }
 
+  /// Pushes one request and processes it WITHOUT draining the result queue; returns step()'s value.
+  // noinline: GCC 13 reports a false -Wmaybe-uninitialized on the inlined variant move otherwise.
+  [[gnu::noinline]] bool PushNoDrain(BackendRequest&& request, time::SensorTime t) {
+    EXPECT_TRUE(channels_->requests.try_push(std::move(request)).has_value());
+    return backend_->step(Snap(t));
+  }
+
   /// IMU samples up to and including `end`.
   void ImuUntil(time::SensorTime end) {
     while (next_imu_ <= end) {
@@ -210,6 +218,13 @@ class BackendHarness {
   std::vector<BackendResult> results_;
   std::vector<time::SensorTime> imu_stamps_;
 };
+
+double Value(const events::EventRecord& r, std::string_view key) {
+  for (std::uint8_t i = 0; i < r.value_count; ++i) {
+    if (r.values[i].key == key) return r.values[i].value;
+  }
+  return std::numeric_limits<double>::quiet_NaN();
+}
 
 std::string ReadFile(const std::string& path) {
   std::ifstream in(path);
@@ -445,12 +460,23 @@ TEST(LioBackend, OdometryMatchesTheS1aFacade) {
       const auto b = h.Push(ScanJob{++seq, 1, MapPolicy::kInsert, MakeScan(kind, scan_end, end)}, end);
       ASSERT_EQ(b.size(), 1U);
       scan_end = end;
+      (*recorder)->flush();
+      std::string facade_reason;
+      {
+        const std::scoped_lock lock(store->mutex);
+        for (const auto& r : store->records) {
+          if (r.event == "LioScan") facade_reason = std::string(r.reason);
+        }
+      }
+      EXPECT_EQ(b.front().kind == BackendResultKind::kScanGood, facade_reason == "SCAN_GOOD") << seq << facade_reason;
       if (!f->odometry) continue;
       ASSERT_TRUE(b.front().odometry.has_value()) << seq;
       const BaseOdometry& o = *b.front().odometry;
       EXPECT_LT((o.p_world_m - f->odometry->p_world_m).norm(), 1e-12) << seq;
       EXPECT_LT(o.q_world_base.angularDistance(f->odometry->q_world_base), 1e-12) << seq;
       EXPECT_LT((o.pose_cov - f->odometry->pose_cov).cwiseAbs().maxCoeff(), 1e-12) << seq;
+      EXPECT_LT((o.v_world_mps - f->odometry->v_world_mps).norm(), 1e-12) << seq;
+      EXPECT_LT((o.vel_cov - f->odometry->vel_cov).cwiseAbs().maxCoeff(), 1e-12) << seq;
       ++compared;
     }
   }
@@ -558,4 +584,152 @@ TEST(LioBackend, ResultKindsHaveNames) {
   EXPECT_EQ(to_string(EstimatorReason::kBackendBusy), "BACKEND_BUSY");
   EXPECT_EQ(to_string(EstimatorEventReason::kStaleEpoch), "STALE_EPOCH");
   EXPECT_EQ(to_string(EstimatorEventReason::kResultQueueFull), "RESULT_QUEUE_FULL");
+}
+
+// --- fix round 1 ---------------------------------------------------------------------------------------
+
+// A scan ending at or before the ESKF time is not processed: no prediction backwards, no rebase, no snapshot.
+TEST(LioBackend, ScanEndingAtOrBeforeTheEskfTimeIsNotProcessed) {
+  BackendHarness h;
+  h.InitialiseAndBootstrap();
+  const BackendResult good = h.Scan(ScanKind::kRoom);
+  ASSERT_EQ(good.kind, BackendResultKind::kScanGood);
+  const time::SensorTime t_end = h.scan_end();  // the ESKF time now
+  for (const time::SensorTime end : {t_end, t_end - time::milliseconds(50)}) {
+    const BackendResult r = h.ScanAt(ScanKind::kRoom, end - kScanPeriod, end, MapPolicy::kInsert, 1);
+    EXPECT_EQ(r.kind, BackendResultKind::kScanNotProcessed);
+    EXPECT_FALSE(r.snapshot.has_value());
+    EXPECT_FALSE(r.report.has_value());
+    EXPECT_FALSE(r.odometry.has_value());
+    EXPECT_EQ(h.Events("LioScan").back().reason, "BEFORE_ESTIMATOR_TIME");
+  }
+  EXPECT_TRUE(h.Events("EskfRebased").empty());
+  const time::SensorTime next_end = t_end + kScanPeriod;
+  h.ImuUntil(next_end);
+  const BackendResult next = h.ScanAt(ScanKind::kRoom, t_end, next_end, MapPolicy::kInsert, 1);
+  EXPECT_EQ(next.kind, BackendResultKind::kScanGood);
+  ASSERT_TRUE(next.snapshot.has_value());
+  EXPECT_EQ(next.snapshot->t, next_end);
+}
+
+// A rejected restart is one reason-bearing event at the backend's decision point, and changes nothing.
+TEST(LioBackend, RejectedRestartEmitsItsReason) {
+  const SeedPose origin{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()};
+  {
+    BackendHarness h;  // not initialised
+    h.ImuUntil(kT0 + time::milliseconds(100));
+    EXPECT_EQ(h.Restart(2, origin, Eigen::Quaterniond::Identity(), Eigen::Vector3d::Zero()).kind,
+              BackendResultKind::kRestartRejected);
+    const auto ev = h.Events("RestartSeedRejected");
+    ASSERT_EQ(ev.size(), 1U);
+    EXPECT_EQ(ev[0].reason, "WRONG_STATE");
+  }
+  BackendHarness h;
+  h.InitialiseAndBootstrap();
+  const BackendResult good = h.Scan(ScanKind::kRoom);
+  ASSERT_EQ(good.kind, BackendResultKind::kScanGood);
+  const std::size_t map_points = h.backend().stats().map_points;
+
+  SeedPose nan_seed = origin;
+  nan_seed.p_world_m.x() = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_EQ(h.Restart(2, nan_seed, Eigen::Quaterniond::Identity(), Eigen::Vector3d::Zero()).kind,
+            BackendResultKind::kRestartRejected);
+  EXPECT_EQ(h.Restart(2, origin, Eigen::Quaterniond(0, 0, 0, 0), Eigen::Vector3d::Zero()).kind,
+            BackendResultKind::kRestartRejected);
+  // Seeding before the ESKF time would rewind the estimator: refused (fail closed).
+  const time::SensorTime old_t = h.scan_end() - time::milliseconds(50);
+  const auto out = h.Push(RestartCommand{2, old_t, origin, Eigen::Quaterniond::Identity(), Eigen::Vector3d::Zero()}, old_t);
+  ASSERT_EQ(out.size(), 1U);
+  EXPECT_EQ(out[0].kind, BackendResultKind::kRestartRejected);
+  EXPECT_EQ(out[0].epoch, 2U);
+
+  const auto ev = h.Events("RestartSeedRejected");
+  ASSERT_EQ(ev.size(), 3U);
+  EXPECT_EQ(ev[0].reason, "NOT_FINITE");
+  EXPECT_EQ(ev[1].reason, "NOT_FINITE");
+  EXPECT_EQ(ev[2].reason, "OUT_OF_ORDER");
+  for (const auto& e : ev) {
+    EXPECT_EQ(Value(e, "exception"), 0.0);
+    EXPECT_EQ(Value(e, "new_epoch"), 2.0);
+    EXPECT_EQ(e.identity.lio_epoch, 1U);
+  }
+  // Nothing changed: same map, same epoch, the next scan of epoch 1 is still corrected.
+  EXPECT_EQ(h.backend().stats().map_points, map_points);
+  EXPECT_EQ(h.backend().stats().restarts, 0U);
+  EXPECT_EQ(h.Scan(ScanKind::kRoom).kind, BackendResultKind::kScanGood);
+}
+
+// The velocity carried into the new epoch is rotated from the old world into the seed's world:
+// v_new = R(seed * base_R_imu) * R(q_old)^-1 * v_old.
+TEST(LioBackend, RestartRotatesTheCarriedVelocityIntoTheSeedWorld) {
+  const Eigen::Quaterniond yaw90(Eigen::AngleAxisd(std::numbers::pi / 2.0, Eigen::Vector3d::UnitZ()));
+  struct Case {
+    Eigen::Quaterniond q_old;
+    Eigen::Vector3d v_old;
+  };
+  for (const Case& c : {Case{Eigen::Quaterniond::Identity(), Eigen::Vector3d(1.0, 0.0, 0.0)},
+                        Case{yaw90, Eigen::Vector3d(0.0, 1.0, 0.0)}}) {  // old body x = old world y
+    BackendHarness h;
+    h.InitialiseAndBootstrap();
+    const BackendResult r = h.Restart(2, SeedPose{Eigen::Vector3d::Zero(), yaw90}, c.q_old, c.v_old);
+    ASSERT_EQ(r.kind, BackendResultKind::kRestartSeeded);
+    ASSERT_TRUE(r.snapshot.has_value());
+    EXPECT_LT((r.snapshot->v_world_mps - Eigen::Vector3d(0.0, 1.0, 0.0)).norm(), 1e-9)
+        << r.snapshot->v_world_mps.transpose();
+  }
+}
+
+// The result queue full (impossible by construction): step() never blocks, the result is dropped with one
+// event and counted.
+TEST(LioBackend, FullResultQueueDropsTheResultWithAnEvent) {
+  BackendHarness h;
+  time::SensorTime t = kT0;
+  for (std::size_t i = 0; i < kImuInitSamples; ++i, t = t + kImuPeriod) {
+    const ImuInput imu = scene::make_imu({}, t);
+    ASSERT_TRUE(h.PushNoDrain(imu, t));
+  }
+  ASSERT_EQ(h.channels().results.stats().pushed, 1U);  // kImuInitialized
+  time::SensorTime scan_end = t - kImuPeriod;
+  const std::uint64_t scans = lio::limits::kBackendResultCapacity;  // 1 + 8 results for 8 slots
+  for (std::uint64_t seq = 1; seq <= scans; ++seq) {
+    const time::SensorTime end = scan_end + kScanPeriod;
+    for (; t <= end; t = t + kImuPeriod) {
+      const ImuInput imu = scene::make_imu({}, t);
+      ASSERT_TRUE(h.PushNoDrain(imu, t));
+    }
+    auto stepped = std::async(std::launch::async, [&h, seq, scan_end, end] {
+      return h.PushNoDrain(ScanJob{seq, 1, MapPolicy::kInsert, MakeScan(ScanKind::kRoom, scan_end, end)}, end);
+    });
+    ASSERT_EQ(stepped.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+    ASSERT_TRUE(stepped.get());
+    scan_end = end;
+  }
+  EXPECT_EQ(h.backend().stats().results_dropped, 1U);
+  const auto overflow = h.Events("LioQueueOverflow");
+  ASSERT_EQ(overflow.size(), 1U);
+  EXPECT_EQ(overflow[0].reason, "RESULT_QUEUE_FULL");
+  EXPECT_EQ(Value(overflow[0], "seq"), static_cast<double>(scans));
+  const auto qs = h.channels().results.stats();
+  EXPECT_EQ(qs.pushed - qs.popped, lio::limits::kBackendResultCapacity);
+  EXPECT_EQ(qs.rejected, 1U);
+}
+
+TEST(LioBackend, CreateRejectsBadFrames) {
+  auto store = std::make_shared<Store>();
+  auto recorder = events::EventRecorder::create(std::make_unique<FakeSink>(store));
+  ASSERT_TRUE(recorder.has_value());
+  auto channels = std::make_unique<LioChannels>();
+  Eigen::Isometry3d imu_T_lidar = scene::imu_T_lidar();
+  imu_T_lidar.translation().y() += 0.01;
+  auto r = LioBackend::create(DefaultConfig(), scene::base_T_imu(), imu_T_lidar, *channels, **recorder);
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error().kind, config::ConfigError::Kind::kOutOfRange);
+  EXPECT_EQ(r.error().key, "extrinsic_imu_lidar_y_m");
+
+  Eigen::Isometry3d bad_base = scene::base_T_imu();
+  bad_base.translation().z() = std::numeric_limits<double>::quiet_NaN();
+  r = LioBackend::create(DefaultConfig(), bad_base, scene::imu_T_lidar(), *channels, **recorder);
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error().kind, config::ConfigError::Kind::kNotFinite);
+  EXPECT_EQ(r.error().key, "base_T_imu");
 }

@@ -54,6 +54,12 @@ std::optional<BaseOdometry> base_odometry(const fl::BaseLinkStateConverter& conv
                                           const fl::BaseLinkCovarianceProjector& projector,
                                           const fl::StateEstimate& est, const Eigen::Vector3d& omega);
 
+/// Why a restart command cannot be applied, or nullopt: kWrongState before the IMU initialisation (no
+/// state to carry), kNotFinite for a non-finite or zero seed attitude, position, old attitude or old velocity,
+/// kOutOfOrder when c.t is before the ESKF time (seeding there would rewind the estimator).
+std::optional<EstimatorReason> restart_refusal(const RestartCommand& c,
+                                               const std::optional<time::SensorTime>& eskf_t);
+
 /// Restart seed (§3.4) at c.t: `carried` (biases, gravity, extrinsics of the old epoch) with its velocity
 /// rotated from the old world into the seed's, then the seed pose applied by InitialStatePriorApplicator
 /// (in-flight context). nullopt when the applicator refuses. May throw (reused math): the caller catches.

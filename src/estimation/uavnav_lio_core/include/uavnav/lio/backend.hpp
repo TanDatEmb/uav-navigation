@@ -73,8 +73,13 @@ class LioBackend {
   ///                   kMapReady (empty map: the scan becomes the map), kScanGood (with odometry),
   ///                   kScanDegenerate or kScanEmpty. One "LioScan" event per scan.
   ///   RestartCommand  clears the map, seeds the ESKF at cmd.t, switches to cmd.new_epoch: kRestartSeeded;
-  ///                   kRestartRejected (epoch unchanged) when not initialised or the seed is refused.
+  ///                   kRestartRejected (epoch unchanged, RestartSeedRejected event) when not initialised,
+  ///                   for a non-finite command, cmd.t before the ESKF time, or a refused seed.
   /// A full result queue drops the result with a LioQueueOverflow event (kResultQueueFull).
+  ///
+  /// Preconditions on the requests, guaranteed by the frontend (LioFrontend, Task 5) and not re-checked here:
+  /// IMU copies are time-ordered, de-duplicated (strictly increasing stamps) and finite; scan points are finite
+  /// and at most limits::kMaxScanPoints, end >= start, and end <= the newest IMU copy queued before the scan.
   bool step(const time::TimeSnapshot& now);
 
   /// Estimator-thread body: waits for a request, then step(clock()), until `stop` is requested. Checks the

@@ -41,7 +41,6 @@ using events::EventBuilder;
 using Reason = EstimatorEventReason;
 
 double seconds(time::SensorTime t) { return static_cast<double>(t.ns) / 1e9; }
-bool usable(const Eigen::Quaterniond& q) { return q.coeffs().allFinite() && q.norm() > 1e-9; }
 
 /// What one processed scan amounted to.
 struct ScanOutcome {
@@ -63,7 +62,7 @@ BackendResultKind kind_of(Reason r) {
 struct LioBackend::Impl {
   Impl(const LioConfig& c, const fl::RigidTransform& base_to_imu, const Eigen::Quaterniond& q_il, LioChannels& ch,
        events::EventRecorder& ev)
-      : cfg(c),
+      : degeneracy(c.degeneracy),
         channels(ch),
         events(ev),
         q_imu_lidar(q_il),
@@ -206,13 +205,16 @@ struct LioBackend::Impl {
   /// reused math; the caller turns that into kMathException.
   ScanOutcome process(ScanInput& in, const time::TimeSnapshot& now) {
     ScanOutcome o{Reason::kScanDegenerate, std::nullopt, {}};
+    const auto done = [&o](Reason r) {
+      o.reason = r;
+      return std::move(o);
+    };
     const time::SensorTime trajectory_start = *eskf_t;
     const auto trajectory = predict_to(in.end);
     if (!trajectory) {
       rebase_to(trajectory_start, in.end, now);
       trim_history(in.end);
-      o.reason = Reason::kPredictionFailed;
-      return o;
+      return done(Reason::kPredictionFailed);
     }
     fl::LidarScan scan;
     scan.start_time = stamp(in.start);
@@ -220,30 +222,19 @@ struct LioBackend::Impl {
     scan.has_per_point_time = in.per_point_time;
     scan.points = std::move(in.points);
     if (in.per_point_time && in.start < trajectory_start) bm::drop_points_before(scan, in.start, trajectory_start);
-    if (scan.points.empty()) {
-      o.reason = Reason::kScanEmpty;
-      return o;
-    }
+    if (scan.points.empty()) return done(Reason::kScanEmpty);
     const fl::RigidTransform imu_T_lidar(fl::imuFrame(), fl::lidarFrame(), q_imu_lidar, t_imu_lidar);
     const auto deskewed = deskewer.deskew(scan, *trajectory, imu_T_lidar);
-    if (!deskewed.ok()) {
-      o.reason = Reason::kDeskewFailed;
-      return o;
-    }
+    if (!deskewed.ok()) return done(Reason::kDeskewFailed);
     const auto pre = preprocessor.process(deskewed.value().scan);
-    if (!pre.ok()) {  // only fails when nothing survives the range / voxel filters (input already validated)
-      o.reason = Reason::kScanEmpty;
-      return o;
-    }
+    // Fails only when nothing survives the range / voxel filters (input already validated).
+    if (!pre.ok()) return done(Reason::kScanEmpty);
     o.points.reserve(pre.value().scan.points.size());
     for (const fl::LidarPoint& p : pre.value().scan.points) o.points.push_back(p.position_lidar_m.cast<double>());
 
-    if (map.size() == 0U) {
-      o.reason = Reason::kMapBootstrap;  // first processed scan of the epoch: it becomes the map
-      return o;
-    }
+    if (map.size() == 0U) return done(Reason::kMapBootstrap);  // first processed scan of the epoch: the map
     const fl::IkfomCorrectionResult c = eskf.correct(o.points, map);
-    o.report = evaluate_degeneracy(c.information, cfg.degeneracy);
+    o.report = evaluate_degeneracy(c.information, degeneracy);
     o.reason = c.successful && !o.report->degenerate ? Reason::kScanGood : Reason::kScanDegenerate;
     return o;
   }
@@ -341,11 +332,12 @@ struct LioBackend::Impl {
   /// command, or when the applicator refuses or throws.
   void on_restart(const RestartCommand& c, const time::TimeSnapshot& now) {
     BackendResult r = result(BackendResultKind::kRestartRejected, c.new_epoch, 0, c.t);
-    const bool finite = c.seed.p_world_m.allFinite() && usable(c.seed.q_world_base) && usable(c.q_world_imu_old) &&
-                        c.v_world_mps_old.allFinite();
+    std::optional<EstimatorReason> refused = bm::restart_refusal(c, eskf_t);
+    bool threw = false;
     try {
       const std::optional<fl::ManifoldState> seeded =
-          eskf_t && finite ? bm::seed_state(prior_applicator, eskf.stateView(), c, q_base_imu) : std::nullopt;
+          refused ? std::nullopt : bm::seed_state(prior_applicator, eskf.stateView(), c, q_base_imu);
+      if (!seeded && !refused) refused = EstimatorReason::kNotFinite;  // the applicator refused the seed
       if (seeded) {
         map.clear();
         local_map.reset();
@@ -361,11 +353,20 @@ struct LioBackend::Impl {
       }
     } catch (...) {  // the applicator or the ESKF reset threw: rejected, the frontend stays in RESTARTING
       r = result(BackendResultKind::kRestartRejected, c.new_epoch, 0, c.t);
+      refused = EstimatorReason::kNotFinite;
+      threw = true;
+    }
+    if (refused) {  // one event at the decision point; the frontend's LioRestartRejected follows the result
+      emit(event("RestartSeedRejected", now)
+               .reason(*refused)
+               .value("sensor_time_s", seconds(c.t))
+               .value("new_epoch", c.new_epoch)
+               .value("exception", threw ? 1.0 : 0.0));
     }
     publish(std::move(r), now);
   }
 
-  LioConfig cfg;
+  DegeneracyConfig degeneracy;  // the only config read after construction (no lifecycle/predictor values)
   LioChannels& channels;
   events::EventRecorder& events;
   Eigen::Quaterniond q_imu_lidar;

@@ -22,6 +22,8 @@ constexpr double kExtrinsicToleranceM = 1e-6;
 /// used by InitialStatePriorApplicator for the in-flight context.
 constexpr double kUnusedTiltLimitRad = 0.0;
 
+bool usable(const Eigen::Quaterniond& q) { return q.coeffs().allFinite() && q.norm() > 1e-9; }
+
 }  // namespace
 
 EstimatorSnapshot snapshot(const fl::ManifoldState& s, time::SensorTime t) {
@@ -111,6 +113,17 @@ std::optional<BaseOdometry> base_odometry(const fl::BaseLinkStateConverter& conv
     return std::nullopt;
   }
   return o;
+}
+
+std::optional<EstimatorReason> restart_refusal(const RestartCommand& c,
+                                               const std::optional<time::SensorTime>& eskf_t) {
+  if (!eskf_t) return EstimatorReason::kWrongState;
+  if (!c.seed.p_world_m.allFinite() || !usable(c.seed.q_world_base) || !usable(c.q_world_imu_old) ||
+      !c.v_world_mps_old.allFinite()) {
+    return EstimatorReason::kNotFinite;
+  }
+  if (c.t < *eskf_t) return EstimatorReason::kOutOfOrder;
+  return std::nullopt;
 }
 
 std::optional<fl::ManifoldState> seed_state(const fl::InitialStatePriorApplicator& applicator,

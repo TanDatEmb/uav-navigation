@@ -20,11 +20,15 @@
 // this header may include the lifecycle or the output-predictor headers.
 //
 // Event catalogue (component "lio"; event name -> emitting block -> reason enum):
-//   "LioScan"              backend   EstimatorEventReason: one per scan request: kScanGood, kScanDegenerate,
-//                                    kScanEmpty, kMapBootstrap, kPredictionFailed, kDeskewFailed,
-//                                    kMathException, kBeforeImuInit, kBeforeEstimatorTime, kStaleEpoch (values
-//                                    sensor_time_s, input_points, points, translation/rotation min eigenvalue,
-//                                    quality, degenerate); kMathException also when a map insert threw
+//   "LioScan"              backend   EstimatorEventReason: one per scan request.
+//                                    Processed: kScanGood, kScanDegenerate, kScanEmpty, kMapBootstrap,
+//                                    kPredictionFailed, kDeskewFailed, kMathException (values sensor_time_s,
+//                                    input_points, points; with a correction also translation/rotation min
+//                                    eigenvalue, quality, degenerate).
+//                                    Not processed: kStaleEpoch (scan epoch != backend epoch: older, or newer
+//                                    after a rejected restart), kBeforeImuInit, kBeforeEstimatorTime (values
+//                                    sensor_time_s, scan_epoch).
+//                                    kMathException (no values) also when a map insert threw
 //   "EskfRebased"          backend   kEskfRebased: after a failed prediction (IMU gap, history dropped) or a
 //                                    math exception the ESKF moves to the scan end with an inflated covariance
 //                                    (values skipped_s, position_sigma_m)
@@ -33,12 +37,16 @@
 //   "OdometryInvalid"      backend   kOdometryInvalid: the base_link conversion of a good scan failed
 //   "AllocationFailed"     backend   kAllocationFailed, value site 0 (IMU history);
 //                          frontend  site 1 (state output)
-//   "LioQueueOverflow"     frontend  kRequestQueueFull (rate-limited);  backend  kResultQueueFull
+//   "LioQueueOverflow"     frontend  kRequestQueueFull (rate-limited);
+//                          backend   kResultQueueFull (values kind, seq, sensor_time_s of the dropped result)
+//   "RestartSeedRejected"  backend   EstimatorReason: kWrongState (not IMU-initialised), kNotFinite (non-finite
+//                                    command, applicator refusal or exception), kOutOfOrder (restart time before
+//                                    the ESKF time) (values sensor_time_s, new_epoch, exception 0/1)
 //   "ImuGap" / "ImuDuplicate" / "ImuRateTooHigh"   frontend   kImuGap / kImuDuplicate (rate-limited) /
 //                                    kImuRateTooHigh (once per epoch)
 //   "LioInputRejected"     frontend  EstimatorReason (rate-limited, value count), incl. kBackendBusy
 //   "LioResultDiscarded"   frontend  kStaleEpoch, kUnexpectedSequence
-//   "LioRestartRejected"   frontend  kRestartRejected (the backend's answer; the backend emits no event of its own)
+//   "LioRestartRejected"   frontend  kRestartRejected: applies the backend's kRestartRejected result
 //   "StateTransition" / "LioRestart"   frontend   the lifecycle's reason enum (LioReason)
 //   "PredictorCorrectionRejected"      frontend   PredictorReason
 // Rate-limited events are emitted on the 1st, kEventSummaryEvery-th, ... occurrence per reason and epoch,
@@ -189,7 +197,9 @@ static_assert(ReasonEnum<EstimatorEventReason>);
 // --- frontend -> backend --------------------------------------------------------------------------------
 
 /// Decided by the frontend at admission from the lifecycle state then (kInsert in INITIALIZING, TRACKING and
-/// DEGRADED; kFrozen in LOST and RESTARTING). The backend never reads the lifecycle.
+/// DEGRADED; kFrozen in LOST and RESTARTING). The backend never reads the lifecycle. kFrozen stops inserts of
+/// corrected scans only: the first processed scan of an EMPTY map still bootstraps it (kMapReady), e.g. the
+/// first scan of a new epoch admitted while the frontend is still RESTARTING.
 enum class MapPolicy : std::uint8_t { kInsert, kFrozen };
 
 /// One admitted scan. `seq` increases by one per admitted scan; `epoch` is the frontend's requested epoch.
@@ -202,6 +212,11 @@ struct ScanJob {
 
 /// Restart (§3.4): seed the ESKF at `t` (the frontend's newest IMU time) in epoch `new_epoch`. The old
 /// world's attitude and velocity at `t` (the frontend's newest output) give the carried velocity.
+/// Rejected (kRestartRejected, backend epoch unchanged, RestartSeedRejected event) before the IMU
+/// initialisation, for a non-finite command, for `t` before the ESKF time (no rewind), or when the seed
+/// applicator refuses or throws. A throw after the map was cleared (map.clear / local map / ESKF reset) also
+/// answers kRestartRejected with the map already empty; the frontend stays RESTARTING and the next restart
+/// clears the map anyway.
 struct RestartCommand {
   std::uint32_t new_epoch;
   time::SensorTime t;
