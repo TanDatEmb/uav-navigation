@@ -14,7 +14,7 @@ help:
 	@echo "uav-navigation (rebuild/v2) commands"
 	@echo "  make setup   check host, init submodules, install system dependencies"
 	@echo "  make build   colcon build of PKGS and their dependencies (PKGS='$(PKGS)')"
-	@echo "  make test    colcon test of PKGS, then colcon test-result"
+	@echo "  make test    delete stale test results of PKGS, colcon test of PKGS, then colcon test-result"
 	@echo "  make sanitize  ThreadSanitizer build + test of uavnav_core, then rebuild normally"
 	@echo "  make gate    tools/uavnav/gate.sh all (static, python, ros)"
 	@echo "  make clean   print what would be removed (log/); deletes nothing"
@@ -27,7 +27,7 @@ build:
 	@$(ROS_ENV) nice -n 10 env MAKEFLAGS=-j3 colcon build --packages-up-to $(PKGS) --parallel-workers 2 $(COLCON_EXTRA) --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 test:
-	@$(ROS_ENV) if test -f install/setup.bash; then source install/setup.bash; fi; colcon test --packages-select $(PKGS) --parallel-workers 2 && rc=0 && for p in $(PKGS); do colcon test-result --verbose --test-result-base build/$$p || rc=1; done; exit $$rc
+	@$(PYTHON) tools/uavnav/clean_test_results.py --build-base build $(PKGS) && { $(ROS_ENV) if test -f install/setup.bash; then source install/setup.bash; fi; colcon test --packages-select $(PKGS) --parallel-workers 2 && rc=0 && for p in $(PKGS); do colcon test-result --verbose --test-result-base build/$$p || rc=1; done; exit $$rc; }
 
 # ThreadSanitizer run of uavnav_core (D28). Builds the shared build/ with -fsanitize=thread, runs the
 # tests, greps the logs for TSan warnings, and ALWAYS rebuilds without the sanitizer afterwards (even
