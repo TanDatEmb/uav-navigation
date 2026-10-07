@@ -220,6 +220,13 @@ Phần thuần của LIO tách thành hai khối, mỗi khối do đúng một t
 | **Frontend** | ingest | Nhận IMU và LiDAR; `OutputPredictor`; `LioLifecycle` (**nơi ghi duy nhất** của trạng thái LIO); kiểm gap trên từng mẫu IMU; phát `/lio/state`, `/lio/health`, `/lio/odometry` | Chạy ICP hay cập nhật map |
 | **Backend** | estimator | `IkfomEstimator`, map (ikd-tree), deskew, ICP, đánh giá suy biến | Ghi trạng thái lifecycle; phát message |
 
+**Ranh giới được ép ở compile time (D32), không bằng quét văn bản:**
+- Config tách theo khối:
+  - `backend_config.hpp`: math và suy biến;
+  - `frontend_config.hpp`: lifecycle và predictor;
+  - `config.hpp`: gộp hai phần trên cùng loader, **chỉ** lớp ghép hai thread và node được include.
+- Header và source của backend không được kéo `lifecycle.hpp` vào, kể cả gián tiếp. `lifecycle.hpp` định nghĩa một macro đánh dấu; mỗi file `.cpp` của backend kết thúc bằng `#error` nếu macro đó đã được định nghĩa. Include sai thì build fail.
+
 Hai khối trao đổi qua hàng đợi có giới hạn, chỉ chứa dữ liệu bất biến:
 - **Frontend → backend:** bản sao mẫu IMU, scan đã nhận, lệnh `restart(seed)`.
 - **Backend → frontend:** kết quả scan, gồm `EstimatorSnapshot`, báo cáo suy biến, covariance, và loại kết quả:
