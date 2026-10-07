@@ -39,7 +39,8 @@
 //     e_yaw = wrap(yaw_inst - yaw_T)
 // The S1a origin measure t_inst - t_T = e - (Rz(yaw_inst) - Rz(yaw_T)) p_lio_xy adds a lever-arm term that
 // grows with |p_lio| and says nothing about the vehicle; it is not used.
-//   Jump gate: |e| > jump_position_m or |e_yaw| > jump_yaw_rad (strict) rejects the pair, T unchanged.
+//   Jump gate: |e| > jump_position_m or |e_yaw| > jump_yaw_rad (strict) rejects the pair, T unchanged. Every
+//   gate is written !(within), so a NaN residual or threshold rejects (fail closed).
 //   Filter step (alpha = dt / tau, dt clamped): the frame change G below with pivot q, shift alpha e and
 //   rotation dh = alpha e_yaw:  yaw_T += dh,  t <- Rz(dh)(t - q) + q + alpha e.
 //   Since Rz(yaw_T) p_lio_xy = q_xy - t_xy,
@@ -49,6 +50,10 @@
 //   Implied rate bound (there is no separate rate limiter, D30): an accepted pair has |e| <= jump_position_m
 //   and |e_yaw| <= jump_yaw_rad, so one step moves T at the vehicle by at most jump_position_m dt / tau and
 //   its yaw by at most jump_yaw_rad dt / tau: 0.25 m/s and 0.0436 rad/s (2.5 deg/s) with the beta values.
+//   A change of T that moves the vehicle point faster than that is not followed: its pairs end in
+//   kPairRejectedJump, then kStale -> INVALID (spec intent; e.g. a frame rotation about the LIO origin of
+//   1 mrad/s at 300 m moves the vehicle point 0.3 m/s). A rotation about the vehicle is tracked with a yaw
+//   lag of rate x tau.
 //   INIT: each member keeps (instant T, p_lio, p_px4). Mean yaw psi = circular mean of the instant yaws; the
 //   mean translation is the least-squares t given psi (argmin_t sum |p_px4_i - Rz(psi) p_lio_i - t|^2):
 //       t_xy = mean(p_px4_xy) - Rz(psi) mean(p_lio_xy)        t_z = mean(z_px4 - z_lio)
@@ -104,7 +109,8 @@ enum class AlignmentReason : std::uint8_t {
   kStale,              ///< VALID -> INVALID: no accepted pair for valid_stale
   kFrozenTooLong,      ///< FROZEN -> INVALID: FROZEN for longer than frozen_max
   kNoPx4Sample,        ///< no PX4 sample within kPairingWindow on both sides of the scan; nothing changed
-  kInputRejected       ///< non-finite value, negative stamp, or stamp not newer than the previous one;
+  kInputRejected       ///< non-finite value, position beyond limits::kMaxPositionAbsM, negative stamp, or
+                       ///< stamp not newer than the previous one;
                        ///< also a refused unlisted state change (a programming error, state unchanged)
 };
 
@@ -202,6 +208,9 @@ struct AlignmentOutput {
   /// pair's step (VALID: the filtered T; INIT: the running mean before the pair was added; header comment):
   /// residual_position_m = |p_px4 - T(p_lio)| (3-D), residual_yaw_rad = wrap(yaw_inst - yaw_T). This is what
   /// the jump gate compares. 0 before the first pair and for a pair that enters an empty accumulation.
+  /// When the INIT final re-check rejects (kPairRejectedJump with the accumulation restarted), these still
+  /// hold the NEWEST pair's arrival residual, which passed the gate; the member that failed the final mean
+  /// is not reported here.
   double residual_position_m{0.0};
   double residual_yaw_rad{0.0};
   AlignmentReason reason{AlignmentReason::kNone};
@@ -233,7 +242,8 @@ class AlignmentEstimator {
   explicit AlignmentEstimator(const AlignmentConfig& cfg) noexcept;
 
   /// Buffers one PX4 sample (fixed ring, kPx4BufferSpan) and applies its reset deltas (F13).
-  /// Rejected (kInputRejected, nothing changes, counters not consumed): a non-finite field, t < 0, or
+  /// Rejected (kInputRejected, nothing changes, counters not consumed): a non-finite field, a position
+  /// component beyond limits::kMaxPositionAbsM or a delta_xy/delta_z component beyond twice that, t < 0, or
   /// t <= the newest buffered stamp. A rejected sample's reset is therefore applied by the next accepted
   /// sample, which carries the same counter and delta (PX4 keeps both until the next reset).
   /// The first accepted sample only initialises the last-seen counters (kNone).
@@ -250,7 +260,8 @@ class AlignmentEstimator {
   /// samples around s.t, each within kPairingWindow; an exact stamp match uses that sample alone).
   /// Order of checks, first match wins:
   ///  1. s.t < 0 or s.t <= previous accepted LIO stamp          -> kInputRejected, nothing changes
-  ///  2. tracking and a non-finite pose                         -> kInputRejected, nothing changes
+  ///  2. tracking and a non-finite pose or a position component beyond limits::kMaxPositionAbsM
+  ///                                                             -> kInputRejected, nothing changes
   ///  3. VALID and s.t - stale_since > valid_stale               -> INVALID, kStale
   ///     FROZEN and s.t - frozen_since > frozen_max              -> INVALID, kFrozenTooLong
   ///  4. !tracking: VALID -> FROZEN (kLioLost); INIT restarts the accumulation (kLioLost); FROZEN and

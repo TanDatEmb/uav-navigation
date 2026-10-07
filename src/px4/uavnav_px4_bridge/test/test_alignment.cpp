@@ -1189,6 +1189,126 @@ TEST(AlignmentBoundary, JumpGateIsMeasuredAtTheVehicle) {
   }
 }
 
+TEST(AlignmentBoundary, InitFinalRecheckIsAtEachMembersOwnVehiclePoint) {
+  // Four exact pairs far from the origin, p_lio = p_px4 = (300 + 10 k, 0, 0), yaw_lio = 0, PX4 yaw alternating
+  // +-0.04. Arrival residuals 0.400 / 0 / 0.267 m and 0.08 / 0.04 / 0.053 rad pass the gate; the final mean is
+  // yaw 0, t = 0, and every member is exact at its OWN vehicle point. Measured at another point (the newest
+  // pair's: 1.2 m, the centroid: 0.6 m, the origin: 12 m) the +-0.04 rad members would fail the re-check.
+  AlignmentConfig cfg = OnePairConfig();
+  cfg.consistent_pairs = 4;
+  AlignmentEstimator est(cfg);
+  const double yaw_px4[] = {0.04, -0.04, 0.04, -0.04};
+  const double arrival_m[] = {0.0, 20.0 * std::sin(0.02), 0.0,
+                              40.0 * std::sin(0.5 * std::atan(std::tan(0.04) / 3.0))};
+  AlignmentOutput o{};
+  for (int k = 0; k < 4; ++k) {
+    const time::SensorTime t = kFarT0 + time::milliseconds(100 * k);
+    const Eigen::Vector3d p{300.0 + 10.0 * k, 0.0, 0.0};
+    est.on_px4(Px4At(t, p, yaw_px4[k]));
+    o = est.on_lio(LioPoseSample{t, p, 0.0, true});
+    EXPECT_NEAR(o.residual_position_m, arrival_m[k], 1e-9) << k;
+    if (k < 3) {
+      EXPECT_EQ(o.state, AlignmentState::kInit) << k;
+      EXPECT_EQ(o.reason, AlignmentReason::kPairAccepted) << k;
+    }
+  }
+  EXPECT_NEAR(arrival_m[1], 0.400, 1e-3);
+  EXPECT_NEAR(arrival_m[3], 0.267, 1e-3);
+  ASSERT_EQ(o.state, AlignmentState::kValid);
+  EXPECT_EQ(o.reason, AlignmentReason::kPairsConsistent);
+  ExpectPoseNear(o.filtered, Pose4{}, 1e-12);
+}
+
+TEST(Alignment, HeadingDriftAboutTheVehicleIsTrackedFarFromOrigin) {
+  // The PX4 frame turns 1 mrad/s about the VEHICLE (the frame change G of schedule_reset, without a reported
+  // reset): the vehicle point does not move, so every pair is accepted and the yaw lags by rate x tau = 2 mrad.
+  // At 300 m that lag is 0.6 m of lever arm: the S1a origin measure would have rejected the pairs.
+  Sim sim;
+  sim.p0 = {300.0, 0.0, -20.0};
+  AlignmentOutput prev = sim.run_until_valid();
+  constexpr double kDh = 1e-4;  // per 0.1 s scan
+  int origin_over_gate = 0;
+  for (int i = 0; i < 300; ++i) {
+    const double t = sim.t_lio_next;
+    const Eigen::Vector3d p_lio = sim.p_lio(t);
+    const Eigen::Vector2d pivot = Apply(sim.truth, p_lio).head<2>();
+    const Eigen::Vector2d txy = Rot(kDh, Eigen::Vector2d{sim.truth.x_m, sim.truth.y_m} - pivot) + pivot;
+    sim.truth = Pose4{txy.x(), txy.y(), sim.truth.z_m, Wrap(sim.truth.yaw_rad + kDh)};
+    // The S1a origin residual of this pair, from the inputs: instant T of (PX4 at t, LIO at t) vs filtered T.
+    const Px4PoseSample px4 = sim.px4_at(t);
+    const double yaw_inst = Wrap(px4.yaw_rad - sim.yaw_lio(t));
+    const Eigen::Vector2d t_inst_xy = px4.p_ned_m.head<2>() - Rot(yaw_inst, p_lio.head<2>());
+    const Eigen::Vector3d t_inst{t_inst_xy.x(), t_inst_xy.y(), px4.p_ned_m.z() - p_lio.z()};
+    if ((t_inst - Translation(prev.filtered)).norm() > 0.5) ++origin_over_gate;
+    const AlignmentOutput o = sim.step();
+    ASSERT_EQ(o.state, AlignmentState::kValid) << i;
+    ASSERT_EQ(o.reason, AlignmentReason::kPairAccepted) << i;
+    EXPECT_LT(o.residual_position_m, 0.01) << i;
+    prev = o;
+  }
+  EXPECT_NEAR(Wrap(sim.truth.yaw_rad - prev.filtered.yaw_rad), 1e-3 * 2.0, 0.2 * 2e-3);
+  RecordProperty("origin_over_gate", origin_over_gate);
+  EXPECT_GT(origin_over_gate, 100);
+}
+
+TEST(Alignment, PositionsBeyondTheBoundAreRejected) {
+  // |component| > kMaxPositionAbsM (reset deltas: 2 x) is refused like a non-finite value, so no sum in the
+  // estimator can overflow to inf - inf = NaN.
+  constexpr double kHuge = 1e300;
+  const double just_over = std::nextafter(limits::kMaxPositionAbsM, kHuge);
+  Sim sim;
+  sim.run_until_valid();
+  const AlignmentOutput before = sim.step();
+  const double t = sim.t_lio_next;
+  sim.feed_px4_until(t - 0.03);
+  for (int field = 0; field < 6; ++field) {
+    Px4PoseSample s = sim.px4_at(sim.t_px4_next);
+    switch (field) {
+      case 0: s.p_ned_m.x() = kHuge; break;
+      case 1: s.p_ned_m.y() = -just_over; break;
+      case 2: s.p_ned_m.z() = kHuge; break;
+      case 3: s.delta_xy_m.x() = -kHuge; break;
+      case 4: s.delta_xy_m.y() = std::nextafter(2.0 * limits::kMaxPositionAbsM, kHuge); break;
+      default: s.delta_z_m = kHuge; break;
+    }
+    const AlignmentOutput o = sim.est.on_px4(s);
+    EXPECT_EQ(o.reason, AlignmentReason::kInputRejected) << field;
+    EXPECT_EQ(o.state, AlignmentState::kValid) << field;
+    ExpectPoseEq(o.filtered, before.filtered);
+  }
+  sim.feed_px4_until(t + 0.02);
+  for (int field = 0; field < 3; ++field) {
+    LioPoseSample l = sim.lio_at(t);
+    l.p_frd_m(field) = field == 1 ? just_over : (field == 0 ? kHuge : -kHuge);
+    const AlignmentOutput o = sim.est.on_lio(l);
+    EXPECT_EQ(o.reason, AlignmentReason::kInputRejected) << field;
+    EXPECT_EQ(o.state, AlignmentState::kValid) << field;
+    ExpectPoseEq(o.filtered, before.filtered);
+    ExpectFinite(o);
+  }
+  // The same scan with its real pose is still accepted (nothing was consumed).
+  sim.t_lio_next = t;
+  EXPECT_EQ(sim.step().reason, AlignmentReason::kPairAccepted);
+}
+
+TEST(Alignment, NanGateThresholdFailsClosed) {
+  // A NaN in a gate comparison must reject, never accept: the gates are written !(value <= threshold).
+  // A NaN threshold is the only way to reach that comparison with valid inputs (the config is then invalid,
+  // so VALID is blocked anyway); no pair after the first may be reported accepted.
+  for (int which = 0; which < 2; ++which) {
+    AlignmentConfig bad = BetaConfig();
+    if (which == 0) bad.jump_position_m = std::numeric_limits<double>::quiet_NaN();
+    if (which == 1) bad.jump_yaw_rad = std::numeric_limits<double>::quiet_NaN();
+    Sim sim(bad);
+    EXPECT_EQ(sim.step().reason, AlignmentReason::kPairAccepted) << which;  // empty accumulation: no comparison
+    for (int i = 0; i < 50; ++i) {
+      const AlignmentOutput o = sim.step();
+      EXPECT_EQ(o.state, AlignmentState::kInit) << which << " " << i;
+      EXPECT_EQ(o.reason, AlignmentReason::kPairRejectedJump) << which << " " << i;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // Allow-list fuzz: random but VALID input sequences (monotonic stamps, finite values). Every state change
 // observed in an output must be a listed edge carrying the output's reason, an input that is valid is never

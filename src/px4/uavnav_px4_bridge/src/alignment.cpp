@@ -23,9 +23,17 @@ Eigen::Vector2d rz(double yaw, const Eigen::Vector2d& v) {
 
 Eigen::Vector3d translation(const Pose4& p) { return {p.x_m, p.y_m, p.z_m}; }
 
-bool finite(const Px4PoseSample& s) {
-  return s.p_ned_m.allFinite() && std::isfinite(s.yaw_rad) && s.delta_xy_m.allFinite() &&
-         std::isfinite(s.delta_z_m) && std::isfinite(s.delta_heading_rad);
+/// Every component finite and |component| <= bound. Written as a positive check, so NaN fails it.
+template <typename V>
+bool bounded(const V& v, double bound) {
+  return (v.array().abs() <= bound).all();
+}
+
+/// Finite, positions within limits::kMaxPositionAbsM and deltas within twice that (limits.hpp).
+bool usable(const Px4PoseSample& s) {
+  constexpr double kPos = limits::kMaxPositionAbsM;
+  return bounded(s.p_ned_m, kPos) && std::isfinite(s.yaw_rad) && bounded(s.delta_xy_m, 2.0 * kPos) &&
+         std::abs(s.delta_z_m) <= 2.0 * kPos && std::isfinite(s.delta_heading_rad);
 }
 
 bool within_spec(std::string_view key, double v) {
@@ -163,7 +171,7 @@ std::optional<AlignmentEstimator::Interpolated> AlignmentEstimator::px4_at(time:
 }
 
 AlignmentOutput AlignmentEstimator::on_px4(const Px4PoseSample& s) noexcept {
-  if (!finite(s) || s.t.ns < 0) return output(AlignmentReason::kInputRejected);
+  if (!usable(s) || s.t.ns < 0) return output(AlignmentReason::kInputRejected);
   if (ring_size_ > 0 && s.t <= sample(ring_size_ - 1).t) return output(AlignmentReason::kInputRejected);
 
   const Counters now{s.xy_reset_counter, s.z_reset_counter, s.heading_reset_counter};
@@ -245,17 +253,17 @@ Pose4 AlignmentEstimator::accumulation_mean() const noexcept {
 }
 
 AlignmentReason AlignmentEstimator::accumulate(const Pair& pair, time::SensorTime t) noexcept {
-  // Each pair is measured at its OWN vehicle point (D30/O12, D31).
+  // Each pair is measured at its OWN vehicle point (D30/O12, D31). Fail closed: written as !(within), so a
+  // NaN residual or threshold (invalid config) counts as outside.
   auto outside = [this](const Pair& p, const Pose4& mean) {
     const AtVehicle m = at_vehicle(mean, p.inst, p.p_lio, p.p_px4);
-    return m.e.norm() > cfg_.jump_position_m || std::abs(m.e_yaw) > cfg_.jump_yaw_rad;
+    return !(m.e.norm() <= cfg_.jump_position_m && std::abs(m.e_yaw) <= cfg_.jump_yaw_rad);
   };
   if (acc_n_ > 0) {
     const Pose4 mean = accumulation_mean();
     const AtVehicle m = at_vehicle(mean, pair.inst, pair.p_lio, pair.p_px4);
     residual_position_m_ = m.e.norm();
     residual_yaw_rad_ = m.e_yaw;
-    // A NaN threshold (invalid config) makes every comparison false; cfg_valid_ still blocks VALID below.
     if (outside(pair, mean)) {
       restart_accumulation();
       add_to_accumulation(pair);
@@ -290,7 +298,8 @@ AlignmentReason AlignmentEstimator::filter(const Pair& pair, time::SensorTime t)
   const AtVehicle m = at_vehicle(filtered_, pair.inst, pair.p_lio, pair.p_px4);
   residual_position_m_ = m.e.norm();
   residual_yaw_rad_ = m.e_yaw;
-  if (residual_position_m_ > cfg_.jump_position_m || std::abs(m.e_yaw) > cfg_.jump_yaw_rad) {
+  // Fail closed: a NaN residual or threshold rejects.
+  if (!(residual_position_m_ <= cfg_.jump_position_m && std::abs(m.e_yaw) <= cfg_.jump_yaw_rad)) {
     return AlignmentReason::kPairRejectedJump;  // T unchanged
   }
   // dt in LIO sensor time since the previous accepted pair (always set in VALID), clamped (limits.hpp).
@@ -313,7 +322,7 @@ AlignmentReason AlignmentEstimator::filter(const Pair& pair, time::SensorTime t)
 
 AlignmentOutput AlignmentEstimator::on_lio(const LioPoseSample& s) noexcept {
   if (s.t.ns < 0 || (last_lio_ && s.t <= *last_lio_)) return output(AlignmentReason::kInputRejected);
-  if (s.tracking && !(s.p_frd_m.allFinite() && std::isfinite(s.yaw_frd_rad))) {
+  if (s.tracking && !(bounded(s.p_frd_m, limits::kMaxPositionAbsM) && std::isfinite(s.yaw_frd_rad))) {
     return output(AlignmentReason::kInputRejected);
   }
   last_lio_ = s.t;

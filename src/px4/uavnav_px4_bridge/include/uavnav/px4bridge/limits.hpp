@@ -43,6 +43,14 @@ static_assert(kPx4BufferSpan > kPairingWindow + kPairingWindow);
 inline constexpr time::Duration kFilterDtMin = time::milliseconds(1);
 inline constexpr time::Duration kFilterDtMax = time::milliseconds(200);
 
+/// Largest |component| [m] of a position the alignment accepts: a tracking LIO pose and a PX4 position
+/// (a PX4 reset delta, the difference of two such positions, up to 2x). Valid data never comes close: a
+/// mission stays within tens of km of both origins, and 1e6 m is 1000 km. The bound keeps every sum finite
+/// and meaningful: the INIT accumulation adds at most kMaxConsistentPairs positions (<= 2e8 m), T, q and e
+/// are sums of a few such terms, so no overflow to inf and no inf - inf = NaN can reach a gate; a double
+/// still resolves 1.2e-10 m at 1e6 m. A larger component is rejected like a non-finite one (kInputRejected).
+inline constexpr double kMaxPositionAbsM = 1e6;
+
 /// Largest alignment_consistent_pairs (its spec max): the INIT accumulation is a fixed array of this size.
 inline constexpr std::uint32_t kMaxConsistentPairs = 200;
 
