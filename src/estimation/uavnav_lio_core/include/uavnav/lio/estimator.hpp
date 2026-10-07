@@ -16,6 +16,7 @@
 #include "uavnav/lio/config.hpp"
 #include "uavnav/lio/lifecycle.hpp"
 #include "uavnav/lio/output_predictor.hpp"
+#include "uavnav/lio/types.hpp"
 
 // LioEstimator: the ROS-free facade the S1b `lio` node calls (SYSTEM_DESIGN §3, D20). It wires the reused
 // FAST-LIO math (fast_lio_core: IMU initialiser, IKFoM ESKF, deskew, preprocessing, ikd-tree map) to the
@@ -36,23 +37,7 @@
 // math is caught, emitted as a "LioScan" event with reason kMathException and treated as a degenerate scan.
 namespace uavnav::lio {
 
-struct ImuInput {
-  time::SensorTime t;
-  Eigen::Vector3d gyro_rad_s;
-  Eigen::Vector3d accel_mps2;  ///< already scaled to m/s^2 (specific force, IMU frame)
-};
-
-struct ScanInput {
-  time::SensorTime start, end;
-  std::vector<uav::nav::lio::LidarPoint> points;  ///< LiDAR frame
-  bool per_point_time;  ///< points carry relative_time_ns from `start`; false: one instant (no deskew)
-};
-
-/// T^-1 * PX4 pose (§3.4): the base_link pose in the LIO world of the new epoch.
-struct SeedPose {
-  Eigen::Vector3d p_world_m;
-  Eigen::Quaterniond q_world_base;
-};
+// ImuInput, ScanInput, SeedPose, EstimatorReason, EstimatorEventReason and the event catalogue: types.hpp.
 
 /// One per accepted IMU sample once the output predictor is aligned (S1b decimates to 100 Hz).
 /// `sample` is the predictor output of the IMU origin (q_world_imu, p/v of the IMU), see output_predictor.hpp.
@@ -93,112 +78,6 @@ struct StepOutputs {
   std::optional<OdometryOutput> odometry;
   std::optional<HealthOutput> health;  ///< set on every transition and every limits::kHealthPeriod of IMU time
 };
-
-/// Why an input was rejected. A rejected input changes nothing (no state, no history, no lifecycle event).
-enum class EstimatorReason : std::uint8_t {
-  kAccepted,
-  kOutOfOrder,
-  kTooManyPoints,
-  kNotFinite,
-  kWrongState,
-  kScanAheadOfImu
-};
-
-constexpr std::string_view to_string(EstimatorReason r) {
-  switch (r) {
-    case EstimatorReason::kAccepted:
-      return "ACCEPTED";
-    case EstimatorReason::kOutOfOrder:
-      return "OUT_OF_ORDER";
-    case EstimatorReason::kTooManyPoints:
-      return "TOO_MANY_POINTS";
-    case EstimatorReason::kNotFinite:
-      return "NOT_FINITE";
-    case EstimatorReason::kWrongState:
-      return "WRONG_STATE";
-    case EstimatorReason::kScanAheadOfImu:
-      return "SCAN_AHEAD_OF_IMU";
-  }
-  return "";
-}
-
-static_assert(ReasonEnum<EstimatorReason>);
-
-/// Reason of the facade's own decision events (not lifecycle transitions). Event names:
-///   "LioScan"            one per accepted scan: kScanGood, kScanDegenerate, kScanEmpty, kMapBootstrap,
-///                        kPredictionFailed, kDeskewFailed, kMathException, kBeforeImuInit,
-///                        kBeforeEstimatorTime (values: translation/rotation min eigenvalue, quality, points)
-///   "EskfRebased"        after a failed prediction (IMU gap or history dropped) or a math exception: the ESKF is moved
-///   to the scan end
-///                        with an inflated covariance (values skipped_s, position_sigma_m)
-///   "ImuInitialized" / "ImuInitRejected" (once) / "ImuGap" / "ImuRateTooHigh" (once per epoch)
-///   "OdometryInvalid"    the base_link conversion of a TRACKING scan failed (no odometry)
-///   "AllocationFailed"   an IMU sample or a state output was dropped because memory ran out (value site)
-/// Per-sample events are rate-limited per reason and epoch: "ImuDuplicate" and "LioInputRejected" (reason
-/// EstimatorReason) are emitted on the 1st, 1000th, 2000th, ... occurrence, and once more at the end of the
-/// epoch (restart) when occurrences happened since the last one; value `count` = occurrences so far in the
-/// epoch.
-enum class EstimatorEventReason : std::uint8_t {
-  kScanGood,
-  kScanDegenerate,
-  kScanEmpty,
-  kMapBootstrap,
-  kPredictionFailed,
-  kDeskewFailed,
-  kMathException,
-  kBeforeImuInit,
-  kBeforeEstimatorTime,
-  kImuInitialized,
-  kImuInitRejected,
-  kImuGap,
-  kImuDuplicate,
-  kImuRateTooHigh,
-  kOdometryInvalid,
-  kEskfRebased,
-  kAllocationFailed
-};
-
-constexpr std::string_view to_string(EstimatorEventReason r) {
-  switch (r) {
-    case EstimatorEventReason::kScanGood:
-      return "SCAN_GOOD";
-    case EstimatorEventReason::kScanDegenerate:
-      return "SCAN_DEGENERATE";
-    case EstimatorEventReason::kScanEmpty:
-      return "SCAN_EMPTY";
-    case EstimatorEventReason::kMapBootstrap:
-      return "MAP_BOOTSTRAP";
-    case EstimatorEventReason::kPredictionFailed:
-      return "PREDICTION_FAILED";
-    case EstimatorEventReason::kDeskewFailed:
-      return "DESKEW_FAILED";
-    case EstimatorEventReason::kMathException:
-      return "MATH_EXCEPTION";
-    case EstimatorEventReason::kBeforeImuInit:
-      return "BEFORE_IMU_INIT";
-    case EstimatorEventReason::kBeforeEstimatorTime:
-      return "BEFORE_ESTIMATOR_TIME";
-    case EstimatorEventReason::kImuInitialized:
-      return "IMU_INITIALIZED";
-    case EstimatorEventReason::kImuInitRejected:
-      return "IMU_INIT_REJECTED";
-    case EstimatorEventReason::kImuGap:
-      return "IMU_GAP";
-    case EstimatorEventReason::kImuDuplicate:
-      return "IMU_DUPLICATE";
-    case EstimatorEventReason::kImuRateTooHigh:
-      return "IMU_RATE_TOO_HIGH";
-    case EstimatorEventReason::kOdometryInvalid:
-      return "ODOMETRY_INVALID";
-    case EstimatorEventReason::kEskfRebased:
-      return "ESKF_REBASED";
-    case EstimatorEventReason::kAllocationFailed:
-      return "ALLOCATION_FAILED";
-  }
-  return "";
-}
-
-static_assert(ReasonEnum<EstimatorEventReason>);
 
 class LioEstimator {
  public:

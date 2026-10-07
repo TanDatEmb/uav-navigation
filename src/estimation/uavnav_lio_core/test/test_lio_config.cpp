@@ -308,6 +308,15 @@ TEST(LioLimits, PredictorConstants) {
             limits::kPredictorBufferSpan.ns);
 }
 
+TEST(LioLimits, BackendChannelConstants) {
+  EXPECT_EQ(limits::kBackendRequestCapacity, 512U);
+  EXPECT_EQ(limits::kMaxScansInFlight, 2U);
+  EXPECT_EQ(limits::kBackendResultCapacity, 8U);
+  EXPECT_EQ(limits::kIcpThreads, 3U);
+  // Pending results: every scan in flight, one restart answer and one IMU initialisation.
+  EXPECT_GE(limits::kBackendResultCapacity, limits::kMaxScansInFlight + 2U);
+}
+
 // --- hand-built ParamValues (load_lio_config is public) ----------------------------------------
 
 namespace {

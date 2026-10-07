@@ -9,6 +9,8 @@ find_package(Eigen3 REQUIRED)
 # No ROS (rclcpp) dependency: this library must stay usable outside any node.
 # Add library sources to UAVNAV_LIO_CORE_SOURCES; add tests below with ament_add_gtest.
 set(UAVNAV_LIO_CORE_SOURCES
+  src/backend.cpp
+  src/backend_math.cpp
   src/config.cpp
   src/degeneracy.cpp
   src/estimator.cpp
@@ -40,11 +42,13 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   # The tracked default parameter file, found from this package's source dir (portable, no install step).
   get_filename_component(UAVNAV_LIO_DEFAULT_YAML "${CMAKE_CURRENT_SOURCE_DIR}/../../../config/lio/sim.yaml" ABSOLUTE)
-  foreach(test_name test_lio_config test_lifecycle test_degeneracy test_output_predictor test_estimator)
+  foreach(test_name test_lio_config test_lifecycle test_degeneracy test_output_predictor test_estimator
+      test_backend)
     ament_add_gtest(${test_name} test/${test_name}.cpp TIMEOUT 300)
     target_link_libraries(${test_name} uavnav_lio_core::uavnav_lio_core)
     target_compile_options(${test_name} PRIVATE ${UAVNAV_LIO_CORE_STRICT_WARNINGS})
-    target_compile_definitions(${test_name} PRIVATE UAVNAV_LIO_DEFAULT_YAML="${UAVNAV_LIO_DEFAULT_YAML}")
+    target_compile_definitions(${test_name} PRIVATE UAVNAV_LIO_DEFAULT_YAML="${UAVNAV_LIO_DEFAULT_YAML}"
+      UAVNAV_LIO_CORE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   endforeach()
 endif()
 

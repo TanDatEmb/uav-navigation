@@ -12,6 +12,7 @@
 #include "uavnav/core/result.hpp"
 #include "uavnav/core/time.hpp"
 #include "uavnav/lio/limits.hpp"
+#include "uavnav/lio/types.hpp"  // EstimatorSnapshot
 
 // EKF2-style output predictor (SYSTEM_DESIGN §3.3, F35, D20): the /lio/state output at the newest IMU
 // time, tracking the ESKF, which runs at the (delayed) scan time. It follows PX4
@@ -64,17 +65,6 @@ struct OutputSample {
   Eigen::Vector3d v_world_mps;
   Eigen::Vector3d p_world_m;
   std::uint32_t reset_counter;
-};
-
-/// The ESKF state at its own (scan) time s.t.
-struct EstimatorSnapshot {
-  time::SensorTime t;
-  Eigen::Quaterniond q_world_imu;
-  Eigen::Vector3d v_world_mps;
-  Eigen::Vector3d p_world_m;
-  Eigen::Vector3d gyro_bias;      ///< rad/s, subtracted from delta_angle (bias * dt)
-  Eigen::Vector3d accel_bias;     ///< m/s^2, subtracted from delta_velocity (bias * dt)
-  Eigen::Vector3d gravity_world;  ///< the world gravity vector (see the sign convention above)
 };
 
 enum class PredictorReason : std::uint8_t { kApplied, kNotInitialized, kOlderThanBuffer, kNewerThanOutput, kNonFinite };

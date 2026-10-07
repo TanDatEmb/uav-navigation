@@ -15,7 +15,7 @@
 
 #include "fast_lio_core/sensor/lidar_point.hpp"
 #include "uavnav/core/time.hpp"
-#include "uavnav/lio/estimator.hpp"
+#include "uavnav/lio/types.hpp"
 
 namespace uavnav::lio::scene {
 

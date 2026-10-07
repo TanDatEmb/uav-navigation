@@ -64,4 +64,30 @@ inline constexpr double kRebaseMaxCovarianceEigenvalue = 100.0;
 /// (10 Hz worth of events at a 10 kHz fault rate).
 inline constexpr std::uint64_t kEventSummaryEvery = 1000;
 
+// --- frontend/backend split (SYSTEM_DESIGN §3.5, D30/O14) -------------------------------------------
+
+/// Requests (IMU copies, scans, restarts) queued frontend -> backend. 512 is about 2.4 s of 200 Hz IMU plus
+/// its 10 Hz scans (210 requests/s), more than 4x the beta lifecycle_gap_lost_s (0.5 s): a backend that
+/// falls this far behind is already LOST by the gap rule. A full queue drops the newest IMU copy with an
+/// event (the backend then sees an IMU gap: that scan's prediction fails, fail closed).
+inline constexpr std::size_t kBackendRequestCapacity = 512;
+
+/// Scans admitted to the backend with no result yet. Two = one in ICP plus one waiting at most one ICP time
+/// (20-50 ms, §3.5), so the waiting scan's correction still lands inside the 300 ms predictor buffer
+/// (kPredictorBufferSpan). A third is refused (drop-newest, EstimatorReason::kBackendBusy).
+inline constexpr std::uint32_t kMaxScansInFlight = 2;
+
+/// Results queued backend -> frontend. Pending results are at most kMaxScansInFlight scan results + one
+/// restart answer + one IMU initialisation = 4; 8 leaves 2x headroom, so a full result queue cannot happen
+/// by construction (the backend still fails closed on it: event, result dropped).
+inline constexpr std::size_t kBackendResultCapacity = 8;
+static_assert(kBackendResultCapacity >= kMaxScansInFlight + 2,
+              "the result queue must hold every scan in flight, a restart answer and the IMU initialisation");
+
+/// OpenMP threads of one ICP correction (fast_lio_core ResidualBuilderConfig::parallel_thread_count), used by
+/// the backend only (§3.5: the libgomp team runs only inside the backend's correction call). 3 = fast_lio_core's
+/// default, the value main's pipeline and the S1a facade ran with; the residuals are computed per point, so
+/// the count changes the ICP time, not its result.
+inline constexpr std::size_t kIcpThreads = 3;
+
 }  // namespace uavnav::lio::limits
