@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -25,7 +26,7 @@ constexpr double kPi = std::numbers::pi;
 double Wrap(double a) { return std::remainder(a, 2.0 * kPi); }
 
 AlignmentConfig BetaConfig() {
-  return AlignmentConfig{time::seconds(2), 20U, 0.5, 0.0873, 0.5, 0.0873, time::seconds(1), time::seconds(10)};
+  return AlignmentConfig{time::seconds(2), 20U, 0.5, 0.0873, time::seconds(1), time::seconds(10)};
 }
 
 time::SensorTime At(double s) { return time::SensorTime{std::llround(s * 1e9)}; }
@@ -59,6 +60,14 @@ void ExpectPoseEq(const Pose4& a, const Pose4& b) {
 Eigen::Vector2d Rot(double yaw, const Eigen::Vector2d& v) {
   return {std::cos(yaw) * v.x() - std::sin(yaw) * v.y(), std::sin(yaw) * v.x() + std::cos(yaw) * v.y()};
 }
+
+// T(p) = (Rz(yaw_T) p_xy + t_xy, p_z + t_z): where T puts the lio_odom point p in PX4 local NED.
+Eigen::Vector3d Apply(const Pose4& T, const Eigen::Vector3d& p) {
+  const Eigen::Vector2d xy = Rot(T.yaw_rad, p.head<2>()) + Eigen::Vector2d{T.x_m, T.y_m};
+  return {xy.x(), xy.y(), p.z() + T.z_m};
+}
+
+Eigen::Vector3d Translation(const Pose4& T) { return {T.x_m, T.y_m, T.z_m}; }
 
 // Synthetic world. LIO moves with constant velocity in FRD lio_odom (so linear PX4 interpolation is exact),
 // PX4 reports the same motion through the truth T (p_px4 = Rz(yaw_T) p_lio + t). PX4 runs at 100 Hz on a
@@ -201,56 +210,6 @@ TEST(Alignment, RejectsGnssGlitchJump) {
   EXPECT_NEAR(o.residual_position_m, 2.0, 1e-6);
   // Clean data afterwards is accepted again.
   EXPECT_EQ(sim.step().reason, AlignmentReason::kPairAccepted);
-}
-
-// Per-step bound on the filtered T: |translation step| <= max_rate * dt, |yaw step| <= max_yaw_rate * dt.
-// Returns whether a step reached the bound (so the limiter was actually exercised).
-struct DriftResult {
-  bool translation_limited{false};
-  bool yaw_limited{false};
-  double moved_m{0.0};
-};
-
-DriftResult DriftAndCheck(AlignmentConfig cfg, double drift_mps, double drift_rad_s) {
-  Sim sim(cfg);
-  AlignmentOutput prev = sim.run_until_valid();
-  const AlignmentOutput start = prev;
-  DriftResult r;
-  for (int i = 0; i < 30; ++i) {
-    sim.truth.x_m += drift_mps * 0.1;
-    sim.truth.yaw_rad = Wrap(sim.truth.yaw_rad + drift_rad_s * 0.1);
-    const AlignmentOutput o = sim.step();
-    if (o.state != AlignmentState::kValid) break;
-    const double dx = o.filtered.x_m - prev.filtered.x_m;
-    const double dy = o.filtered.y_m - prev.filtered.y_m;
-    const double dz = o.filtered.z_m - prev.filtered.z_m;
-    const double step = std::sqrt(dx * dx + dy * dy + dz * dz);
-    const double yaw_step = std::abs(Wrap(o.filtered.yaw_rad - prev.filtered.yaw_rad));
-    // dt between scans is 0.1 s up to the nanosecond rounding of the synthetic stamps.
-    EXPECT_LE(step, cfg.max_rate_mps * 0.1 + 1e-8) << "step " << i;
-    EXPECT_LE(yaw_step, cfg.max_yaw_rate_rad_s * 0.1 + 1e-9) << "step " << i;
-    if (step > cfg.max_rate_mps * 0.1 - 1e-9) r.translation_limited = true;
-    if (yaw_step > cfg.max_yaw_rate_rad_s * 0.1 - 1e-9) r.yaw_limited = true;
-    prev = o;
-  }
-  r.moved_m = std::abs(prev.filtered.x_m - start.filtered.x_m);
-  return r;
-}
-
-TEST(Alignment, RateLimitsSlowDrift) {
-  // The brief's case with the beta config: the truth drifts 2 m/s, the filtered T moves <= 0.5 m/s.
-  // NOTE: with the beta values this sub-case only exercises jump rejection, never the limiter: the largest
-  // accepted step is (dt / tau) x jump = 0.05 x 0.5 m = 0.025 m per scan (0.25 m/s < 0.5 m/s). The
-  // tau = 0.2 s sub-cases below (alpha = 0.5) are the ones that exercise the translation and yaw limiters.
-  const DriftResult beta = DriftAndCheck(BetaConfig(), 2.0, 0.0);
-  EXPECT_GT(beta.moved_m, 0.0);
-  // tau = 0.2 s (alpha = 0.5 per scan): the limiter itself is what bounds the step.
-  AlignmentConfig fast = BetaConfig();
-  fast.tau = time::milliseconds(200);
-  const DriftResult t = DriftAndCheck(fast, 2.0, 0.0);
-  EXPECT_TRUE(t.translation_limited) << "the translation limiter never engaged";
-  const DriftResult y = DriftAndCheck(fast, 0.0, 0.5);
-  EXPECT_TRUE(y.yaw_limited) << "the yaw limiter never engaged";
 }
 
 TEST(Alignment, AppliesDoubleResetDeltas) {  // F13
@@ -611,7 +570,8 @@ TEST(Alignment, YawNearPiStaysContinuousAndConverges) {
     ASSERT_EQ(o.state, AlignmentState::kValid);
     ASSERT_TRUE(o.raw.has_value());
     if (o.raw->yaw_rad < 0.0) crossed = true;
-    EXPECT_LE(std::abs(Wrap(o.filtered.yaw_rad - prev.filtered.yaw_rad)), 0.0873 * 0.1 + 1e-9);
+    // No separate rate limiter (D30/O12): the gate and tau bound a yaw step to jump_yaw x dt / tau.
+    EXPECT_LE(std::abs(Wrap(o.filtered.yaw_rad - prev.filtered.yaw_rad)), 0.0873 * 0.1 / 2.0 + 1e-9);
     EXPECT_LT(std::abs(o.residual_yaw_rad), 0.0873);
     prev = o;
   }
@@ -1044,6 +1004,189 @@ TEST(AlignmentBoundary, Px4ResetWhileInvalidAppliesGAndStaysInvalid) {
   const AlignmentOutput n = sim.step();
   EXPECT_EQ(n.state, AlignmentState::kInit);
   EXPECT_EQ(n.reason, AlignmentReason::kLioTracking);
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Every measurement of T is taken at the vehicle position, not at the lio_odom origin (D30/O12, §4.1).
+
+namespace {
+
+constexpr time::SensorTime kFarT0{100'000'000'000};
+constexpr time::SensorTime kFarT1{100'100'000'000};  // dt = 0.1 s, alpha = 0.05 with tau = 2 s
+const Eigen::Vector3d kFar{300.0, 0.0, 0.0};
+
+// consistent_pairs = 1 and one exact pair at p_lio = p_px4 = (300, 0, 0), yaw 0: VALID with T exactly 0.
+AlignmentOutput ValidAtFar(AlignmentEstimator& est) {
+  est.on_px4(Px4At(kFarT0, kFar, 0.0));
+  return est.on_lio(LioPoseSample{kFarT0, kFar, 0.0, true});
+}
+
+AlignmentConfig OnePairConfig() {
+  AlignmentConfig cfg = BetaConfig();
+  cfg.consistent_pairs = 1;
+  return cfg;
+}
+
+void ExpectZero(const Pose4& T) {
+  EXPECT_EQ(T.x_m, 0.0);
+  EXPECT_EQ(T.y_m, 0.0);
+  EXPECT_EQ(T.z_m, 0.0);
+  EXPECT_EQ(T.yaw_rad, 0.0);
+}
+
+}  // namespace
+
+TEST(Alignment, FarFromOriginYawNoiseStaysValid) {  // Review Focus 1, O12
+  Sim sim;
+  sim.p0 = {300.0, 0.0, -20.0};
+  sim.v = {0.8, -0.3, 0.05};
+  sim.px4_yaw_noise_amp = 0.005;  // 5 mrad: x 300 m = 1.5 m at the origin, nothing at the vehicle
+  AlignmentOutput o{};
+  for (int i = 0; i < 19; ++i) {
+    o = sim.step();
+    ASSERT_EQ(o.state, AlignmentState::kInit) << i;
+    ASSERT_EQ(o.reason, AlignmentReason::kPairAccepted) << i;
+  }
+  o = sim.step();
+  ASSERT_EQ(o.state, AlignmentState::kValid);
+  EXPECT_EQ(o.reason, AlignmentReason::kPairsConsistent);
+  const double jump = BetaConfig().jump_position_m;
+  int origin_gate_would_reject = 0;
+  AlignmentOutput prev = o;
+  for (int i = 0; i < 600; ++i) {
+    const Eigen::Vector3d p_lio = sim.p_lio(sim.t_lio_next);
+    o = sim.step();
+    ASSERT_EQ(o.state, AlignmentState::kValid) << i;
+    ASSERT_EQ(o.reason, AlignmentReason::kPairAccepted) << i;
+    EXPECT_LT(o.residual_position_m, 0.05) << i;
+    // The PX4 position is noise-free: Apply(truth, p_lio) is where the vehicle really is in PX4 NED.
+    EXPECT_LT((Apply(o.filtered, p_lio) - Apply(sim.truth, p_lio)).norm(), 0.05) << i;
+    EXPECT_LT(std::abs(Wrap(o.filtered.yaw_rad - sim.truth.yaw_rad)), 0.01) << i;
+    ASSERT_TRUE(o.raw.has_value());
+    // The S1a origin measure |t_inst - t_filtered| of the same pair: beyond the gate for most pairs.
+    if ((Translation(*o.raw) - Translation(prev.filtered)).norm() > jump) ++origin_gate_would_reject;
+    prev = o;
+  }
+  RecordProperty("origin_gate_would_reject", origin_gate_would_reject);
+  EXPECT_GT(origin_gate_would_reject, 100) << "the test no longer distinguishes vehicle from origin gating";
+}
+
+TEST(Alignment, YawStepRotatesAboutTheVehicle) {
+  AlignmentEstimator est(OnePairConfig());
+  const AlignmentOutput v = ValidAtFar(est);
+  ASSERT_EQ(v.state, AlignmentState::kValid);
+  ExpectZero(v.filtered);
+  est.on_px4(Px4At(kFarT1, kFar, 0.05));
+  const AlignmentOutput o = est.on_lio(LioPoseSample{kFarT1, kFar, 0.0, true});
+  EXPECT_EQ(o.reason, AlignmentReason::kPairAccepted);
+  EXPECT_NEAR(o.residual_position_m, 0.0, 1e-12);
+  EXPECT_NEAR(o.residual_yaw_rad, 0.05, 1e-12);
+  EXPECT_NEAR(o.filtered.yaw_rad, 0.05 * 0.05, 1e-12);
+  const Eigen::Vector3d at_vehicle = Apply(o.filtered, kFar);
+  EXPECT_NEAR(at_vehicle.x(), 300.0, 1e-9);
+  EXPECT_NEAR(at_vehicle.y(), 0.0, 1e-9);
+  EXPECT_NEAR(at_vehicle.z(), 0.0, 1e-9);
+  // The translation moved (rotation about the vehicle, not about the origin): 300 m x 0.0025 rad.
+  EXPECT_GT(Translation(o.filtered).norm(), 0.7);
+}
+
+TEST(Alignment, TranslationStepIsAlphaOfTheVehicleResidual) {
+  AlignmentEstimator est(OnePairConfig());
+  const AlignmentOutput v = ValidAtFar(est);
+  ASSERT_EQ(v.state, AlignmentState::kValid);
+  ExpectZero(v.filtered);
+  est.on_px4(Px4At(kFarT1, {300.2, 0.0, 0.1}, 0.0));
+  const AlignmentOutput o = est.on_lio(LioPoseSample{kFarT1, kFar, 0.0, true});
+  EXPECT_EQ(o.reason, AlignmentReason::kPairAccepted);
+  EXPECT_NEAR(o.residual_position_m, std::hypot(0.2, 0.1), 1e-12);
+  const Eigen::Vector3d moved = Apply(o.filtered, kFar) - kFar;
+  EXPECT_NEAR(moved.x(), 0.05 * 0.2, 1e-12);
+  EXPECT_NEAR(moved.y(), 0.0, 1e-12);
+  EXPECT_NEAR(moved.z(), 0.05 * 0.1, 1e-12);
+  EXPECT_EQ(o.filtered.yaw_rad, 0.0);
+}
+
+TEST(Alignment, TrackingRateIsBoundedByGateOverTau) {  // replaces RateLimitsSlowDrift (D30)
+  // jump_position_m x dt / tau = 0.5 x 0.1 / 2 = 0.025 m per 0.1 s scan (0.25 m/s) at the vehicle point.
+  const double max_step_m = 0.5 * 0.1 / 2.0 + 1e-9;
+  {
+    Sim sim;
+    AlignmentOutput prev = sim.run_until_valid();
+    double largest = 0.0;
+    for (int i = 0; i < 300; ++i) {  // 0.24 m/s for 30 s
+      sim.truth.x_m += 0.24 * 0.1;
+      const Eigen::Vector3d p_lio = sim.p_lio(sim.t_lio_next);
+      const AlignmentOutput o = sim.step();
+      ASSERT_EQ(o.state, AlignmentState::kValid) << i;
+      ASSERT_EQ(o.reason, AlignmentReason::kPairAccepted) << i;
+      const double moved = (Apply(o.filtered, p_lio) - Apply(prev.filtered, p_lio)).norm();
+      EXPECT_LE(moved, max_step_m) << i;
+      largest = std::max(largest, moved);
+      prev = o;
+    }
+    EXPECT_GE(largest, 0.02) << "the drift never approached the gate/tau bound";
+  }
+  {
+    Sim sim;
+    sim.v = {0.0, 0.0, 0.0};  // |p_lio| ~ 3.7 m: the vehicle point moves ~0.15 m/s with the yaw drift
+    AlignmentOutput prev = sim.run_until_valid();
+    for (int i = 0; i < 300; ++i) {  // 0.04 rad/s for 30 s
+      sim.truth.yaw_rad = Wrap(sim.truth.yaw_rad + 0.04 * 0.1);
+      const Eigen::Vector3d p_lio = sim.p_lio(sim.t_lio_next);
+      const AlignmentOutput o = sim.step();
+      ASSERT_EQ(o.state, AlignmentState::kValid) << i;
+      ASSERT_EQ(o.reason, AlignmentReason::kPairAccepted) << i;
+      EXPECT_LE(std::abs(Wrap(o.filtered.yaw_rad - prev.filtered.yaw_rad)), 0.0873 * 0.1 / 2.0 + 1e-12) << i;
+      EXPECT_LE((Apply(o.filtered, p_lio) - Apply(prev.filtered, p_lio)).norm(), max_step_m) << i;
+      prev = o;
+    }
+  }
+}
+
+TEST(Alignment, DriftFasterThanGateOverTauInvalidates) {
+  Sim sim;
+  AlignmentOutput prev = sim.run_until_valid();
+  std::optional<int> left_valid;
+  for (int i = 0; i < 20; ++i) {  // 2 m/s for at most 2 s
+    sim.truth.x_m += 2.0 * 0.1;
+    const Eigen::Vector3d p_lio = sim.p_lio(sim.t_lio_next);
+    const AlignmentOutput o = sim.step();
+    if (o.state == AlignmentState::kValid) {
+      EXPECT_LE((Apply(o.filtered, p_lio) - Apply(prev.filtered, p_lio)).norm(), 0.025 + 1e-9) << i;
+      prev = o;
+      continue;
+    }
+    EXPECT_EQ(o.state, AlignmentState::kInvalid) << i;
+    EXPECT_EQ(o.reason, AlignmentReason::kStale) << i;
+    left_valid = i;
+    break;
+  }
+  EXPECT_TRUE(left_valid.has_value()) << "still VALID after 2 s of a 2 m/s drift";
+}
+
+TEST(AlignmentBoundary, JumpGateIsMeasuredAtTheVehicle) {
+  struct Case {
+    Eigen::Vector3d p_px4;
+    double yaw_px4;
+    AlignmentReason expected;
+  };
+  const Case cases[] = {
+      // yaw +0.08 at the vehicle: residual 0 m at the vehicle (|t_inst - t_filtered| would be ~24 m).
+      {kFar, 0.08, AlignmentReason::kPairAccepted},
+      {{300.5, 0.0, 0.0}, 0.0, AlignmentReason::kPairAccepted},  // exactly 0.5 m at the vehicle: inclusive
+      {{std::nextafter(300.5, 400.0), 0.0, 0.0}, 0.0, AlignmentReason::kPairRejectedJump},
+  };
+  for (const Case& c : cases) {
+    AlignmentEstimator est(OnePairConfig());
+    const AlignmentOutput v = ValidAtFar(est);
+    ASSERT_EQ(v.state, AlignmentState::kValid);
+    ExpectZero(v.filtered);
+    est.on_px4(Px4At(kFarT1, c.p_px4, c.yaw_px4));
+    const AlignmentOutput o = est.on_lio(LioPoseSample{kFarT1, kFar, 0.0, true});
+    EXPECT_EQ(o.reason, c.expected) << c.p_px4.transpose() << " yaw " << c.yaw_px4;
+    EXPECT_EQ(o.state, AlignmentState::kValid);
+    if (c.expected == AlignmentReason::kPairRejectedJump) ExpectZero(o.filtered);  // T unchanged
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------

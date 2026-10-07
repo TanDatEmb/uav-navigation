@@ -65,10 +65,6 @@ Result<AlignmentConfig, ConfigError> load_alignment_config(const config::ParamVa
   if (!jump_position) return std::unexpected(jump_position.error());
   const auto jump_yaw = checked(values, "alignment_jump_yaw_rad");
   if (!jump_yaw) return std::unexpected(jump_yaw.error());
-  const auto max_rate = checked(values, "alignment_max_rate_mps");
-  if (!max_rate) return std::unexpected(max_rate.error());
-  const auto max_yaw_rate = checked(values, "alignment_max_yaw_rate_rad_s");
-  if (!max_yaw_rate) return std::unexpected(max_yaw_rate.error());
   const auto valid_stale = seconds_key(values, "alignment_valid_stale_s");
   if (!valid_stale) return std::unexpected(valid_stale.error());
   const auto frozen_max = seconds_key(values, "alignment_frozen_max_s");
@@ -81,8 +77,7 @@ Result<AlignmentConfig, ConfigError> load_alignment_config(const config::ParamVa
                     std::to_string(time::to_seconds(*valid_stale)) + ")");
   }
 
-  return AlignmentConfig{*tau,          *pairs,       *jump_position, *jump_yaw,
-                         *max_rate,     *max_yaw_rate, *valid_stale,   *frozen_max};
+  return AlignmentConfig{*tau, *pairs, *jump_position, *jump_yaw, *valid_stale, *frozen_max};
 }
 
 }  // namespace uavnav::px4bridge

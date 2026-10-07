@@ -21,8 +21,6 @@ constexpr std::string_view kBeta =
     "alignment_consistent_pairs: 20\n"
     "alignment_jump_position_m: 0.5\n"
     "alignment_jump_yaw_rad: 0.0873\n"
-    "alignment_max_rate_mps: 0.5\n"
-    "alignment_max_yaw_rate_rad_s: 0.0873\n"
     "alignment_valid_stale_s: 1.0\n"
     "alignment_frozen_max_s: 10.0\n";
 
@@ -67,14 +65,12 @@ TEST(AlignmentConfig, BetaValuesLoad) {
   EXPECT_EQ(r->consistent_pairs, 20U);
   EXPECT_DOUBLE_EQ(r->jump_position_m, 0.5);
   EXPECT_DOUBLE_EQ(r->jump_yaw_rad, 0.0873);
-  EXPECT_DOUBLE_EQ(r->max_rate_mps, 0.5);
-  EXPECT_DOUBLE_EQ(r->max_yaw_rate_rad_s, 0.0873);
   EXPECT_EQ(r->valid_stale, time::seconds(1));
   EXPECT_EQ(r->frozen_max, time::seconds(10));
 }
 
 TEST(AlignmentConfig, SpecsAreValidAndComplete) {
-  static_assert(kAlignmentSpecs.size() == 8);
+  static_assert(kAlignmentSpecs.size() == 6);
   const auto r = config::load_params(kBeta, kAlignmentSpecs);
   ASSERT_TRUE(r.has_value()) << r.error().key << ": " << r.error().detail;
   EXPECT_EQ(r->size(), kAlignmentSpecs.size());
@@ -91,8 +87,6 @@ TEST(AlignmentConfig, SpecBoundsMatchTheBrief) {
       {"alignment_consistent_pairs", config::Unit::kNone, 1.0, 200.0},
       {"alignment_jump_position_m", config::Unit::kMeters, 0.05, 5.0},
       {"alignment_jump_yaw_rad", config::Unit::kRadians, 0.01, 0.5},
-      {"alignment_max_rate_mps", config::Unit::kMetersPerSecond, 0.01, 5.0},
-      {"alignment_max_yaw_rate_rad_s", config::Unit::kRadiansPerSecond, 0.001, 0.5},
       {"alignment_valid_stale_s", config::Unit::kSeconds, 0.2, 10.0},
       {"alignment_frozen_max_s", config::Unit::kSeconds, 1.0, 120.0},
   };
@@ -114,8 +108,6 @@ TEST(AlignmentConfig, PerKeyBoundsAreEnforced) {
       {"alignment_consistent_pairs", "0", "1", "200", "201"},
       {"alignment_jump_position_m", "0.04", "0.05", "5", "5.01"},
       {"alignment_jump_yaw_rad", "0.009", "0.01", "0.5", "0.51"},
-      {"alignment_max_rate_mps", "0.009", "0.01", "5", "5.1"},
-      {"alignment_max_yaw_rate_rad_s", "0.0009", "0.001", "0.5", "0.51"},
       {"alignment_valid_stale_s", "0.19", "0.2", "10", "10.1"},
       {"alignment_frozen_max_s", "0.99", "1", "120", "120.1"},
   };
@@ -135,6 +127,16 @@ TEST(AlignmentConfig, PerKeyBoundsAreEnforced) {
 
 TEST(AlignmentConfig, UnknownKeyIsRejected) {
   ExpectError(std::string(kBeta) + "alignment_tau: 2\n", Kind::kUnknownKey, "alignment_tau");
+}
+
+TEST(AlignmentConfig, RemovedRateKeysAreRejectedAsUnknown) {
+  // D30/O12: the separate rate limiter is gone (the jump gate and tau bound the rate of T at the vehicle), so
+  // its two keys are no longer part of the schema and a config still carrying them is refused, not ignored.
+  static_assert(find_alignment_spec("alignment_max_rate_mps") == nullptr);
+  static_assert(find_alignment_spec("alignment_max_yaw_rate_rad_s") == nullptr);
+  ExpectError(std::string(kBeta) + "alignment_max_rate_mps: 0.5\n", Kind::kUnknownKey, "alignment_max_rate_mps");
+  ExpectError(std::string(kBeta) + "alignment_max_yaw_rate_rad_s: 0.0873\n", Kind::kUnknownKey,
+              "alignment_max_yaw_rate_rad_s");
 }
 
 TEST(AlignmentConfig, MissingKeyIsRejected) {
@@ -180,7 +182,7 @@ TEST(AlignmentConfig, ConsistentPairsMustBeWhole) {
 
 TEST(AlignmentConfig, NonNumericAndNonFiniteAreRejected) {
   ExpectError(With("alignment_tau_s", "\"2\""), Kind::kWrongType, "alignment_tau_s");
-  ExpectError(With("alignment_max_rate_mps", ".nan"), Kind::kNotFinite, "alignment_max_rate_mps");
+  ExpectError(With("alignment_jump_position_m", ".nan"), Kind::kNotFinite, "alignment_jump_position_m");
 }
 
 TEST(AlignmentConfig, FrozenMaxNotAboveValidStaleNamesBothKeys) {

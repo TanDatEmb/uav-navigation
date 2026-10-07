@@ -13,15 +13,14 @@ namespace uavnav::px4bridge {
 
 /// The single definition of every alignment key, its unit and its inclusive bounds (task-10 brief).
 /// Beta values: tau 2.0 s, consistent_pairs 20, jump_position 0.5 m, jump_yaw 0.0873 rad (5 deg),
-/// max_rate 0.5 m/s, max_yaw_rate 0.0873 rad/s, valid_stale 1.0 s, frozen_max 10.0 s
-/// (= lio_recovery_timeout_s, D18). Specs are always looked up by NAME (find_alignment_spec), never by index.
+/// valid_stale 1.0 s, frozen_max 10.0 s (= lio_recovery_timeout_s, D18). There is no rate-limit key (D30/O12):
+/// the jump gate and tau bound the rate of T at the vehicle (alignment.hpp). Specs are always looked up by
+/// NAME (find_alignment_spec), never by index.
 inline constexpr auto kAlignmentSpecs = std::to_array<config::ParamSpec>({
     {"alignment_tau_s", config::Unit::kSeconds, 0.2, 20.0},
     {"alignment_consistent_pairs", config::Unit::kNone, 1.0, 200.0},
     {"alignment_jump_position_m", config::Unit::kMeters, 0.05, 5.0},
     {"alignment_jump_yaw_rad", config::Unit::kRadians, 0.01, 0.5},
-    {"alignment_max_rate_mps", config::Unit::kMetersPerSecond, 0.01, 5.0},
-    {"alignment_max_yaw_rate_rad_s", config::Unit::kRadiansPerSecond, 0.001, 0.5},
     {"alignment_valid_stale_s", config::Unit::kSeconds, 0.2, 10.0},
     {"alignment_frozen_max_s", config::Unit::kSeconds, 1.0, 120.0},
 });

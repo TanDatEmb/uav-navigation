@@ -40,8 +40,6 @@ bool valid_config(const AlignmentConfig& c) {
          within_spec("alignment_consistent_pairs", static_cast<double>(c.consistent_pairs)) &&
          within_spec("alignment_jump_position_m", c.jump_position_m) &&
          within_spec("alignment_jump_yaw_rad", c.jump_yaw_rad) &&
-         within_spec("alignment_max_rate_mps", c.max_rate_mps) &&
-         within_spec("alignment_max_yaw_rate_rad_s", c.max_yaw_rate_rad_s) &&
          within_spec("alignment_valid_stale_s", time::to_seconds(c.valid_stale)) &&
          within_spec("alignment_frozen_max_s", time::to_seconds(c.frozen_max)) && c.tau >= limits::kFilterDtMax;
 }
@@ -61,6 +59,20 @@ Eigen::Vector3d frame_change(const Eigen::Vector3d& p, const Eigen::Vector3d& pi
   const Eigen::Vector2d r = p.head<2>() - pivot.head<2>();
   const Eigen::Vector2d rotated_minus_r = rz(dh, r) - r;
   return {p.x() + rotated_minus_r.x() + d.x(), p.y() + rotated_minus_r.y() + d.y(), p.z() + d.z()};
+}
+
+/// A pair measured against a reference T at the pair's vehicle point (header comment, D30/O12).
+struct AtVehicle {
+  Eigen::Vector3d q;  // T(p_lio): where the reference T puts the vehicle
+  Eigen::Vector3d e;  // p_px4 - q
+  double e_yaw;       // wrap(yaw_inst - yaw_T)
+};
+
+AtVehicle at_vehicle(const Pose4& T, const Pose4& inst, const Eigen::Vector3d& p_lio,
+                     const Eigen::Vector3d& p_px4) {
+  const Eigen::Vector2d q_xy = rz(T.yaw_rad, p_lio.head<2>()) + Eigen::Vector2d{T.x_m, T.y_m};
+  const Eigen::Vector3d q{q_xy.x(), q_xy.y(), p_lio.z() + T.z_m};
+  return AtVehicle{q, p_px4 - q, wrap(inst.yaw_rad - T.yaw_rad)};
 }
 
 }  // namespace
@@ -203,47 +215,57 @@ AlignmentOutput AlignmentEstimator::on_px4(const Px4PoseSample& s) noexcept {
 
 void AlignmentEstimator::restart_accumulation() noexcept {
   acc_n_ = 0;
-  acc_sum_t_.setZero();
+  acc_sum_px4_xy_.setZero();
+  acc_sum_lio_xy_.setZero();
+  acc_sum_z_ = 0.0;
   acc_sum_sin_ = 0.0;
   acc_sum_cos_ = 0.0;
 }
 
-void AlignmentEstimator::add_to_accumulation(const Pose4& inst) noexcept {
+void AlignmentEstimator::add_to_accumulation(const Pair& pair) noexcept {
   if (acc_n_ >= acc_.size()) restart_accumulation();  // only reachable with an invalid config
-  acc_[acc_n_++] = inst;
-  acc_sum_t_ += translation(inst);
-  acc_sum_sin_ += std::sin(inst.yaw_rad);
-  acc_sum_cos_ += std::cos(inst.yaw_rad);
+  acc_[acc_n_++] = pair;
+  acc_sum_px4_xy_ += pair.p_px4.head<2>();
+  acc_sum_lio_xy_ += pair.p_lio.head<2>();
+  acc_sum_z_ += pair.inst.z_m;  // z_px4 - z_lio
+  acc_sum_sin_ += std::sin(pair.inst.yaw_rad);
+  acc_sum_cos_ += std::cos(pair.inst.yaw_rad);
 }
 
 Pose4 AlignmentEstimator::accumulation_mean() const noexcept {
   if (acc_n_ == 0) return Pose4{};
-  const Eigen::Vector3d t = acc_sum_t_ / static_cast<double>(acc_n_);
+  const double n = static_cast<double>(acc_n_);
   // Circular mean: the direction of the summed unit vectors. Members are within jump_yaw_rad (<= 0.5 rad)
   // of each other, so the sum is never near zero.
-  return Pose4{t.x(), t.y(), t.z(), std::atan2(acc_sum_sin_, acc_sum_cos_)};
+  const double yaw = std::atan2(acc_sum_sin_, acc_sum_cos_);
+  // Least-squares translation given that yaw (header comment): the mean PX4 vehicle position minus the
+  // rotated mean LIO vehicle position. With every p_lio = 0 this is the mean of the instant translations.
+  const Eigen::Vector2d t_xy = acc_sum_px4_xy_ / n - rz(yaw, acc_sum_lio_xy_ / n);
+  return Pose4{t_xy.x(), t_xy.y(), acc_sum_z_ / n, yaw};
 }
 
-AlignmentReason AlignmentEstimator::accumulate(const Pose4& inst, time::SensorTime t) noexcept {
-  auto outside = [this](const Pose4& p, const Pose4& mean) {
-    return (translation(p) - translation(mean)).norm() > cfg_.jump_position_m ||
-           std::abs(wrap(p.yaw_rad - mean.yaw_rad)) > cfg_.jump_yaw_rad;
+AlignmentReason AlignmentEstimator::accumulate(const Pair& pair, time::SensorTime t) noexcept {
+  // Each pair is measured at its OWN vehicle point (D30/O12, D31).
+  auto outside = [this](const Pair& p, const Pose4& mean) {
+    const AtVehicle m = at_vehicle(mean, p.inst, p.p_lio, p.p_px4);
+    return m.e.norm() > cfg_.jump_position_m || std::abs(m.e_yaw) > cfg_.jump_yaw_rad;
   };
   if (acc_n_ > 0) {
     const Pose4 mean = accumulation_mean();
-    residual_position_m_ = (translation(inst) - translation(mean)).norm();
-    residual_yaw_rad_ = wrap(inst.yaw_rad - mean.yaw_rad);
+    const AtVehicle m = at_vehicle(mean, pair.inst, pair.p_lio, pair.p_px4);
+    residual_position_m_ = m.e.norm();
+    residual_yaw_rad_ = m.e_yaw;
     // A NaN threshold (invalid config) makes every comparison false; cfg_valid_ still blocks VALID below.
-    if (outside(inst, mean)) {
+    if (outside(pair, mean)) {
       restart_accumulation();
-      add_to_accumulation(inst);
+      add_to_accumulation(pair);
       return AlignmentReason::kPairRejectedJump;
     }
   } else {
     residual_position_m_ = 0.0;
     residual_yaw_rad_ = 0.0;
   }
-  add_to_accumulation(inst);
+  add_to_accumulation(pair);
   last_accepted_ = t;
   if (!cfg_valid_ || acc_n_ < cfg_.consistent_pairs) return AlignmentReason::kPairAccepted;
 
@@ -252,7 +274,7 @@ AlignmentReason AlignmentEstimator::accumulate(const Pose4& inst, time::SensorTi
   for (std::uint32_t i = 0; i < acc_n_; ++i) {
     if (outside(acc_[i], mean)) {
       restart_accumulation();
-      add_to_accumulation(inst);
+      add_to_accumulation(pair);
       return AlignmentReason::kPairRejectedJump;
     }
   }
@@ -263,12 +285,12 @@ AlignmentReason AlignmentEstimator::accumulate(const Pose4& inst, time::SensorTi
 
 // ---- VALID filter ------------------------------------------------------------------------------------------
 
-AlignmentReason AlignmentEstimator::filter(const Pose4& inst, time::SensorTime t) noexcept {
-  const Eigen::Vector3d e_t = translation(inst) - translation(filtered_);
-  const double e_yaw = wrap(inst.yaw_rad - filtered_.yaw_rad);
-  residual_position_m_ = e_t.norm();
-  residual_yaw_rad_ = e_yaw;
-  if (residual_position_m_ > cfg_.jump_position_m || std::abs(e_yaw) > cfg_.jump_yaw_rad) {
+AlignmentReason AlignmentEstimator::filter(const Pair& pair, time::SensorTime t) noexcept {
+  // Residual and gate at the vehicle point q = T(p_lio) (D30/O12), against the filtered T before the step.
+  const AtVehicle m = at_vehicle(filtered_, pair.inst, pair.p_lio, pair.p_px4);
+  residual_position_m_ = m.e.norm();
+  residual_yaw_rad_ = m.e_yaw;
+  if (residual_position_m_ > cfg_.jump_position_m || std::abs(m.e_yaw) > cfg_.jump_yaw_rad) {
     return AlignmentReason::kPairRejectedJump;  // T unchanged
   }
   // dt in LIO sensor time since the previous accepted pair (always set in VALID), clamped (limits.hpp).
@@ -276,15 +298,12 @@ AlignmentReason AlignmentEstimator::filter(const Pose4& inst, time::SensorTime t
   const double dt = time::to_seconds(std::clamp(raw_dt, limits::kFilterDtMin, limits::kFilterDtMax));
   const double alpha = dt / time::to_seconds(cfg_.tau);  // <= 1 (tau >= kFilterDtMax)
 
-  Eigen::Vector3d step_t = alpha * e_t;
-  const double max_step = cfg_.max_rate_mps * dt;
-  const double n = step_t.norm();
-  if (n > max_step) step_t *= max_step / n;
-  const double max_yaw_step = cfg_.max_yaw_rate_rad_s * dt;
-  const double step_yaw = std::clamp(alpha * e_yaw, -max_yaw_step, max_yaw_step);
-
-  const Eigen::Vector3d new_t = translation(filtered_) + step_t;
-  filtered_ = Pose4{new_t.x(), new_t.y(), new_t.z(), wrap(filtered_.yaw_rad + step_yaw)};
+  // One step = the frame change G with pivot q, rotation dh and shift alpha e: yaw_T += dh,
+  // t <- Rz(dh)(t - q) + q + alpha e, so T'(p_lio) = q + alpha e (the yaw part rotates about the vehicle).
+  // No separate rate limiter (D30): |e| <= jump_position_m and |e_yaw| <= jump_yaw_rad already bound a step.
+  const double dh = alpha * m.e_yaw;
+  const Eigen::Vector3d new_t = frame_change(translation(filtered_), m.q, alpha * m.e, dh);
+  filtered_ = Pose4{new_t.x(), new_t.y(), new_t.z(), wrap(filtered_.yaw_rad + dh)};
   last_accepted_ = t;
   stale_since_ = t;
   return AlignmentReason::kPairAccepted;
@@ -332,10 +351,10 @@ AlignmentOutput AlignmentEstimator::on_lio(const LioPoseSample& s) noexcept {
 
   const auto px4 = px4_at(s.t);
   if (!px4) return output(transition.value_or(AlignmentReason::kNoPx4Sample));
-  const Pose4 inst = instant(px4->p, px4->yaw, s.p_frd_m, s.yaw_frd_rad);
+  const Pair pair{instant(px4->p, px4->yaw, s.p_frd_m, s.yaw_frd_rad), s.p_frd_m, px4->p};
   newest_pair_ = s.t;
-  const AlignmentReason r = state_ == AlignmentState::kInit ? accumulate(inst, s.t) : filter(inst, s.t);
-  return output(transition.value_or(r), inst);
+  const AlignmentReason r = state_ == AlignmentState::kInit ? accumulate(pair, s.t) : filter(pair, s.t);
+  return output(transition.value_or(r), pair.inst);
 }
 
 AlignmentOutput AlignmentEstimator::on_tick(time::SensorTime now) noexcept {

@@ -36,8 +36,10 @@ static_assert(kPx4BufferSpan > kPairingWindow + kPairingWindow);
 /// Clamp of the filter step dt (LIO sensor time between two accepted pairs). The minimum (1 ms) only keeps
 /// the step well defined; LIO stamps are strictly increasing so dt > 0 anyway. The maximum (200 ms = two
 /// 10 Hz scan periods) bounds what one pair may do after a gap (FROZEN, rejected or unpaired scans): at
-/// most alpha = 0.2 / tau of the error and max_rate x 0.2 s of motion. It equals the smallest allowed
-/// alignment_tau_s, so alpha = dt / tau <= 1 for every loadable config (checked in config.hpp).
+/// most alpha = 0.2 / tau of the error measured at the vehicle, i.e. at most jump_position_m x 0.2 / tau of
+/// motion of T at the vehicle and jump_yaw_rad x 0.2 / tau of yaw (there is no separate rate limiter, D30).
+/// It equals the smallest allowed alignment_tau_s, so alpha = dt / tau <= 1 for every loadable config
+/// (checked in config.hpp).
 inline constexpr time::Duration kFilterDtMin = time::milliseconds(1);
 inline constexpr time::Duration kFilterDtMax = time::milliseconds(200);
 

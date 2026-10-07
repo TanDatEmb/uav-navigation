@@ -28,6 +28,34 @@
 // z = z_px4 - z_lio. Every angle that leaves this module is wrapped to [-pi, pi]; every yaw difference,
 // mean and filter error is a shortest-arc (wrapped) difference, never a raw difference across +-pi.
 //
+// ---- Every measurement of T at the vehicle (D30/O12) -------------------------------------------------------
+// Far from the lio_odom origin a small yaw error times the lever arm |p_lio| is a large translation error of
+// T (at 300 m, 1.7 mrad is 0.5 m), but what must stay right is where T puts the VEHICLE (the setpoint). So
+// residual, jump gate, filter step and INIT consistency are all measured at the vehicle point of the pair.
+// For a pair (p_lio, yaw_lio | p_px4, yaw_px4 interpolated at the scan time), its instant T (yaw_inst, t_inst)
+// and a reference T (the filtered T in VALID, the accumulation mean in INIT):
+//     q     = T(p_lio) = (Rz(yaw_T) p_lio_xy + t_xy, z_lio + t_z)    where T puts the vehicle
+//     e     = p_px4 - q                                            position error at the vehicle (3-D)
+//     e_yaw = wrap(yaw_inst - yaw_T)
+// The S1a origin measure t_inst - t_T = e - (Rz(yaw_inst) - Rz(yaw_T)) p_lio_xy adds a lever-arm term that
+// grows with |p_lio| and says nothing about the vehicle; it is not used.
+//   Jump gate: |e| > jump_position_m or |e_yaw| > jump_yaw_rad (strict) rejects the pair, T unchanged.
+//   Filter step (alpha = dt / tau, dt clamped): the frame change G below with pivot q, shift alpha e and
+//   rotation dh = alpha e_yaw:  yaw_T += dh,  t <- Rz(dh)(t - q) + q + alpha e.
+//   Since Rz(yaw_T) p_lio_xy = q_xy - t_xy,
+//       T'(p_lio)_xy = Rz(dh)(q_xy - t_xy) + Rz(dh)(t_xy - q_xy) + q_xy + alpha e_xy = q_xy + alpha e_xy,
+//   and z: t_z += alpha e_z. So the vehicle point moves by exactly alpha e and the yaw part is a rotation about
+//   the vehicle: a pure yaw step does not move the vehicle point.
+//   Implied rate bound (there is no separate rate limiter, D30): an accepted pair has |e| <= jump_position_m
+//   and |e_yaw| <= jump_yaw_rad, so one step moves T at the vehicle by at most jump_position_m dt / tau and
+//   its yaw by at most jump_yaw_rad dt / tau: 0.25 m/s and 0.0436 rad/s (2.5 deg/s) with the beta values.
+//   INIT: each member keeps (instant T, p_lio, p_px4). Mean yaw psi = circular mean of the instant yaws; the
+//   mean translation is the least-squares t given psi (argmin_t sum |p_px4_i - Rz(psi) p_lio_i - t|^2):
+//       t_xy = mean(p_px4_xy) - Rz(psi) mean(p_lio_xy)        t_z = mean(z_px4 - z_lio)
+//   A new pair is checked at its vehicle point against the running mean; the final re-check measures every
+//   member at its OWN vehicle point against the final mean.
+// With p_lio = 0 every rule reduces to the origin rules (q = t_T, e = t_inst - t_T, mean t = mean t_inst).
+//
 // ---- PX4 reset deltas (F13) --------------------------------------------------------------------------------
 // vehicle_local_position carries one uint8 counter per quantity (xy, z, heading) and the delta of the
 // latest reset: delta = estimate after the reset - estimate before it (PX4 EKF2: posNE_change = new - old,
@@ -66,8 +94,9 @@ enum class AlignmentReason : std::uint8_t {
   kNone,               ///< nothing happened (an ordinary PX4 sample, an on_tick without timeout, ...)
   kPairsConsistent,    ///< INIT -> VALID
   kPairAccepted,       ///< the pair entered the INIT accumulation or the VALID filter
-  kPairRejectedJump,   ///< VALID: instant T beyond the jump thresholds of the filtered T (T unchanged);
-                       ///< INIT: instant T inconsistent with the running mean (accumulation restarted from it)
+  kPairRejectedJump,   ///< VALID: the pair beyond a jump threshold of the filtered T, measured at the vehicle
+                       ///< (T unchanged); INIT: the pair inconsistent with the running mean at the vehicle, or
+                       ///< a member with the final mean (accumulation restarted from the pair)
   kLioLost,            ///< VALID -> FROZEN; in INIT the accumulation restarts
   kLioTracking,        ///< FROZEN -> VALID, INVALID -> INIT
   kPx4ResetApplied,    ///< a PX4 reset was applied to T and the buffer (VALID/INIT/INVALID)
@@ -144,29 +173,35 @@ struct LioPoseSample {
 struct AlignmentConfig {
   time::Duration tau;                ///< first-order filter time constant (2 s)
   std::uint32_t consistent_pairs;    ///< consecutive consistent pairs INIT -> VALID (20)
-  double jump_position_m;            ///< |t_inst - t_filtered| (3-D) rejection threshold (0.5 m)
-  double jump_yaw_rad;               ///< |wrap(yaw_inst - yaw_filtered)| rejection threshold (0.0873 rad)
-  double max_rate_mps;               ///< largest filtered translation rate, 3-D norm (0.5 m/s)
-  double max_yaw_rate_rad_s;         ///< largest filtered yaw rate (0.0873 rad/s)
+  double jump_position_m;            ///< |p_px4 - T(p_lio)| (3-D, at the vehicle) rejection threshold (0.5 m)
+  double jump_yaw_rad;               ///< |wrap(yaw_inst - yaw_T)| rejection threshold (0.0873 rad)
   time::Duration valid_stale;        ///< VALID without an accepted pair for longer -> INVALID (1 s)
   time::Duration frozen_max;         ///< FROZEN for longer -> INVALID (10 s = lio_recovery_timeout_s, D18)
 };
 
-/// One output per call. Every double is finite in every output (no NaN, no inf).
+/// One output per call. Every double is finite in every output (no NaN, no inf). The S1b node publishes it as
+/// Alignment.msg: x_m..yaw_rad <- filtered, raw_* <- raw, residual_* <- residual_*, age_s, stamp.
 struct AlignmentOutput {
   AlignmentState state{AlignmentState::kInit};
-  /// VALID/FROZEN: the filtered T. INIT: the running mean of the accumulation (zero when empty); not usable.
-  /// INVALID: the last T, kept for logging only.
+  /// The lio_odom FRD -> PX4 local NED transform (header comment), after this call's step.
+  /// VALID/FROZEN: the filtered T. INIT: the running (least-squares) mean of the accumulation (zero when
+  /// empty); not usable. INVALID: the last T, kept for logging only.
   Pose4 filtered{};
-  /// Instant T of the pair formed in THIS call (also when rejected); nullopt when no pair was formed.
+  /// Instant T of the pair formed in THIS call (also when rejected); nullopt when no pair was formed. Same
+  /// transform as `filtered`. raw - filtered is NOT a residual: for this pair's p_lio its translation part is
+  ///     (p_px4 - filtered(p_lio)) - (Rz(yaw_raw) - Rz(yaw_filtered)) p_lio_xy
+  /// i.e. it includes the lever arm (Rz(yaw_raw) - Rz(yaw_filtered)) p_lio_xy, which grows with |p_lio| (1.5 m
+  /// for 5 mrad at 300 m). Use residual_* for the error at the vehicle.
   std::optional<Pose4> raw;
   /// SensorTime of the LIO sample of the newest formed pair (D28); 0 before the first pair.
   time::SensorTime stamp{};
   /// Seconds from the last accepted pair to the newest time seen (LIO stamp or tick); 0 before the first
   /// accepted pair (the state then says INIT, so the value is never used to trust T).
   double age_s{0.0};
-  /// Instant vs filtered T of the newest formed pair (3-D norm; wrapped yaw). In INIT: vs the running mean
-  /// before the pair was added. 0 before the first pair.
+  /// Residual of the newest formed pair, measured at its vehicle point against the reference T BEFORE this
+  /// pair's step (VALID: the filtered T; INIT: the running mean before the pair was added; header comment):
+  /// residual_position_m = |p_px4 - T(p_lio)| (3-D), residual_yaw_rad = wrap(yaw_inst - yaw_T). This is what
+  /// the jump gate compares. 0 before the first pair and for a pair that enters an empty accumulation.
   double residual_position_m{0.0};
   double residual_yaw_rad{0.0};
   AlignmentReason reason{AlignmentReason::kNone};
@@ -225,14 +260,15 @@ class AlignmentEstimator {
   ///     FROZEN  -> VALID (kLioTracking); the pair, if any, is then processed as in VALID, but the
   ///                reason stays kLioTracking (the jump rejection protects T).
   ///     no PX4 pair                                             -> kNoPx4Sample, nothing changes
-  ///     INIT: consistent with the running mean -> added (kPairAccepted), and at consistent_pairs and all
-  ///           members within the thresholds of the final mean -> VALID with T = mean (kPairsConsistent);
-  ///           inconsistent -> the accumulation restarts from this pair (kPairRejectedJump).
-  ///     VALID: beyond a jump threshold of the filtered T (strictly greater) -> kPairRejectedJump, T
-  ///            unchanged; else one filter step (kPairAccepted).
-  /// Filter step: dt = clamp(s.t - previous accepted pair, kFilterDtMin, kFilterDtMax), alpha = dt / tau,
-  /// step = alpha * (wrapped) error, then |translation step| <= max_rate * dt (3-D norm, scaled) and
-  /// |yaw step| <= max_yaw_rate * dt. The INIT -> VALID pair sets T = mean and takes no step.
+  ///     INIT: consistent with the running mean at the vehicle -> added (kPairAccepted), and at
+  ///           consistent_pairs and every member within the thresholds of the final mean at its own vehicle
+  ///           point -> VALID with T = mean (kPairsConsistent); inconsistent -> the accumulation restarts
+  ///           from this pair (kPairRejectedJump).
+  ///     VALID: beyond a jump threshold of the filtered T at the vehicle (strictly greater) ->
+  ///            kPairRejectedJump, T unchanged; else one filter step (kPairAccepted).
+  /// Filter step (header comment): dt = clamp(s.t - previous accepted pair, kFilterDtMin, kFilterDtMax),
+  /// alpha = dt / tau; yaw rotated by alpha e_yaw about the vehicle point q, vehicle point moved by alpha e.
+  /// No separate rate limiter (D30). The INIT -> VALID pair sets T = mean and takes no step.
   /// An output with tracking=false is never VALID.
   AlignmentOutput on_lio(const LioPoseSample& s) noexcept;
 
@@ -247,6 +283,12 @@ class AlignmentEstimator {
     Eigen::Vector3d p;
     double yaw;
   };
+  /// One formed pair: its instant T and the two vehicle positions it was made from.
+  struct Pair {
+    Pose4 inst;
+    Eigen::Vector3d p_lio;  // lio_odom FRD
+    Eigen::Vector3d p_px4;  // PX4 local NED, interpolated at the scan time
+  };
 
   /// The one writer of state_. Returns false, leaving the state unchanged, for an edge not in
   /// kAlignmentTransitions (a programming error; asserted in debug builds, reported as kInputRejected).
@@ -254,12 +296,12 @@ class AlignmentEstimator {
   AlignmentOutput output(AlignmentReason reason, const std::optional<Pose4>& raw = std::nullopt) const noexcept;
   std::optional<Interpolated> px4_at(time::SensorTime t) const noexcept;
   void restart_accumulation() noexcept;
-  void add_to_accumulation(const Pose4& inst) noexcept;
+  void add_to_accumulation(const Pair& pair) noexcept;
   void push(const Px4PoseSample& s) noexcept;
   const Px4PoseSample& sample(std::size_t i) const noexcept;  // i = 0 is the oldest
   Pose4 accumulation_mean() const noexcept;
-  AlignmentReason accumulate(const Pose4& inst, time::SensorTime t) noexcept;
-  AlignmentReason filter(const Pose4& inst, time::SensorTime t) noexcept;
+  AlignmentReason accumulate(const Pair& pair, time::SensorTime t) noexcept;
+  AlignmentReason filter(const Pair& pair, time::SensorTime t) noexcept;
   void accept(time::SensorTime t) noexcept;
   std::optional<AlignmentReason> timeouts(time::SensorTime now) noexcept;
 
@@ -278,9 +320,11 @@ class AlignmentEstimator {
   };
   std::optional<Counters> last_counters_;  // empty until the first accepted PX4 sample
 
-  std::array<Pose4, limits::kMaxConsistentPairs> acc_{};  // INIT accumulation
+  std::array<Pair, limits::kMaxConsistentPairs> acc_{};  // INIT accumulation
   std::uint32_t acc_n_{0};
-  Eigen::Vector3d acc_sum_t_{Eigen::Vector3d::Zero()};
+  Eigen::Vector2d acc_sum_px4_xy_{Eigen::Vector2d::Zero()};
+  Eigen::Vector2d acc_sum_lio_xy_{Eigen::Vector2d::Zero()};
+  double acc_sum_z_{0.0};  // sum of z_px4 - z_lio
   double acc_sum_sin_{0.0};
   double acc_sum_cos_{0.0};
 
