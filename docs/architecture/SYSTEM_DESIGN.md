@@ -192,7 +192,15 @@ Làm theo đủ cơ chế của EKF2 (F35):
 3. Attitude hiệu chỉnh qua delta-angle với gain `0.5·dt/delay`.
 4. Vel/pos hiệu chỉnh bằng PI (`dt/τ`, tích phân `0.1·gain²`), áp lên **toàn bộ buffer**. τ_vel = τ_pos = 0.25 s (tầng b).
 5. Kênh dọc riêng.
-6. dt được lấy trung bình và kẹp.
+6. dt được lấy trung bình và kẹp như PX4: khoảng giữa hai lần hiệu chỉnh kẹp tối đa 0.03 s.
+
+**Nghĩa của τ (D30).** τ ở đây mang cùng nghĩa với `EKF2_TAU_VEL`/`EKF2_TAU_POS` của PX4, không phải hằng thời gian thực tế:
+- PX4 hiệu chỉnh ở khoảng 100 Hz nên phép kẹp 0.03 s không có tác dụng.
+- Predictor chỉ được hiệu chỉnh theo nhịp scan (10 Hz), nên hằng thời gian hiệu dụng ≈ τ·T_scan/0.03 (≈ 0.83 s với τ = 0.25 s).
+- Phép kẹp được giữ có chủ đích: bỏ kẹp thì mỗi scan kéo khoảng 40% sai số, gây nhảy bậc đúng lỗi F23.
+- τ được đánh giá lại bằng output tracking error trong log SITL.
+
+**Khác biệt thứ ba có chủ đích so với PX4 (D30):** hiệu chỉnh attitude được giữ trong một **cửa sổ có giới hạn** rồi về 0. PX4 làm mới hiệu chỉnh này ở mỗi bước EKF. Predictor chỉ có hiệu chỉnh theo nhịp scan, nên nếu giữ vô hạn thì attitude sẽ trôi liên tục khi scan ngừng.
 7. Reset tường minh: phát `reset_counter` kèm delta pos, vel, yaw.
 8. Xuất output tracking error vào `/lio/health`.
 
@@ -203,13 +211,26 @@ Làm theo đủ cơ chế của EKF2 (F35):
 - **Luôn** tăng `reset_counter` theo epoch của chính mẫu dữ liệu.
 - Phát event `LioRestart` gồm: epoch cũ, epoch mới, seed, `T`.
 
-### §3.5 Thread
+### §3.5 Thread (D30)
 
-- **ingest:** IMU, LiDAR, predictor, kiểm gap.
-- **estimator:** xử lý scan.
+Phần thuần của LIO tách thành hai khối, mỗi khối do đúng một thread sở hữu:
+
+| Khối | Thread | Sở hữu | Không được làm |
+|---|---|---|---|
+| **Frontend** | ingest | Nhận IMU và LiDAR; `OutputPredictor`; `LioLifecycle` (**nơi ghi duy nhất** của trạng thái LIO); kiểm gap trên từng mẫu IMU; phát `/lio/state`, `/lio/health`, `/lio/odometry` | Chạy ICP hay cập nhật map |
+| **Backend** | estimator | `IkfomEstimator`, map (ikd-tree), deskew, ICP, đánh giá suy biến | Ghi trạng thái lifecycle; phát message |
+
+Hai khối trao đổi qua hàng đợi có giới hạn, chỉ chứa dữ liệu bất biến:
+- **Frontend → backend:** bản sao mẫu IMU, scan đã nhận, lệnh `restart(seed)`.
+- **Backend → frontend:** kết quả scan, gồm `EstimatorSnapshot`, báo cáo suy biến, covariance, và loại kết quả (`kScanGood`, `kScanDegenerate`, `kScanEmpty`, `kMapReady`, `kRestartSeeded`).
+
+Frontend đưa từng kết quả scan vào lifecycle và predictor. Vì vậy thời gian ICP chạy (20–50 ms) không làm `/lio/state` dồn cục và không làm chậm kiểm gap.
+
+Hàng đợi tràn là một event có reason, và không bao giờ chặn thread ingest.
+
+Thread khác:
 - **events writer.**
-
-Hai thread chính trao đổi qua hàng đợi có giới hạn. Hàng đợi tràn là một event có reason.
+- **Worker OpenMP** bên trong ICP: số thread là hằng số tầng (a) (mặc định 3), chỉ sống trong lời gọi của backend.
 
 ## §4. PX4 (D21, D7, D20)
 
@@ -226,9 +247,16 @@ Hai thread chính trao đổi qua hàng đợi có giới hạn. Hàng đợi tr
 **Alignment `T_px4←lio`, 4-DoF (x, y, z, yaw)**
 
 - Mỗi cặp mẫu cùng thời điểm (pose LIO tại thời điểm scan, pose PX4 nội suy tại đúng thời điểm đó) cho một `T` tức thời.
-- `T` được lọc với `τ_T` = 2 s (tầng b) và giới hạn tốc độ biến thiên. `T` tức thời lệch khỏi `T` đã lọc quá 0.5 m hoặc 5° (tầng b) thì bị bỏ qua và phát event.
+- **Mọi phép đo của `T` đều tính tại vị trí xe**, không tại gốc LIO (D30). Ở xa gốc, một sai số yaw nhỏ nhân với cánh tay đòn sẽ thành sai số tịnh tiến lớn: ở 300 m, 1.7 mrad đã thành 0.5 m. Thứ cần giữ đúng là setpoint tại xe. Cụ thể:
+  - residual vị trí = `‖p_px4 − T(p_lio)‖` tại cặp mẫu; residual yaw tính riêng;
+  - cổng nhảy: `T` tức thời có residual tại xe quá 0.5 m hoặc 5° (tầng b) thì bị bỏ qua và phát event;
+  - bước lọc với `τ_T` = 2 s (tầng b): phần yaw là **phép xoay quanh vị trí xe hiện tại**, phần tịnh tiến là độ lệch vị trí tại xe.
+- **Không có bộ giới hạn tốc độ riêng.** Cổng nhảy và `τ_T` đã giới hạn tốc độ biến thiên của `T` tại xe ở jump/τ_T, tức 0.25 m/s và 2.5°/s với giá trị beta.
 - Log cả `T` thô và `T` đã lọc.
-- PX4 reset: cộng **tất định** các delta `xy/z/heading` từ `vehicle_local_position` vào `T`. Không giả định mỗi lần counter chỉ tăng 1.
+- **PX4 reset (D30):**
+  - Reset `xy` hoặc `z`: cộng tất định delta tương ứng từ `vehicle_local_position` vào `T`.
+  - Reset `heading`: EKF2 chỉ xoay quaternion, vị trí local vẫn liên tục. Vì vậy áp **phép đổi hệ quy chiếu G**, tức xoay `T` quanh vị trí xe theo PX4: `yaw_T += dh`, `t ← Rz(dh)·(t − p_xe) + p_xe + d`. Áp cùng G lên các mẫu PX4 đang buffer.
+  - Không giả định mỗi lần counter chỉ tăng 1.
 - Trạng thái `T`:
 
 ```text
