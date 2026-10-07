@@ -222,7 +222,17 @@ Phần thuần của LIO tách thành hai khối, mỗi khối do đúng một t
 
 Hai khối trao đổi qua hàng đợi có giới hạn, chỉ chứa dữ liệu bất biến:
 - **Frontend → backend:** bản sao mẫu IMU, scan đã nhận, lệnh `restart(seed)`.
-- **Backend → frontend:** kết quả scan, gồm `EstimatorSnapshot`, báo cáo suy biến, covariance, và loại kết quả (`kScanGood`, `kScanDegenerate`, `kScanEmpty`, `kMapReady`, `kRestartSeeded`).
+- **Backend → frontend:** kết quả scan, gồm `EstimatorSnapshot`, báo cáo suy biến, covariance, và loại kết quả:
+  - loại đưa vào lifecycle: `kScanGood`, `kScanDegenerate`, `kScanEmpty`, `kMapReady`, `kRestartSeeded`;
+  - loại không đưa vào lifecycle (D31): `kImuInitialized` (căn predictor), `kScanNotProcessed` (đối soát), `kRestartRejected`.
+
+**Chỉ một scan được predictor áp dụng thì mới tính là scan có correction (D31).** Nếu predictor từ chối hiệu chỉnh của một kết quả `kScanGood`, ví dụ vì cũ hơn buffer 300 ms (`kOlderThanBuffer`), thì frontend:
+- đưa scan đó vào lifecycle như `kScanDegenerate` với reason riêng;
+- **không** đẩy mốc "scan cuối" lên.
+
+Nhờ vậy backend chậm kéo dài sẽ dẫn tới DEGRADED/LOST. Nếu không có quy tắc này, `/lio/state` có thể trôi trong khi health vẫn báo TRACKING.
+
+**Phần thực thi có thread là mã sản phẩm (D31).** Việc ghép frontend, backend và hai hàng đợi trên hai thread nằm trong một lớp của `uavnav_lio_core`, lớp này có test và có chạy TSan. Node ROS ở S1b dùng lại đúng lớp đó. Driver đồng bộ một thread chỉ dùng cho test và replay offline; node sản phẩm không được dùng nó.
 
 Frontend đưa từng kết quả scan vào lifecycle và predictor. Vì vậy thời gian ICP chạy (20–50 ms) không làm `/lio/state` dồn cục và không làm chậm kiểm gap.
 
@@ -230,7 +240,7 @@ Hàng đợi tràn là một event có reason, và không bao giờ chặn threa
 
 Thread khác:
 - **events writer.**
-- **Worker OpenMP** bên trong ICP: số thread là hằng số tầng (a) (mặc định 3), chỉ sống trong lời gọi của backend.
+- **Worker OpenMP** bên trong ICP: số thread là hằng số tầng (a) (mặc định 3), và chỉ backend gọi tới chúng. Runtime libgomp giữ pool thread giữa các lời gọi. Bản build TSan đặt số thread về 1, vì libgomp không được TSan instrument (D31).
 
 ## §4. PX4 (D21, D7, D20)
 
@@ -250,7 +260,8 @@ Thread khác:
 - **Mọi phép đo của `T` đều tính tại vị trí xe**, không tại gốc LIO (D30). Ở xa gốc, một sai số yaw nhỏ nhân với cánh tay đòn sẽ thành sai số tịnh tiến lớn: ở 300 m, 1.7 mrad đã thành 0.5 m. Thứ cần giữ đúng là setpoint tại xe. Cụ thể:
   - residual vị trí = `‖p_px4 − T(p_lio)‖` tại cặp mẫu; residual yaw tính riêng;
   - cổng nhảy: `T` tức thời có residual tại xe quá 0.5 m hoặc 5° (tầng b) thì bị bỏ qua và phát event;
-  - bước lọc với `τ_T` = 2 s (tầng b): phần yaw là **phép xoay quanh vị trí xe hiện tại**, phần tịnh tiến là độ lệch vị trí tại xe.
+  - bước lọc với `τ_T` = 2 s (tầng b): phần yaw là **phép xoay quanh vị trí xe hiện tại**, phần tịnh tiến là độ lệch vị trí tại xe;
+  - bước tích luỹ INIT (20 cặp nhất quán) cũng đo tại vị trí xe. Nếu không, khởi tạo lại ở xa gốc sẽ không bao giờ đạt VALID (D31).
 - **Không có bộ giới hạn tốc độ riêng.** Cổng nhảy và `τ_T` đã giới hạn tốc độ biến thiên của `T` tại xe ở jump/τ_T, tức 0.25 m/s và 2.5°/s với giá trị beta.
 - Log cả `T` thô và `T` đã lọc.
 - **PX4 reset (D30):**
