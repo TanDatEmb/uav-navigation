@@ -1,5 +1,10 @@
 #pragma once
 
+// D32 boundary marker (SYSTEM_DESIGN §3.5): every source file of the LIO backend ends with
+// `#ifdef UAVNAV_LIO_LIFECYCLE_HPP_INCLUDED` / `#error`, so including this header into the backend, even
+// through another header, fails the build. The frontend is the single writer of the lifecycle.
+#define UAVNAV_LIO_LIFECYCLE_HPP_INCLUDED 1
+
 #include <array>
 #include <cstdint>
 #include <optional>

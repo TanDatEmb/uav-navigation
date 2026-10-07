@@ -11,8 +11,8 @@
 #include "uavnav/core/event_recorder.hpp"
 #include "uavnav/core/result.hpp"
 #include "uavnav/core/time.hpp"
+#include "uavnav/lio/backend_config.hpp"
 #include "uavnav/lio/channels.hpp"
-#include "uavnav/lio/config.hpp"
 #include "uavnav/lio/types.hpp"
 
 // LioBackend: the estimator-thread block of the LIO split (SYSTEM_DESIGN §3.5, D30/O14). It owns all the
@@ -38,6 +38,10 @@
 // TimeSnapshot passed to step() stamps the events of that request; nothing here reads a clock (run() takes
 // the clock callable from its caller).
 //
+// Compile-time boundary (D32): this header and every backend source must never reach the lifecycle header;
+// each backend .cpp ends with an #error check of the lifecycle marker, and test_backend_boundary.cpp checks
+// the headers. The backend takes a BackendConfig (backend_config.hpp), never the merged LioConfig.
+//
 // Never throws out of step(): an exception escaping the reused math is caught, emitted as a "LioScan" event
 // with reason kMathException and treated as a degenerate scan (the ESKF is restored and rebased).
 namespace uavnav::lio {
@@ -56,7 +60,7 @@ class LioBackend {
   /// extrinsic_imu_lidar_*_m (1e-6 m), so the extrinsic has one source (kOutOfRange naming the key otherwise).
   /// Fails (kOutOfRange / kNotFinite) on a non-finite transform or a config the reused math refuses.
   /// `channels` and `events` must outlive the backend.
-  static Result<std::unique_ptr<LioBackend>, config::ConfigError> create(const LioConfig& config,
+  static Result<std::unique_ptr<LioBackend>, config::ConfigError> create(const BackendConfig& config,
                                                                          const Eigen::Isometry3d& base_T_imu,
                                                                          const Eigen::Isometry3d& imu_T_lidar,
                                                                          LioChannels& channels,

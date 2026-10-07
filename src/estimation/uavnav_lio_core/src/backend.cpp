@@ -34,33 +34,19 @@ namespace {
 
 namespace fl = uav::nav::lio;
 namespace bm = backend_math;
+using bm::kind_of;
+using bm::ScanOutcome;
+using bm::seconds;
 using bm::snapshot;
 using bm::stamp;
 using events::Component;
 using events::EventBuilder;
 using Reason = EstimatorEventReason;
 
-double seconds(time::SensorTime t) { return static_cast<double>(t.ns) / 1e9; }
-
-/// What one processed scan amounted to.
-struct ScanOutcome {
-  Reason reason;
-  std::optional<DegeneracyReport> report;  // set when a correction was attempted
-  std::vector<Eigen::Vector3d> points;     // preprocessed points (LiDAR frame), for the map
-};
-
-/// Prediction/deskew failures and math exceptions are degenerate scans (S1a rule).
-BackendResultKind kind_of(Reason r) {
-  if (r == Reason::kScanGood) return BackendResultKind::kScanGood;
-  if (r == Reason::kScanEmpty) return BackendResultKind::kScanEmpty;
-  if (r == Reason::kMapBootstrap) return BackendResultKind::kMapReady;
-  return BackendResultKind::kScanDegenerate;
-}
-
 }  // namespace
 
 struct LioBackend::Impl {
-  Impl(const LioConfig& c, const fl::RigidTransform& base_to_imu, const Eigen::Quaterniond& q_il, LioChannels& ch,
+  Impl(const BackendConfig& c, const fl::RigidTransform& base_to_imu, const Eigen::Quaterniond& q_il, LioChannels& ch,
        events::EventRecorder& ev)
       : degeneracy(c.degeneracy),
         channels(ch),
@@ -396,7 +382,7 @@ struct LioBackend::Impl {
 LioBackend::LioBackend(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
 LioBackend::~LioBackend() = default;
 
-Result<std::unique_ptr<LioBackend>, config::ConfigError> LioBackend::create(const LioConfig& config,
+Result<std::unique_ptr<LioBackend>, config::ConfigError> LioBackend::create(const BackendConfig& config,
                                                                             const Eigen::Isometry3d& base_T_imu,
                                                                             const Eigen::Isometry3d& imu_T_lidar,
                                                                             LioChannels& channels,
@@ -448,3 +434,8 @@ BackendStats LioBackend::stats() const noexcept {
 }
 
 }  // namespace uavnav::lio
+
+// D32: the backend never reaches the lifecycle header, not even through another header.
+#ifdef UAVNAV_LIO_LIFECYCLE_HPP_INCLUDED
+#error "backend.cpp reaches the LIO lifecycle header: the backend must not see the lifecycle (D32)"
+#endif

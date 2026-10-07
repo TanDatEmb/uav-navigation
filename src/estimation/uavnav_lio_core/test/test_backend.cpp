@@ -110,7 +110,7 @@ class BackendHarness {
     EXPECT_TRUE(recorder.has_value());
     recorder_ = std::move(*recorder);
     auto backend =
-        LioBackend::create(DefaultConfig(), scene::base_T_imu(), scene::imu_T_lidar(), *channels_, *recorder_);
+        LioBackend::create(backend_config(DefaultConfig()), scene::base_T_imu(), scene::imu_T_lidar(), *channels_, *recorder_);
     EXPECT_TRUE(backend.has_value()) << (backend ? "" : backend.error().detail);
     backend_ = std::move(*backend);
   }
@@ -553,12 +553,13 @@ TEST(LioBackend, RunReturnsWhenStoppedWhileIdle) {
   EXPECT_EQ(h.backend().stats().imu_samples, 0U);
 }
 
-// Review Focus 3: the backend cannot name the lifecycle or the frontend's output types.
+// Review Focus 3, secondary layer (D32): the backend cannot name the lifecycle or the frontend's output types.
+// The primary layer is at compile time: the #error footers of the backend sources and test_backend_boundary.cpp.
 TEST(LioSplit, BackendSourcesNeverReferenceTheLifecycle) {
   const std::string dir = UAVNAV_LIO_CORE_SOURCE_DIR;
   for (const std::string file : {"/include/uavnav/lio/backend.hpp", "/src/backend.cpp", "/src/backend_math.hpp",
                                  "/src/backend_math.cpp", "/include/uavnav/lio/types.hpp",
-                                 "/include/uavnav/lio/channels.hpp"}) {
+                                 "/include/uavnav/lio/channels.hpp", "/include/uavnav/lio/backend_config.hpp"}) {
     const std::string text = ReadFile(dir + file);
     ASSERT_FALSE(text.empty()) << file;
     for (const std::string_view token : {"LioLifecycle", "lifecycle.hpp", "LioState", "OutputPredictor",
@@ -721,15 +722,35 @@ TEST(LioBackend, CreateRejectsBadFrames) {
   auto channels = std::make_unique<LioChannels>();
   Eigen::Isometry3d imu_T_lidar = scene::imu_T_lidar();
   imu_T_lidar.translation().y() += 0.01;
-  auto r = LioBackend::create(DefaultConfig(), scene::base_T_imu(), imu_T_lidar, *channels, **recorder);
+  auto r = LioBackend::create(backend_config(DefaultConfig()), scene::base_T_imu(), imu_T_lidar, *channels, **recorder);
   ASSERT_FALSE(r.has_value());
   EXPECT_EQ(r.error().kind, config::ConfigError::Kind::kOutOfRange);
   EXPECT_EQ(r.error().key, "extrinsic_imu_lidar_y_m");
 
   Eigen::Isometry3d bad_base = scene::base_T_imu();
   bad_base.translation().z() = std::numeric_limits<double>::quiet_NaN();
-  r = LioBackend::create(DefaultConfig(), bad_base, scene::imu_T_lidar(), *channels, **recorder);
+  r = LioBackend::create(backend_config(DefaultConfig()), bad_base, scene::imu_T_lidar(), *channels, **recorder);
   ASSERT_FALSE(r.has_value());
   EXPECT_EQ(r.error().kind, config::ConfigError::Kind::kNotFinite);
   EXPECT_EQ(r.error().key, "base_T_imu");
+}
+
+// A carried velocity so large that its rotation into the seed world overflows: the seed applicator refuses
+// the non-finite state, the restart is rejected with one event (no exception) and nothing changes.
+TEST(LioBackend, RestartWithAnOverflowingCarriedVelocityIsRejected) {
+  BackendHarness h;
+  h.InitialiseAndBootstrap();
+  const Eigen::Quaterniond yaw90(Eigen::AngleAxisd(std::numbers::pi / 2.0, Eigen::Vector3d::UnitZ()));
+  const Eigen::Vector3d huge(1.7e308, 1.7e308, 0.0);
+  const BackendResult r = h.Restart(2, SeedPose{Eigen::Vector3d::Zero(), yaw90}, Eigen::Quaterniond::Identity(), huge);
+  EXPECT_EQ(r.kind, BackendResultKind::kRestartRejected);
+  EXPECT_EQ(r.epoch, 2U);
+  EXPECT_FALSE(r.snapshot.has_value());
+  const auto ev = h.Events("RestartSeedRejected");
+  ASSERT_EQ(ev.size(), 1U);
+  EXPECT_EQ(ev[0].reason, "NOT_FINITE");
+  EXPECT_EQ(Value(ev[0], "exception"), 0.0);
+  EXPECT_EQ(h.backend().stats().restarts, 0U);
+  EXPECT_GT(h.backend().stats().map_points, 0U);
+  EXPECT_EQ(h.Scan(ScanKind::kRoom).kind, BackendResultKind::kScanGood);  // still epoch 1, map kept
 }

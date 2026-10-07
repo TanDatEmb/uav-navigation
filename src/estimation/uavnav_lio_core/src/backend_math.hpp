@@ -16,7 +16,8 @@
 #include "uavnav/core/config.hpp"
 #include "uavnav/core/result.hpp"
 #include "uavnav/core/time.hpp"
-#include "uavnav/lio/config.hpp"
+#include "uavnav/lio/backend_config.hpp"
+#include "uavnav/lio/degeneracy.hpp"
 #include "uavnav/lio/types.hpp"
 
 // Private to backend.cpp (not installed): the stateless fast_lio_core adapters of LioBackend, moved from the
@@ -26,13 +27,25 @@ namespace uavnav::lio::backend_math {
 namespace fl = uav::nav::lio;
 
 inline fl::Timestamp stamp(time::SensorTime t) { return fl::Timestamp(t.ns); }
+inline double seconds(time::SensorTime t) { return static_cast<double>(t.ns) / 1e9; }
+
+/// What one processed scan amounted to.
+struct ScanOutcome {
+  EstimatorEventReason reason;
+  std::optional<DegeneracyReport> report;  ///< set when a correction was attempted
+  std::vector<Eigen::Vector3d> points;     ///< preprocessed points (LiDAR frame), for the map
+};
+
+/// The result kind of a processed scan: prediction/deskew failures and math exceptions are degenerate
+/// scans (S1a rule).
+BackendResultKind kind_of(EstimatorEventReason r);
 
 EstimatorSnapshot snapshot(const fl::ManifoldState& s, time::SensorTime t);
 
 /// LioBackend::create's input checks: finite transforms (kNotFinite), and imu_T_lidar's translation equal to
 /// the config's extrinsic_imu_lidar_*_m within 1e-6 m (kOutOfRange naming the key), so the extrinsic has one
 /// source.
-Result<void, config::ConfigError> check_frames(const LioConfig& config, const Eigen::Isometry3d& base_T_imu,
+Result<void, config::ConfigError> check_frames(const BackendConfig& config, const Eigen::Isometry3d& base_T_imu,
                                                const Eigen::Isometry3d& imu_T_lidar);
 
 /// The rebased covariance after a failed prediction or a math exception: symmetrised, multiplied by

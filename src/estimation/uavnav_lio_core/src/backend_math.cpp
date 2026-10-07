@@ -26,6 +26,19 @@ bool usable(const Eigen::Quaterniond& q) { return q.coeffs().allFinite() && q.no
 
 }  // namespace
 
+BackendResultKind kind_of(EstimatorEventReason r) {
+  switch (r) {
+    case EstimatorEventReason::kScanGood:
+      return BackendResultKind::kScanGood;
+    case EstimatorEventReason::kScanEmpty:
+      return BackendResultKind::kScanEmpty;
+    case EstimatorEventReason::kMapBootstrap:
+      return BackendResultKind::kMapReady;
+    default:
+      return BackendResultKind::kScanDegenerate;
+  }
+}
+
 EstimatorSnapshot snapshot(const fl::ManifoldState& s, time::SensorTime t) {
   return EstimatorSnapshot{t,
                            s.orientation_odom_imu(),
@@ -36,7 +49,7 @@ EstimatorSnapshot snapshot(const fl::ManifoldState& s, time::SensorTime t) {
                            s.gravity_odom_m_s2()};
 }
 
-Result<void, config::ConfigError> check_frames(const LioConfig& config, const Eigen::Isometry3d& base_T_imu,
+Result<void, config::ConfigError> check_frames(const BackendConfig& config, const Eigen::Isometry3d& base_T_imu,
                                                const Eigen::Isometry3d& imu_T_lidar) {
   using Kind = config::ConfigError::Kind;
   if (!base_T_imu.matrix().allFinite()) {
@@ -148,3 +161,8 @@ std::optional<fl::ManifoldState> seed_state(const fl::InitialStatePriorApplicato
 }
 
 }  // namespace uavnav::lio::backend_math
+
+// D32: the backend never reaches the lifecycle header, not even through another header.
+#ifdef UAVNAV_LIO_LIFECYCLE_HPP_INCLUDED
+#error "backend_math.cpp reaches the LIO lifecycle header: the backend must not see the lifecycle (D32)"
+#endif

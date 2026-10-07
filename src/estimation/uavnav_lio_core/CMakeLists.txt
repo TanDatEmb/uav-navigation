@@ -43,7 +43,7 @@ if(BUILD_TESTING)
   # The tracked default parameter file, found from this package's source dir (portable, no install step).
   get_filename_component(UAVNAV_LIO_DEFAULT_YAML "${CMAKE_CURRENT_SOURCE_DIR}/../../../config/lio/sim.yaml" ABSOLUTE)
   foreach(test_name test_lio_config test_lifecycle test_degeneracy test_output_predictor test_estimator
-      test_backend)
+      test_backend test_backend_boundary)
     ament_add_gtest(${test_name} test/${test_name}.cpp TIMEOUT 300)
     target_link_libraries(${test_name} uavnav_lio_core::uavnav_lio_core)
     target_compile_options(${test_name} PRIVATE ${UAVNAV_LIO_CORE_STRICT_WARNINGS})

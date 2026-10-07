@@ -7,36 +7,32 @@
 
 #include "uavnav/core/config.hpp"
 #include "uavnav/core/result.hpp"
+#include "uavnav/lio/backend_config.hpp"
 #include "uavnav/lio/degeneracy.hpp"
-#include "uavnav/lio/lifecycle.hpp"
-#include "uavnav/lio/output_predictor.hpp"
+#include "uavnav/lio/frontend_config.hpp"
 
 // Typed tier-(b) configuration of the LIO core (SYSTEM_DESIGN §6.2). Later tasks append
 // their keys to kLioSpecs (N is derived from the initializer) and their section to
 // LioConfig / load_lio_config.
 namespace uavnav::lio {
 
-/// Values handed to the reused FAST-LIO math (fast_lio_core) by LioEstimator. Beta values (from the survey
-/// of `main`, config/runtime/sim.yaml) in parentheses. Every other fast_lio_core knob keeps the default of
-/// its own config struct (single source: fast_lio_core), see estimator.cpp.
-struct MathConfig {
-  Eigen::Vector3d t_imu_lidar_m;         ///< IMU -> LiDAR translation, IMU frame ((-0.011, -0.02329, 0.04412))
-  double preprocess_min_range_m;         ///< points closer than this are dropped (0.5)
-  double preprocess_max_range_m;         ///< points farther than this are dropped (40)
-  double preprocess_voxel_m;             ///< scan voxel filter edge (0.2)
-  double map_voxel_m;                    ///< ikd-tree downsample voxel edge (0.3)
-  Eigen::Vector3d map_half_extent_m;     ///< local map half extents x, y, z ((30, 30, 15))
-  std::uint32_t registration_max_iterations;  ///< IKFoM iterations per scan (4)
-  std::uint32_t imu_init_min_samples;    ///< stationary samples for gravity + bias init (200)
-  time::Duration imu_max_gap;            ///< largest IMU step integrated / reported as a gap (0.02 s)
-};
+/// The config is split by block (SYSTEM_DESIGN §3.5, D32): backend_config.hpp (EstimatorMathConfig,
+/// DegeneracyConfig: the estimator thread) and frontend_config.hpp (LifecycleConfig, PredictorConfig: the
+/// ingest thread). This header merges them with the one key table and the loader; ONLY the two-thread
+/// assembly (LioPipeline, LioRunner), the node and tests include it, never a backend or frontend file.
+/// LioConfig keeps its four members (lifecycle, degeneracy, predictor, math); backend_config() and
+/// frontend_config() hand each block its part.
+using MathConfig = EstimatorMathConfig;  ///< the S1a name, kept for load_lio_config and the facade
 
 struct LioConfig {
   LifecycleConfig lifecycle;
   DegeneracyConfig degeneracy;
   PredictorConfig predictor;
-  MathConfig math;
+  EstimatorMathConfig math;
 };
+
+inline BackendConfig backend_config(const LioConfig& c) { return BackendConfig{c.math, c.degeneracy}; }
+inline FrontendConfig frontend_config(const LioConfig& c) { return FrontendConfig{c.lifecycle, c.predictor}; }
 
 /// The single definition of every LIO key, its unit and its inclusive bounds. Beta values:
 /// confirm 5, degenerate 3, gap_degraded 0.25 s, gap_lost 0.5 s, degeneracy_lost 1.0 s, sigma_lost 0.5 m,
@@ -57,7 +53,7 @@ struct LioConfig {
 /// These are beta starting values; S1b recalibrates both from SITL logs. The default YAML
 /// (config/lio/sim.yaml) repeats the values and points back here ("see config.hpp").
 ///
-/// Math keys (MathConfig): beta values from the survey of `main` (config/runtime/sim.yaml); bounds are about
+/// Math keys (EstimatorMathConfig): beta values from the survey of `main` (config/runtime/sim.yaml); bounds are about
 /// 1/4x to 4x the beta value, except: the IMU -> LiDAR extrinsic components use the physical bound +-0.5 m
 /// (an IMU-LiDAR offset on one airframe; 0 allowed), registration_max_iterations [1, 10], and imu_max_gap_s
 /// [0.01, 0.08] (at least two 200 Hz periods, so one late sample is not a gap). imu_init_min_samples is
