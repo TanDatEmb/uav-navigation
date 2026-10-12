@@ -68,13 +68,19 @@
 //     limits.hpp) and the backend answers every request it pops; only stop() leaves requests unanswered.
 //   - A slow or stalled backend reads as a LiDAR gap on IMU time: DEGRADED, then LOST (frontend.hpp, F22).
 //
-// Late restart answer. A kRestartSeeded that is applied more than limits::kPredictorBufferSpan (300 ms of IMU
-// time) after its command (a backend stalled while the restart was pending) cannot be matched in the output
-// predictor's buffer: OutputPredictor::reset_to restarts the predictor at the command time cmd.t, i.e. the output
-// is rewound to cmd.t and the next IMU sample continues from there (the IMU motion between cmd.t and the answer
-// is not integrated into the new epoch's output). The state becomes INITIALIZING as for a timely answer, and the
-// "LioRestart" event's seed_age_s (newest IMU time - cmd.t) exposes the age; the confirm scans of the new epoch
-// then correct the output. Pinned by LioRunner.LateRestartAnswerRestartsThePredictorAndRecovers.
+// Late restart answer (D33/O16). A kRestartSeeded applied when the output predictor no longer covers its
+// command time cmd.t (OutputPredictor::covers: typically more than limits::kPredictorBufferSpan, 300 ms of IMU
+// time, after the command, i.e. a backend stalled while the restart was pending) is refused by the frontend: a
+// reset_to there would rewind the output to cmd.t and lose the motion since. The call that applies it returns
+// StepOutputs::restart = kStaleAnswer and a "LioRestartRejected" event (kRestartAnswerStale, values new_epoch,
+// sensor_time_s, seed_age_s) is emitted; the state stays RESTARTING, the epoch and /lio/state are untouched,
+// and no restart is pending any more. The backend has already switched to the new epoch and seeded it; the
+// caller restarts again with a fresh seed, and that command reuses the epoch number with a newer time, which the
+// backend accepts (it clears the map and seeds again). Scans admitted between the refusal and the retry carry
+// the old epoch and come back kScanNotProcessed; results of scans admitted while the refused restart was
+// pending carry the new epoch number and are discarded (kStaleEpoch) until the retry's own answer is applied
+// (frontend.hpp). Pinned by LioRunner.LateRestartAnswerIsRefusedAndARetrySucceeds and the LioFrontend
+// late-answer tests.
 //
 // OpenMP: the backend's ICP forks limits::kIcpThreads OpenMP threads inside one correction call, on the
 // estimator thread only (1 in the TSan build).

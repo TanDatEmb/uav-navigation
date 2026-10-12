@@ -40,9 +40,6 @@ bool is_scan_result(BackendResultKind k) {
 
 }  // namespace
 
-static_assert(static_cast<std::size_t>(EstimatorReason::kBackendBusy) + 1 == 7,
-              "one spam slot per EstimatorReason");
-
 LioFrontend::LioFrontend(const FrontendConfig& config, LioChannels& channels,
                          events::EventRecorder& events) noexcept
     : cfg_(config),
@@ -197,8 +194,8 @@ void LioFrontend::apply(const BackendResult& r, StepOutputs& out,
   }
   const bool restart_result =
       r.kind == BackendResultKind::kRestartSeeded || r.kind == BackendResultKind::kRestartRejected;
-  // Only the newest requested epoch counts; a restart answer only while that restart is pending.
-  if (r.epoch != requested_epoch_ || (restart_result && requested_epoch_ == epoch_)) {
+  // The newest requested epoch only; while a restart is pending, only its answer (frontend.hpp).
+  if (r.epoch != requested_epoch_ || restart_result != (requested_epoch_ != epoch_)) {
     return discard(r, EstimatorEventReason::kStaleEpoch, now);
   }
   ++stats_.results_applied;
@@ -275,16 +272,20 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
   pending_seed_.reset();
   assert((r.kind == BackendResultKind::kRestartRejected || r.snapshot) &&
          "kRestartSeeded without snapshot");
-  if (r.kind == BackendResultKind::kRestartRejected || !r.snapshot) {
+  const double seed_age_s = last_imu_ ? time::to_seconds(last_imu_->t - r.t) : 0.0;
+  // D33/O16: reset_to would rewind the output to an answer the predictor no longer covers: refused.
+  const bool stale = r.snapshot && !predictor_.covers(r.snapshot->t);
+  if (r.kind == BackendResultKind::kRestartRejected || !r.snapshot || stale) {
     requested_epoch_ = epoch_;  // no restart pending any more; the state stays RESTARTING
-    emit(event("LioRestartRejected", now)
-             .reason(EstimatorEventReason::kRestartRejected)
-             .value("new_epoch", r.epoch)
-             .value("sensor_time_s", seconds(r.t)));
-    out.restart = std::unexpected(EstimatorReason::kNotFinite);
+    EventBuilder b = event("LioRestartRejected", now);
+    b.reason(stale ? EstimatorEventReason::kRestartAnswerStale
+                   : EstimatorEventReason::kRestartRejected);
+    b.value("new_epoch", r.epoch).value("sensor_time_s", seconds(r.t));
+    emit(stale ? b.value("seed_age_s", seed_age_s) : b);
+    out.restart =
+        std::unexpected(stale ? EstimatorReason::kStaleAnswer : EstimatorReason::kNotFinite);
     return;
   }
-  // Stamped at the command's IMU time; see "Late restart answer" in runner.hpp.
   const ResetDelta delta = predictor_.reset_to(*r.snapshot);
   flush_spam(now);  // end of the old epoch: summaries, under the old epoch id
   const std::uint32_t old_epoch = epoch_;
@@ -295,7 +296,6 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
   position_sigma_m_ = r.position_sigma_m;
   const Transition tr =
       lifecycle_.on(LioEvent{LioEvent::Kind::kRestartSeeded, r.t, position_sigma_m_});
-  const double seed_age_s = last_imu_ ? time::to_seconds(last_imu_->t - r.snapshot->t) : 0.0;
   emit(event("LioRestart", now)
            .reason(LioReason::kRestartSeeded)
            .value("old_epoch", old_epoch)

@@ -722,6 +722,55 @@ TEST(OutputPredictor, VerticalChannelCorrectsPositionThroughVelocity) {
   EXPECT_NEAR(op.vertical_velocity_mps(), 0.5 * (0.010 / 0.25), 1e-12);
 }
 
+// D33/O16: covers() is the match rule of on_correction / reset_to, exposed without changing anything. Swept
+// over [oldest - 10 ms, newest + 10 ms] by 1 ms (and +-1 ns around every buffered stamp and the span limit) on
+// (a) a jittered buffer that is not full (the oldest-sample boundary) and (b) a full, wrapped buffer with a
+// 35 ms IMU hole (the span boundary and the hole); the newest step is short in both.
+TEST(OutputPredictor, CoversMatchesTheCorrectionRule) {
+  OutputPredictor unaligned(Beta());
+  EXPECT_EQ(unaligned.covers(At(0)).error(), PredictorReason::kNotInitialized);
+  EXPECT_EQ(unaligned.on_correction(Snap(At(0))).error(), PredictorReason::kNotInitialized);
+  for (const bool wrapped : {false, true}) {
+    OutputPredictor op(Beta());
+    std::vector<std::int64_t> stamps{1'000'000'000};
+    op.align(Snap(At(stamps[0])));
+    for (int k = 1; k <= (wrapped ? 80 : 40); ++k) {
+      const std::int64_t step = wrapped && k == 60 ? limits::kPredictorDtMax.ns + 5'000'000
+                                : k == (wrapped ? 80 : 40) ? 4'200'000
+                                                           : kImuNs + JitterNs(k) - JitterNs(k - 1);
+      stamps.push_back(stamps.back() + step);
+      ASSERT_TRUE(op.on_imu(Stationary(At(stamps.back()), static_cast<double>(step) / 1e9)).has_value());
+    }
+    const std::int64_t newest = stamps.back();
+    const std::int64_t oldest = wrapped ? stamps[stamps.size() - limits::kPredictorBufferCapacity] : stamps[0];
+    std::vector<std::int64_t> probes;
+    for (std::int64_t t = oldest - 10'000'000; t <= newest + 10'000'000; t += 1'000'000) probes.push_back(t);
+    for (const std::int64_t s : stamps) probes.insert(probes.end(), {s - 1, s, s + 1});
+    const std::int64_t span_limit = newest - limits::kPredictorBufferSpan.ns;
+    probes.insert(probes.end(), {span_limit - 1, span_limit, span_limit + 1});
+    const OutputSample before = *op.latest();
+    int covered = 0;
+    int refused = 0;
+    for (const std::int64_t t : probes) {
+      const Result<void, PredictorReason> c = op.covers(At(t));
+      OutputPredictor corrected = op;
+      const Result<void, PredictorReason> applied = corrected.on_correction(Snap(At(t)));
+      ASSERT_EQ(c.has_value(), applied.has_value()) << "wrapped " << wrapped << " t " << t;
+      if (!c) {
+        EXPECT_EQ(c.error(), applied.error()) << t;
+      }
+      // reset_to keeps the time axis exactly when it matches t; otherwise it restarts at t.
+      OutputPredictor reset = op;
+      (void)reset.reset_to(Snap(At(t), Vector3d(1.0, 0.0, 0.0)));
+      EXPECT_EQ(c.has_value(), reset.latest()->t == At(newest)) << "wrapped " << wrapped << " t " << t;
+      ++(c ? covered : refused);
+    }
+    ExpectSame(*op.latest(), before);  // covers changes nothing
+    EXPECT_GT(covered, 250) << wrapped;
+    EXPECT_GT(refused, 15) << wrapped;
+  }
+}
+
 TEST(OutputPredictor, ReasonNames) {
   static_assert(ReasonEnum<PredictorReason>);
   EXPECT_EQ(to_string(PredictorReason::kApplied), "APPLIED");

@@ -134,6 +134,11 @@ class OutputPredictor {
   /// snapshot; consecutive outputs stay continuous.
   Result<void, PredictorReason> on_correction(const EstimatorSnapshot& s) noexcept;
 
+  /// The match rule of on_correction / reset_to, changing nothing: Ok when the buffer covers t (a snapshot
+  /// stamped t would be matched), else the reason (kNotInitialized before the first align / reset_to, then
+  /// kNewerThanOutput or kOlderThanBuffer as above). LioFrontend asks it before reset_to (D33/O16).
+  Result<void, PredictorReason> covers(time::SensorTime t) const noexcept;
+
   /// Explicit reset: reset_counter + 1, returns new - old newest output. If s.t is matched in the buffer
   /// (same rule as on_correction), every buffered sample is shifted so that the matched one equals s
   /// exactly (PX4 style: attitude by q_s * q_matched^-1 applied in the world, velocity and position by
@@ -146,7 +151,8 @@ class OutputPredictor {
   /// Caution: a snapshot the buffer cannot match but that is OLDER than the newest output (stale, or
   /// inside an IMU gap) restarts the output at that older stamp, i.e. rewinds it. IMU deltas already
   /// consumed are not replayed, so the motion since s.t is lost and shows up in the ResetDelta. Callers
-  /// must pass a snapshot the buffer can match (or one at/after the newest output time).
+  /// must pass a snapshot the buffer can match (or one at/after the newest output time): LioFrontend
+  /// refuses a restart answer that covers() rejects instead of calling reset_to (D33/O16).
   ResetDelta reset_to(const EstimatorSnapshot& s) noexcept;
 
   /// (attitude rad, velocity m/s, position m): the magnitudes of the errors snapshot - buffered output

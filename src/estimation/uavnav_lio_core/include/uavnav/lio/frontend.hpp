@@ -100,6 +100,15 @@ class LioFrontend {
   /// quaternion; kBackendBusy when the request queue is full. The epoch switches only when the
   /// backend confirms (kRestartSeeded): that call's StepOutputs::restart holds the ResetDelta
   /// (kNotFinite when the backend rejected the seed).
+  ///
+  /// Late answer (D33/O16): a kRestartSeeded whose time the output predictor no longer covers
+  /// (OutputPredictor::covers: older than kPredictorBufferSpan, or not matched) is refused, never
+  /// applied by a rewinding reset_to: "LioRestartRejected" (kRestartAnswerStale), restart error
+  /// kStaleAnswer, the state stays RESTARTING, epoch and output untouched, no restart pending. The
+  /// caller restarts again with a fresh seed; the retry reuses the epoch number (the backend
+  /// already switched to it). While a restart is pending only its answer is applied: the new
+  /// epoch's scan results follow the answer (one FIFO), so an earlier one carrying that number
+  /// belongs to the refused answer's seed and is discarded (kStaleEpoch).
   Result<void, EstimatorReason> restart(const SeedPose& seed, const time::TimeSnapshot& now);
 
   /// A restart refused by the assembly that owns this frontend (LioRunner: an older restart answer not yet
@@ -126,9 +135,11 @@ class LioFrontend {
  private:
   /// Rate-limited per-sample events: one slot per EstimatorReason, plus ImuDuplicate and
   /// LioQueueOverflow.
-  static constexpr std::size_t kDuplicateSlot = 7;
-  static constexpr std::size_t kQueueFullSlot = 8;
-  static constexpr std::size_t kSpamSlots = 9;
+  static constexpr std::size_t kDuplicateSlot = 8;
+  static constexpr std::size_t kQueueFullSlot = 9;
+  static constexpr std::size_t kSpamSlots = 10;
+  static_assert(static_cast<std::size_t>(EstimatorReason::kStaleAnswer) + 1 == kDuplicateSlot,
+                "one spam slot per EstimatorReason");
   struct Spam {
     std::uint64_t count{0};     // occurrences this epoch
     std::uint64_t reported{0};  // count at the last emitted event

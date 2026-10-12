@@ -46,7 +46,10 @@
 //                                    kImuRateTooHigh (once per epoch)
 //   "LioInputRejected"     frontend  EstimatorReason (rate-limited, value count), incl. kBackendBusy
 //   "LioResultDiscarded"   frontend  kStaleEpoch, kUnexpectedSequence
-//   "LioRestartRejected"   frontend  kRestartRejected: applies the backend's kRestartRejected result
+//   "LioRestartRejected"   frontend  kRestartRejected: applies the backend's kRestartRejected result;
+//                                    kRestartAnswerStale (D33/O16): a kRestartSeeded whose time the output
+//                                    predictor buffer no longer covers is refused, never a rewind (values
+//                                    new_epoch, sensor_time_s; seed_age_s for a stale answer)
 //   "StateTransition" / "LioRestart"   frontend   the lifecycle's reason enum (LioReason)
 //   "PredictorCorrectionRejected"      frontend   PredictorReason
 //   "ScanResultTooOld"     frontend  kResultTooOld (D33/O15): a kScanGood result older than gap_degraded when
@@ -101,7 +104,8 @@ enum class EstimatorReason : std::uint8_t {
   kNotFinite,
   kWrongState,
   kScanAheadOfImu,
-  kBackendBusy  ///< limits::kMaxScansInFlight scans in flight, or the request queue is full
+  kBackendBusy,  ///< limits::kMaxScansInFlight scans in flight, or the request queue is full
+  kStaleAnswer   ///< StepOutputs::restart only: a restart answer the output predictor no longer covers (D33/O16)
 };
 
 constexpr std::string_view to_string(EstimatorReason r) {
@@ -120,6 +124,8 @@ constexpr std::string_view to_string(EstimatorReason r) {
       return "SCAN_AHEAD_OF_IMU";
     case EstimatorReason::kBackendBusy:
       return "BACKEND_BUSY";
+    case EstimatorReason::kStaleAnswer:
+      return "STALE_ANSWER";
   }
   return "";
 }
@@ -152,7 +158,8 @@ enum class EstimatorEventReason : std::uint8_t {
   kRestartRejected,
   kClockFailed,
   kBackendFailed,
-  kResultTooOld
+  kResultTooOld,
+  kRestartAnswerStale
 };
 
 constexpr std::string_view to_string(EstimatorEventReason r) {
@@ -207,6 +214,8 @@ constexpr std::string_view to_string(EstimatorEventReason r) {
       return "BACKEND_FAILED";
     case EstimatorEventReason::kResultTooOld:
       return "RESULT_TOO_OLD";
+    case EstimatorEventReason::kRestartAnswerStale:
+      return "RESTART_ANSWER_STALE";
   }
   return "";
 }
@@ -235,7 +244,8 @@ struct ScanJob {
 /// initialisation, for a non-finite command, for `t` before the ESKF time (no rewind), or when the seed
 /// applicator refuses or throws. A throw after the map was cleared (map.clear / local map / ESKF reset) also
 /// answers kRestartRejected with the map already empty; the frontend stays RESTARTING and the next restart
-/// clears the map anyway.
+/// clears the map anyway. A kRestartSeeded the frontend refuses as stale (D33/O16) leaves the backend in
+/// `new_epoch`: the retry carries the same `new_epoch` with a newer `t` and seeds (and clears the map) again.
 struct RestartCommand {
   std::uint32_t new_epoch;
   time::SensorTime t;

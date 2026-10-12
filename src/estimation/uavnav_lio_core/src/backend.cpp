@@ -315,7 +315,10 @@ struct LioBackend::Impl {
   // --- restart -------------------------------------------------------------------------------------
   /// Seeds the ESKF at c.t in c.new_epoch (§3.4): clears the map and the local map, resets the ESKF, switches
   /// the epoch. Rejected (own epoch and state unchanged) before the IMU initialisation, for a non-finite
-  /// command, or when the applicator refuses or throws.
+  /// command, or when the applicator refuses or throws. The map is cleared first, then seeded, on EVERY
+  /// accepted command, also when c.new_epoch already is this epoch: after the frontend refused a late answer
+  /// (D33/O16) the retry reuses the epoch number, and the map built in the refused seed's world must not
+  /// survive into the retry's.
   void on_restart(const RestartCommand& c, const time::TimeSnapshot& now) {
     BackendResult r = result(BackendResultKind::kRestartRejected, c.new_epoch, 0, c.t);
     std::optional<EstimatorReason> refused = bm::restart_refusal(c, eskf_t);

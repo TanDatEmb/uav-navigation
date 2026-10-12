@@ -174,6 +174,13 @@ Result<std::size_t, PredictorReason> OutputPredictor::match(time::SensorTime t) 
   return std::unexpected(PredictorReason::kOlderThanBuffer);  // unreachable: t >= oldest
 }
 
+Result<void, PredictorReason> OutputPredictor::covers(time::SensorTime t) const noexcept {
+  if (size_ == 0) return std::unexpected(PredictorReason::kNotInitialized);
+  const auto matched = match(t);
+  if (!matched) return std::unexpected(matched.error());
+  return {};
+}
+
 Result<void, PredictorReason> OutputPredictor::on_correction(const EstimatorSnapshot& s) noexcept {
   if (size_ == 0) return std::unexpected(PredictorReason::kNotInitialized);
   if (!finite(s)) return std::unexpected(PredictorReason::kNonFinite);

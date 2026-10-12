@@ -5,6 +5,8 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -917,6 +919,242 @@ TEST(LioFrontend, RestartWithAFullRequestQueueIsBackendBusy) {
           .restart(SeedPose{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()}, Snap(h.now()))
           .has_value());
   EXPECT_EQ(h.fe().epoch(), 1U);
+}
+
+// --- D33/O16: a restart answer the output predictor can no longer match -------------------------
+
+namespace {
+
+const SeedPose kSeed{Eigen::Vector3d(1.0, 2.0, 0.5), Eigen::Quaterniond::Identity()};
+
+/// One more IMU sample, then restart() at it: returns the queued command.
+RestartCommand RestartNow(Rig& h) {
+  h.ImuUntil(h.now() + kImuPeriod);
+  EXPECT_TRUE(h.fe().restart(kSeed, Snap(h.now())).has_value());
+  h.backend().Drain();
+  EXPECT_FALSE(h.backend().restarts().empty());
+  return h.backend().restarts().empty() ? RestartCommand{} : h.backend().restarts().back();
+}
+
+/// The backend's kRestartSeeded for `cmd`: the seed at cmd.t, as LioBackend answers.
+void AnswerSeeded(Rig& h, const RestartCommand& cmd) {
+  h.backend().Push(BackendResult{BackendResultKind::kRestartSeeded, cmd.new_epoch, 0, cmd.t,
+                                 Still(cmd.t, cmd.seed.p_world_m), std::nullopt, 0.03,
+                                 std::nullopt});
+}
+
+/// Bitwise equal state outputs, call by call.
+void ExpectSameStates(const Rig& a, const Rig& b) {
+  ASSERT_EQ(a.outputs().size(), b.outputs().size());
+  for (std::size_t i = 0; i < a.outputs().size(); ++i) {
+    const std::vector<StateOutput>& x = a.outputs()[i].states;
+    const std::vector<StateOutput>& y = b.outputs()[i].states;
+    ASSERT_EQ(x.size(), y.size()) << i;
+    for (std::size_t k = 0; k < x.size(); ++k) {
+      EXPECT_EQ(x[k].sample.t, y[k].sample.t) << i;
+      EXPECT_EQ(x[k].sample.p_world_m, y[k].sample.p_world_m) << i;
+      EXPECT_EQ(x[k].sample.v_world_mps, y[k].sample.v_world_mps) << i;
+      EXPECT_EQ(x[k].sample.q_world_imu.coeffs(), y[k].sample.q_world_imu.coeffs()) << i;
+      EXPECT_EQ(x[k].sample.reset_counter, y[k].sample.reset_counter) << i;
+      EXPECT_EQ(x[k].epoch, y[k].epoch) << i;
+      EXPECT_EQ(x[k].state, y[k].state) << i;
+    }
+  }
+}
+
+}  // namespace
+
+// The answer arrives 400 ms (> kPredictorBufferSpan) after its command: refused, never a rewind. A
+// twin fed the same inputs but never answered must publish bitwise the same states.
+TEST(LioFrontend, LateRestartAnswerIsRefusedAndStaysRestarting) {
+  Rig late;
+  Rig twin;
+  late.ToRestarting();
+  twin.ToRestarting();
+  const RestartCommand cmd = RestartNow(late);
+  (void)RestartNow(twin);
+  EXPECT_EQ(cmd.new_epoch, 2U);
+  late.ImuUntil(cmd.t + time::milliseconds(400));
+  twin.ImuUntil(cmd.t + time::milliseconds(400));
+  const std::optional<StateOutput> previous = late.LastState();
+  ASSERT_TRUE(previous.has_value());
+
+  AnswerSeeded(late, cmd);
+  const StepOutputs out = late.Poll();
+  twin.Poll();
+  ASSERT_TRUE(out.restart.has_value());
+  ASSERT_FALSE(out.restart->has_value());
+  EXPECT_EQ(out.restart->error(), EstimatorReason::kStaleAnswer);
+  EXPECT_FALSE(out.health.has_value()) << "no transition";
+  EXPECT_EQ(late.fe().state(), LioState::kRestarting);
+  EXPECT_EQ(late.fe().epoch(), 1U);
+  const auto rejected = late.Events("LioRestartRejected");
+  ASSERT_EQ(rejected.size(), 1U);
+  EXPECT_EQ(rejected[0].reason, "RESTART_ANSWER_STALE");
+  EXPECT_EQ(rejected[0].identity.lio_epoch, 1U);
+  EXPECT_EQ(Value(rejected[0], "new_epoch"), 2.0);
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "sensor_time_s"), static_cast<double>(cmd.t.ns) / 1e9);
+  EXPECT_NEAR(Value(rejected[0], "seed_age_s"), 0.4, 1e-9);
+  EXPECT_TRUE(late.Events("LioRestart").empty());
+
+  // No rewind: the next state is newer than the previous one, and every state equals the twin's.
+  late.ImuUntil(late.now() + time::milliseconds(100));
+  twin.ImuUntil(twin.now() + time::milliseconds(100));
+  const auto& outs = late.outputs();
+  const auto first_after = std::find_if(outs.end() - 21, outs.end(),
+                                        [](const StepOutputs& o) { return !o.states.empty(); });
+  ASSERT_NE(first_after, outs.end());
+  EXPECT_GT(first_after->states[0].sample.t, previous->sample.t);
+  EXPECT_EQ(first_after->states[0].sample.reset_counter, 0U);
+  ExpectSameStates(late, twin);
+
+  // No restart is pending: a new one is accepted and asks for epoch 2 again (the backend has
+  // already switched to 2 and seeds again at the newer time); its timely answer is applied.
+  ASSERT_TRUE(late.fe().restart(kSeed, Snap(late.now())).has_value());
+  late.backend().Drain();
+  ASSERT_EQ(late.backend().restarts().size(), 2U);
+  const RestartCommand retry = late.backend().restarts()[1];
+  EXPECT_EQ(retry.new_epoch, 2U);
+  EXPECT_EQ(retry.t, late.now());
+  AnswerSeeded(late, retry);
+  const StepOutputs seeded = late.Poll();
+  ASSERT_TRUE(seeded.restart.has_value());
+  EXPECT_TRUE(seeded.restart->has_value());
+  EXPECT_EQ(late.fe().state(), LioState::kInitializing);
+  EXPECT_EQ(late.fe().epoch(), 2U);
+  EXPECT_EQ(late.Events("LioRestartRejected").size(), 1U);
+}
+
+// The boundary of the match rule: an answer exactly kPredictorBufferSpan old is applied without a
+// rewind; one IMU sample later it is refused.
+TEST(LioFrontend, TimelyRestartAnswerAtTheBufferBoundaryIsApplied) {
+  Rig h;
+  h.ToRestarting();
+  const RestartCommand cmd = RestartNow(h);
+  h.ImuUntil(cmd.t + lio::limits::kPredictorBufferSpan);
+  const time::SensorTime newest = h.now();
+  AnswerSeeded(h, cmd);
+  const StepOutputs out = h.Poll();
+  ASSERT_TRUE(out.restart.has_value());
+  ASSERT_TRUE(out.restart->has_value());
+  EXPECT_LT((out.restart->value().position_m - kSeed.p_world_m).norm(), 1e-6);
+  EXPECT_EQ(h.fe().state(), LioState::kInitializing);
+  EXPECT_EQ(h.fe().epoch(), 2U);
+  EXPECT_TRUE(h.Events("LioRestartRejected").empty());
+  const auto restarts = h.Events("LioRestart");
+  ASSERT_EQ(restarts.size(), 1U);
+  EXPECT_NEAR(Value(restarts[0], "seed_age_s"), 0.3, 1e-9);
+  const auto next = h.Imu(newest + kImuPeriod);  // the time axis is kept
+  ASSERT_TRUE(next.has_value());
+  ASSERT_EQ(next->states.size(), 1U);
+  EXPECT_EQ(next->states[0].sample.t, newest + kImuPeriod);
+  EXPECT_EQ(next->states[0].epoch, 2U);
+
+  Rig g;
+  g.ToRestarting();
+  const RestartCommand late = RestartNow(g);
+  g.ImuUntil(late.t + lio::limits::kPredictorBufferSpan + kImuPeriod);
+  AnswerSeeded(g, late);
+  const StepOutputs refused = g.Poll();
+  ASSERT_TRUE(refused.restart.has_value());
+  ASSERT_FALSE(refused.restart->has_value());
+  EXPECT_EQ(refused.restart->error(), EstimatorReason::kStaleAnswer);
+  EXPECT_EQ(g.fe().epoch(), 1U);
+}
+
+// The retry reuses the refused answer's epoch number, so a scan admitted while the refused restart
+// was pending carries that number too: its result (computed in the refused seed's world, answered
+// before the retry's own answer) must not be taken for a result of the retry.
+TEST(LioFrontend, ScanResultsOfARefusedAnswerAreDiscardedAfterTheRetry) {
+  Rig h;
+  h.ToRestarting();
+  const RestartCommand cmd = RestartNow(h);
+  h.ImuUntil(cmd.t + time::milliseconds(350));
+  ASSERT_TRUE(h.Scan(h.now() - kScanPeriod, h.now()).has_value());
+  const time::SensorTime scan_end = h.now();
+  h.ImuUntil(cmd.t + time::milliseconds(400));
+  AnswerSeeded(h, cmd);
+  const StepOutputs refused = h.Poll();
+  ASSERT_TRUE(refused.restart.has_value());
+  ASSERT_FALSE(refused.restart->has_value());
+  ASSERT_TRUE(h.fe().restart(kSeed, Snap(h.now())).has_value());
+
+  const auto job = h.backend().AnswerScan(BackendResultKind::kScanGood,
+                                          Still(scan_end, Eigen::Vector3d(1.0, 0.0, 0.0)));
+  EXPECT_EQ(job.epoch, 2U);
+  const std::uint64_t discarded = h.fe().stats().results_discarded;
+  const StepOutputs out = h.Poll();
+  EXPECT_FALSE(out.odometry.has_value());
+  EXPECT_EQ(h.fe().stats().results_discarded, discarded + 1);
+  EXPECT_EQ(h.fe().stats().scans_in_flight, 0U);
+  const auto events = h.Events("LioResultDiscarded");
+  ASSERT_FALSE(events.empty());
+  EXPECT_EQ(events.back().reason, "STALE_EPOCH");
+  EXPECT_EQ(Value(events.back(), "result_epoch"), 2.0);
+  EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());
+  h.ImuUntil(h.now() + kImuPeriod);
+  EXPECT_LT(h.LastState()->sample.p_world_m.norm(), 1e-6) << "the predictor was not corrected";
+
+  h.backend().Drain();
+  ASSERT_EQ(h.backend().restarts().size(), 2U);
+  AnswerSeeded(h, h.backend().restarts()[1]);
+  const StepOutputs seeded = h.Poll();
+  ASSERT_TRUE(seeded.restart.has_value());
+  EXPECT_TRUE(seeded.restart->has_value());
+  EXPECT_EQ(h.fe().state(), LioState::kInitializing);
+  EXPECT_EQ(h.fe().epoch(), 2U);
+}
+
+// outputs.hpp: every output carries reset_counter == epoch - 1 (an applied restart switches the
+// epoch and resets the predictor once; a refused answer does neither).
+TEST(LioFrontend, ResetCounterIsEpochMinusOne) {
+  Rig h;
+  h.ToRestarting();
+  const auto to_tracking = [&h] {
+    const time::SensorTime start = h.now();
+    h.ScanAnswered(start + kScanPeriod, BackendResultKind::kMapReady);
+    for (int k = 2; k <= 6; ++k) {
+      const time::SensorTime end = start + time::Duration{k * kScanPeriod.ns};
+      h.ScanAnswered(end, BackendResultKind::kScanGood, Still(end, kSeed.p_world_m));
+    }
+    ASSERT_EQ(h.fe().state(), LioState::kTracking);
+  };
+  AnswerSeeded(h, RestartNow(h));  // applied: epoch 2
+  h.Poll();
+  ASSERT_EQ(h.fe().epoch(), 2U);
+  to_tracking();
+  h.ImuUntil(h.now() + time::milliseconds(600));  // LiDAR gap: LOST
+  ASSERT_EQ(h.fe().state(), LioState::kLost);
+  h.ScanAnswered(h.now() + kScanPeriod, BackendResultKind::kScanGood,
+                 Still(h.now() + kScanPeriod, kSeed.p_world_m));
+  ASSERT_EQ(h.fe().state(), LioState::kRestarting);
+  const RestartCommand refused = RestartNow(h);
+  h.ImuUntil(refused.t + time::milliseconds(400));
+  AnswerSeeded(h, refused);  // refused: still epoch 2
+  h.Poll();
+  ASSERT_EQ(h.fe().epoch(), 2U);
+  const RestartCommand retry = RestartNow(h);
+  EXPECT_EQ(retry.new_epoch, 3U);
+  AnswerSeeded(h, retry);  // applied: epoch 3
+  h.Poll();
+  ASSERT_EQ(h.fe().epoch(), 3U);
+  to_tracking();
+
+  std::array<int, 4> odometry{};
+  std::size_t states = 0;
+  for (const StepOutputs& o : h.outputs()) {
+    for (const StateOutput& s : o.states) {
+      EXPECT_EQ(s.sample.reset_counter, s.epoch - 1) << s.sample.t.ns;
+      ++states;
+    }
+    if (!o.odometry) continue;
+    EXPECT_EQ(o.odometry->reset_counter, o.odometry->epoch - 1) << o.odometry->t.ns;
+    if (o.odometry->epoch < odometry.size()) ++odometry[o.odometry->epoch];
+  }
+  EXPECT_GT(states, 400U);
+  EXPECT_GE(odometry[1], 1);
+  EXPECT_GE(odometry[2], 1);
+  EXPECT_GE(odometry[3], 1);
 }
 
 /// Answers the oldest scan with kScanGood carrying `snapshot` (nullopt: none), a good report and

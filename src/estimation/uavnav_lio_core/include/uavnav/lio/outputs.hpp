@@ -31,6 +31,9 @@ struct StateOutput {
 struct OdometryOutput {
   time::SensorTime t;
   std::uint32_t epoch;
+  /// OutputPredictor::reset_counter(). Invariant: reset_counter == epoch - 1 (also for
+  /// StateOutput::sample): an applied restart switches the epoch and resets the predictor exactly
+  /// once, a refused answer (backend rejection or stale, D33/O16) does neither.
   std::uint32_t reset_counter;
   Eigen::Vector3d p_world_m;
   Eigen::Quaterniond q_world_base;
@@ -65,8 +68,9 @@ struct StepOutputs {
   std::optional<HealthOutput>
       health;  ///< set on every transition and every limits::kHealthPeriod of IMU time
   /// Set by the call that applied the backend's answer to a restart (LioFrontend): the ResetDelta
-  /// of the output predictor, or kNotFinite when the backend rejected the seed. Set in the
-  /// restart call itself when driven through LioPipeline.
+  /// of the output predictor, kNotFinite when the backend rejected the seed, or kStaleAnswer when
+  /// the output predictor no longer covers the command time (D33/O16: refused, no rewind). Set in
+  /// the restart call itself when driven through LioPipeline.
   std::optional<Result<ResetDelta, EstimatorReason>> restart;
 };
 
