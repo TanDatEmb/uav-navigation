@@ -24,7 +24,7 @@ constexpr double kImuPeriodEmaWeight = 0.1;
 /// The report of a scan without a correction (empty, map bootstrap): no information.
 constexpr DegeneracyReport kNoReport{0.0, 0.0, true, 0};
 /// LioInputRejected / LioQueueOverflow "stream" value.
-enum Stream : int { kStreamImu = 0, kStreamScan = 1, kStreamRestart = 2 };
+enum Stream : int { kStreamImu = 0, kStreamScan = 1, kStreamRestart = LioFrontend::kRestartStream };
 
 double seconds(time::SensorTime t) { return static_cast<double>(t.ns) / 1e9; }
 

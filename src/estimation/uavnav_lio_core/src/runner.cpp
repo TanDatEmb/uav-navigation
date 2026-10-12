@@ -1,5 +1,6 @@
 #include "uavnav/lio/runner.hpp"
 
+#include <exception>
 #include <expected>
 #include <iterator>
 #include <utility>
@@ -37,21 +38,32 @@ class GuardedClock {
       return last_;
     } catch (...) {
       ++failures_;
-      if (failures_ == 1 || failures_ % limits::kEventSummaryEvery == 0) {
-        (void)events_.emit(events::EventBuilder(events::Component::kLio, "LioClockFailed", last_)
-                               .reason(EstimatorEventReason::kClockFailed)
-                               .value("count", static_cast<double>(failures_))
-                               .build());
-      }
+      if (failures_ == 1 || failures_ % limits::kEventSummaryEvery == 0) report();
       return last_;
     }
   }
 
+  time::TimeSnapshot last() const noexcept { return last_; }
+
+  /// End of run(): the final count, when failures happened since the last event.
+  void flush() noexcept {
+    if (failures_ > reported_) report();
+  }
+
  private:
+  void report() noexcept {
+    reported_ = failures_;
+    (void)events_.emit(events::EventBuilder(events::Component::kLio, "LioClockFailed", last_)
+                           .reason(EstimatorEventReason::kClockFailed)
+                           .value("count", static_cast<double>(failures_))
+                           .build());
+  }
+
   const LioClock& clock_;
   events::EventRecorder& events_;
   time::TimeSnapshot last_{};  // zero until the first good call
   std::uint64_t failures_{0};
+  std::uint64_t reported_{0};  // failures_ at the last event
 };
 
 }  // namespace
@@ -62,9 +74,7 @@ LioRunner::LioRunner(std::unique_ptr<LioChannels> channels, std::unique_ptr<LioB
       backend_(std::move(backend)),
       frontend_(std::move(frontend)),
       events_(events),
-      clock_(std::move(clock)),
-      // Initialised last (declared last): every member the thread uses is built before it starts.
-      thread_([this](std::stop_token stop) { run_backend(std::move(stop)); }) {}
+      clock_(std::move(clock)) {}  // thread_ is started by create(), on the fully built object
 
 LioRunner::~LioRunner() {
   stop();
@@ -86,15 +96,40 @@ Result<std::unique_ptr<LioRunner>, config::ConfigError> LioRunner::create(const 
   auto backend = LioBackend::create(backend_config(config), base_T_imu, imu_T_lidar, *channels, events);
   if (!backend) return std::unexpected(backend.error());
   auto frontend = std::make_unique<LioFrontend>(frontend_config(config), *channels, events);
-  return std::unique_ptr<LioRunner>(new LioRunner(std::move(channels), std::move(*backend), std::move(frontend),
+  std::unique_ptr<LioRunner> runner(new LioRunner(std::move(channels), std::move(*backend), std::move(frontend),
                                                   events, std::move(backend_clock)));
+  // The one thread starts only now, on a fully built runner: the member order cannot expose a half-built object.
+  // A std::system_error here destroys the runner (stop() on a thread that never ran is a no-op).
+  LioRunner* const self = runner.get();
+  runner->thread_ = std::jthread([self](std::stop_token stop) { self->run_backend(std::move(stop)); });
+  return runner;
 }
 
 void LioRunner::run_backend(std::stop_token stop) noexcept {
   GuardedClock guarded(clock_, events_);
   // Captures one reference: held in std::function's local buffer, no allocation.
   const std::function<time::TimeSnapshot()> clock = [&guarded] { return guarded(); };
-  backend_->run(std::move(stop), clock);
+  bool std_exception = false;
+  try {
+    backend_->run(std::move(stop), clock);
+    guarded.flush();
+    return;
+  } catch (const std::exception&) {
+    std_exception = true;
+  } catch (...) {
+  }
+  // AGENTS.md §2.6: never silent. The reason reaches the recorder (and a flush is attempted) before the process
+  // is terminated, as an escaped exception would have done anyway (std::jthread).
+  guarded.flush();
+  (void)events_.emit(events::EventBuilder(events::Component::kLio, "LioBackendFailed", guarded.last())
+                         .reason(EstimatorEventReason::kBackendFailed)
+                         .value("std_exception", std_exception ? 1.0 : 0.0)
+                         .build());
+  try {
+    events_.flush();
+  } catch (...) {  // terminating anyway
+  }
+  std::terminate();
 }
 
 void LioRunner::stop() noexcept {
@@ -124,6 +159,8 @@ Result<StepOutputs, EstimatorReason> LioRunner::push_scan(ScanInput&& scan, cons
 }
 
 Result<void, EstimatorReason> LioRunner::restart(const SeedPose& seed, const time::TimeSnapshot& now) {
+  // An older restart answer not yet returned would be taken for this command's answer: refuse until it is out.
+  if (carried_.restart) return std::unexpected(frontend_->refuse_restart(EstimatorReason::kBackendBusy, now));
   return frontend_->restart(seed, now);
 }
 

@@ -93,6 +93,15 @@ class LioFrontend {
   /// (kNotFinite when the backend rejected the seed).
   Result<void, EstimatorReason> restart(const SeedPose& seed, const time::TimeSnapshot& now);
 
+  /// A restart refused by the assembly that owns this frontend (LioRunner: an older restart answer not yet
+  /// returned to its caller): the same rate-limited "LioInputRejected" event as restart()'s own refusals
+  /// (stream kRestartStream, newest IMU time). Changes nothing else; returns `r`.
+  EstimatorReason refuse_restart(EstimatorReason r, const time::TimeSnapshot& now) noexcept {
+    return reject(r, kRestartStream, last_imu_ ? last_imu_->t : time::SensorTime{}, now);
+  }
+  /// The "stream" value of restart events (LioInputRejected / LioQueueOverflow).
+  static constexpr int kRestartStream = 2;
+
   /// Applies the available backend results, in order (at most limits::kBackendResultCapacity per
   /// call).
   StepOutputs poll_results(const time::TimeSnapshot& now) {

@@ -13,8 +13,12 @@ virtual environment for normal verification.
   arguments (use it after a package moves); the Makefile sets the colcon
   arguments, never call bare `colcon`.
 - `make test` runs `colcon test` for `PKGS`, then `colcon test-result --verbose`.
-- `make sanitize` builds and tests `uavnav_core` under ThreadSanitizer, then
-  rebuilds it normally; run nothing heavy meanwhile.
+- `make sanitize` builds and tests `uavnav_core` and `uavnav_lio_core` under
+  ThreadSanitizer, then rebuilds them normally (also on Ctrl-C); run nothing
+  heavy meanwhile. A second Ctrl-C during that restore leaves a sanitized CMake
+  cache (`UAVNAV_SANITIZE:STRING=thread`) that a plain `make build` keeps: run
+  `make sanitize` again, or `make build PKGS="uavnav_core uavnav_lio_core"
+  COLCON_EXTRA=--cmake-clean-cache`.
 - `make gate` runs `tools/uavnav/gate.sh all`. The script also takes
   `static|python|ros`, and its last line is `GATE_RESULT=PASS|FAIL`.
 - `make clean` only prints what to remove (`log/`); `build/` and `install/` are

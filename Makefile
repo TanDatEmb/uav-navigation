@@ -16,6 +16,7 @@ help:
 	@echo "  make build   colcon build of PKGS and their dependencies (PKGS='$(PKGS)')"
 	@echo "  make test    delete stale test results of PKGS, colcon test of PKGS, then colcon test-result"
 	@echo "  make sanitize  ThreadSanitizer build + test of $(SANITIZE_PKGS), then rebuild normally"
+	@echo "                 (a 2nd Ctrl-C during its restore leaves a sanitized cache: run make sanitize again)"
 	@echo "  make gate    tools/uavnav/gate.sh all (static, python, ros)"
 	@echo "  make clean   print what would be removed (log/); deletes nothing"
 	@echo "Machine limit: builds use -j3 and 2 colcon workers (15 GB RAM)."
@@ -32,9 +33,13 @@ test:
 # ThreadSanitizer run (D28) of SANITIZE_PKGS: uavnav_core (SpscQueue, event recorder) and uavnav_lio_core
 # (LioFrontend, LioBackend, LioRunner: the two-thread LIO). Builds them in the shared build/ with
 # -DUAVNAV_SANITIZE=thread (each package instruments only its own library and tests; fast_lio_core must already
-# be installed and is not instrumented), runs their tests, fails closed when this run left no test log of a package, greps
+# be installed and is not instrumented), deletes their stale test results (as `make test`, so no old XML is
+# graded), runs their tests, fails closed when this run left no test log of a package, greps
 # the logs for TSan warnings, and ALWAYS rebuilds them without the sanitizer afterwards (even when the run
-# failed, and on SIGINT/SIGTERM through the trap, exit 130) so build/ and install/ return to the normal state.
+# failed, and on SIGINT/SIGTERM through the trap, exit 130) so build/ and install/ return to the normal state. A
+# second Ctrl-C during that restore stops it and leaves a sanitized cache, which a plain `make build` keeps (the
+# cache holds UAVNAV_SANITIZE): run `make sanitize` again, or `make build PKGS="uavnav_core uavnav_lio_core"
+# COLCON_EXTRA=--cmake-clean-cache`.
 # Fails when a build or test failed or a warning was found. Tests run under `setarch -R` (ASLR off): with the
 # host's high mmap entropy, TSan from gcc 13 aborts with "unexpected memory mapping" otherwise. One colcon
 # worker, -j2; do not run other heavy jobs meanwhile (15 GB RAM).
@@ -48,6 +53,7 @@ sanitize:
 	$(SANITIZE_BUILD) -DUAVNAV_SANITIZE=thread || rc=1; \
 	if test $$rc -eq 0; then \
 	  if test -f install/setup.bash; then source install/setup.bash; fi; \
+	  $(PYTHON) tools/uavnav/clean_test_results.py --build-base build $(SANITIZE_PKGS) || rc=1; \
 	  before=$$(readlink log/latest_test 2>/dev/null); \
 	  nice -n 10 setarch "$$(uname -m)" -R colcon test --packages-select $(SANITIZE_PKGS) --parallel-workers 1 || rc=1; \
 	  if test "$$(readlink log/latest_test 2>/dev/null)" = "$$before"; then \

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Geometry>
+#include <cassert>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -40,22 +41,27 @@
 // frontend's busy check precedes its own application of waiting results: a scan is never refused busy while
 // the answers that free its slot are already waiting. If the scan is then refused, the outputs of the results
 // that poll applied are kept and returned by the next successful call (push_imu, push_scan or poll_results):
-// no output is lost. The ingest thread should call poll_results (or push_imu, which applies results too) at
-// least at the IMU rate.
+// no output is lost. While such a carried output holds a restart answer, restart() is refused kBackendBusy (with
+// the frontend's "LioInputRejected" event, stream 2): otherwise the old answer, returned by the next call, would
+// be taken for the answer to the new command. The ingest thread should call poll_results (or push_imu, which
+// applies results too) at least at the IMU rate.
 //
-// Shutdown (design table "Shutdown"). stop() requests stop on the jthread and joins it: LioBackend::run returns
-// after the request in progress and leaves the rest of the queue unprocessed. The destructor calls stop(), then
-// destroys the backend, the frontend and the channels, in that order. The jthread is declared LAST, so it is
-// started only after every member it uses is built, and (were stop() ever skipped) destroyed, i.e. joined,
-// before any of them. After stop() the ingest-thread API keeps working on the frontend alone: IMU samples are
+// Start and shutdown (design table "Shutdown"). create() starts the jthread as its last step, on the fully built
+// runner, so no member order can let the thread see a half-built object. stop() requests stop on the jthread and
+// joins it: LioBackend::run returns after the request in progress and leaves the rest of the queue unprocessed.
+// The destructor calls stop() first, then destroys the backend, the frontend and the channels, in that order.
+// The jthread is still declared LAST, so even without that stop() it would be joined before any member it uses
+// is destroyed. After stop() the ingest-thread API keeps working on the frontend alone: IMU samples are
 // processed (gap check, states), scans are admitted until limits::kMaxScansInFlight are in flight and then
 // refused kBackendBusy, and no result arrives any more.
 //
 // Failure paths of the estimator thread (AGENTS.md §2.6: a worker never dies silently).
 //   - The clock throws: caught; the last good snapshot (a zero snapshot before the first) stamps that request
-//     and a rate-limited "LioClockFailed" event (kClockFailed, value count) is emitted. The backend goes on.
-//   - LioBackend::step does not throw (it catches the reused math, backend.hpp). Anything that still escaped
-//     LioBackend::run would end in std::terminate (std::jthread): loud, never silent.
+//     and a "LioClockFailed" event (kClockFailed, value count) is emitted on the 1st and every
+//     kEventSummaryEvery-th failure, and once more with the final count when run() returns. The backend goes on.
+//   - LioBackend::step does not throw (it catches the reused math, backend.hpp). Should anything still escape
+//     LioBackend::run, the thread body catches it, emits "LioBackendFailed" (kBackendFailed), attempts a flush of
+//     the event recorder and calls std::terminate: loud, never silent, with its reason recorded first.
 //   - A result that never arrives would leave its scan in flight forever: FrontendStats::scans_in_flight stays
 //     up, every later scan is refused kBackendBusy and the gap rule takes the system to LOST (fail closed,
 //     until a restart). This cannot happen by construction: the result queue cannot fill (static_assert in
@@ -84,7 +90,8 @@ class LioRunner {
   /// Builds the channels (on the heap), the backend and the frontend, then starts the backend thread.
   /// base_T_imu / imu_T_lidar as LioBackend::create (its errors are returned as is: kOutOfRange naming the
   /// extrinsic key, kNotFinite). An empty `backend_clock` is kMissingKey with key "backend_clock".
-  /// `events` must outlive the runner. Throws std::system_error only if the thread cannot be started.
+  /// `events` must outlive the runner. Starts the estimator thread as its last step; throws std::system_error only
+  /// if that thread cannot be started (nothing is left running then).
   static Result<std::unique_ptr<LioRunner>, config::ConfigError> create(const LioConfig& config,
                                                                         const Eigen::Isometry3d& base_T_imu,
                                                                         const Eigen::Isometry3d& imu_T_lidar,
@@ -107,7 +114,8 @@ class LioRunner {
   Result<StepOutputs, EstimatorReason> push_scan(ScanInput&& scan, const time::TimeSnapshot& now);
 
   /// LioFrontend::restart: queues the command. The answer (ResetDelta, or kNotFinite when the backend refused
-  /// the seed) is StepOutputs::restart of the later call that applies it.
+  /// the seed) is StepOutputs::restart of the later call that applies it. kBackendBusy (LioInputRejected event)
+  /// while an older restart answer is carried and not yet returned (see "Outputs").
   Result<void, EstimatorReason> restart(const SeedPose& seed, const time::TimeSnapshot& now);
 
   /// Applies the waiting results (and returns any outputs carried from a refused scan).
@@ -119,7 +127,10 @@ class LioRunner {
   /// For stats and tests. frontend(): ingest thread. backend(): only after stop() (its stats are written by the
   /// estimator thread while it runs).
   const LioFrontend& frontend() const noexcept { return *frontend_; }
-  const LioBackend& backend() const noexcept { return *backend_; }
+  const LioBackend& backend() const noexcept {
+    assert(!thread_.joinable() && "LioRunner::backend() is valid only after stop()");
+    return *backend_;
+  }
 
   /// Queue counters (SpscQueue::stats): any thread.
   concurrency::QueueStats request_queue_stats() const noexcept { return channels_->requests.stats(); }
@@ -137,7 +148,8 @@ class LioRunner {
   LioRunner(std::unique_ptr<LioChannels> channels, std::unique_ptr<LioBackend> backend,
             std::unique_ptr<LioFrontend> frontend, events::EventRecorder& events, LioClock clock);
 
-  /// Estimator-thread body: LioBackend::run with the guarded clock.
+  /// Estimator-thread body: LioBackend::run with the guarded clock; an escaped exception is reported, then
+  /// std::terminate.
   void run_backend(std::stop_token stop) noexcept;
 
   /// Ingest thread: carried outputs, then `later` (last wins).
@@ -150,7 +162,7 @@ class LioRunner {
   events::EventRecorder& events_;
   LioClock clock_;        // called on the estimator thread only
   StepOutputs carried_;   // ingest thread only: outputs of results applied by a refused push_scan
-  std::jthread thread_;   // LAST: started after, and joined before, everything above
+  std::jthread thread_;   // LAST; started at the end of create(), joined by stop() before anything is destroyed
 };
 
 }  // namespace uavnav::lio

@@ -218,7 +218,6 @@ class Rig {
   const std::atomic<bool>& aborted() const { return abort_; }
 
   LioRunner& runner() { return *runner_; }
-  void DestroyRunner() { runner_.reset(); }
   bool has_runner() const { return runner_ != nullptr; }
   ClockControl& clock() { return *clock_; }
   events::EventRecorder& recorder() { return *recorder_; }
@@ -271,6 +270,13 @@ class Rig {
           return in_flight() == 0;
         },
         &abort_);
+  }
+
+  /// Pushes `imu` (its stamp must be the next one) and advances the IMU schedule past it.
+  void ImuUntilWith(const ImuInput& imu) {
+    const auto r = Imu(imu);
+    EXPECT_TRUE(r.has_value());
+    next_imu_ = imu.t + kImuPeriod;
   }
 
   void ImuUntil(time::SensorTime end) {
@@ -371,17 +377,21 @@ const SeedPose kSeed{Eigen::Vector3d(1.0, 2.0, 0.5), Eigen::Quaterniond(Eigen::A
 // First in the file: no earlier test of this binary left OpenMP pool threads behind that could exit meanwhile.
 
 TEST(LioRunner, CreateStartsOneBackendThreadAndDestructorJoinsIt) {
-  Rig rig;  // the recorder's writer thread and the runner's backend thread
-  ASSERT_TRUE(rig.has_runner());
-  rig.DestroyRunner();
+  // The recorder's writer thread is running before `base` is read; no thread was joined just before.
+  auto store = std::make_shared<Store>();
+  auto made = events::EventRecorder::create(std::make_unique<FakeSink>(store));
+  ASSERT_TRUE(made.has_value());
+  std::unique_ptr<events::EventRecorder> recorder = std::move(*made);
   const int base = ThreadCount();
+  // The kernel's count can lag a create or a join slightly: every check polls.
+  const auto threads_are = [](int n) { return Eventually([n] { return ThreadCount() == n; }); };
 
   auto clock = std::make_shared<ClockControl>();
-  auto created = LioRunner::create(DefaultConfig(), scene::base_T_imu(), scene::imu_T_lidar(), rig.recorder(),
-                                   MakeClock(clock));
+  auto created =
+      LioRunner::create(DefaultConfig(), scene::base_T_imu(), scene::imu_T_lidar(), *recorder, MakeClock(clock));
   ASSERT_TRUE(created.has_value());
   std::unique_ptr<LioRunner> runner = std::move(*created);
-  EXPECT_EQ(ThreadCount(), base + 1) << "create() starts exactly one thread";
+  EXPECT_TRUE(threads_are(base + 1)) << "create() starts exactly one thread";
 
   scene::Trajectory traj;
   traj.t0 = kT0;
@@ -396,8 +406,7 @@ TEST(LioRunner, CreateStartsOneBackendThreadAndDestructorJoinsIt) {
   // stop() is idempotent; after it the frontend still works without a backend.
   runner->stop();
   runner->stop();
-  // A joined thread leaves the kernel's count just after pthread_join returns: poll.
-  EXPECT_TRUE(Eventually([&] { return ThreadCount() == base; })) << "stop() joined the backend thread";
+  EXPECT_TRUE(threads_are(base)) << "stop() joined the backend thread";
   time::SensorTime t = kT0 + time::Duration{5 * kImuPeriod.ns};
   for (int i = 0; i < 40; ++i, t = t + kImuPeriod) {
     ASSERT_TRUE(runner->push_imu(scene::make_imu(traj, t), Snap(t)).has_value());
@@ -412,21 +421,25 @@ TEST(LioRunner, CreateStartsOneBackendThreadAndDestructorJoinsIt) {
   EXPECT_EQ(clock->calls.load(), 5U) << "no request was processed after stop()";
 
   // The destructor (after stop) returns; a second runner is destroyed without stop() and joins as well.
+  // get() also joins the std::async thread, so it no longer counts below.
   auto destroyed = std::async(std::launch::async, [&] { runner.reset(); });
   ASSERT_EQ(destroyed.wait_for(kGuard), std::future_status::ready);
-  auto second = LioRunner::create(DefaultConfig(), scene::base_T_imu(), scene::imu_T_lidar(), rig.recorder(),
+  destroyed.get();
+  EXPECT_TRUE(threads_are(base));
+  auto second = LioRunner::create(DefaultConfig(), scene::base_T_imu(), scene::imu_T_lidar(), *recorder,
                                   MakeClock(std::make_shared<ClockControl>()));
   ASSERT_TRUE(second.has_value());
-  EXPECT_EQ(ThreadCount(), base + 1);
+  EXPECT_TRUE(threads_are(base + 1));
   auto joined = std::async(std::launch::async, [r = std::move(*second)]() mutable { r.reset(); });
   ASSERT_EQ(joined.wait_for(kGuard), std::future_status::ready);
-  EXPECT_TRUE(Eventually([&] { return ThreadCount() == base; })) << "the destructor joined the backend thread";
+  joined.get();
+  EXPECT_TRUE(threads_are(base)) << "the destructor joined the backend thread";
 
   // The recorder outlives the runners: nothing reaches its ring after they are gone.
-  rig.recorder().flush();
-  const std::uint64_t emitted = rig.recorder().stats().emitted;
+  recorder->flush();
+  const std::uint64_t emitted = recorder->stats().emitted;
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  EXPECT_EQ(rig.recorder().stats().emitted, emitted);
+  EXPECT_EQ(recorder->stats().emitted, emitted);
 }
 
 TEST(LioRunner, CreateRejectsAnEmptyClock) {
@@ -628,10 +641,17 @@ TEST(LioRunner, ResultsAndStatesMatchThePipelineWhenPaced) {
 TEST(LioRunner, ShutdownWithQueuedRequestsReturns) {
   Rig rig;
   rig.clock().gate.close();
-  rig.ImuUntil(kT0 + time::Duration{299 * kImuPeriod.ns});  // 300 IMU copies
-  const time::SensorTime last = rig.now();
-  ASSERT_TRUE(rig.Scan(rig.MakeScan(ScanKind::kRoom, last - kScanPeriod - kScanPeriod, last - kScanPeriod)));
-  ASSERT_TRUE(rig.Scan(rig.MakeScan(ScanKind::kRoom, last - kScanPeriod, last)));
+  // Pushes against the closed gate never wait; bounded so that a regression fails instead of hanging.
+  const auto [pushed, admitted] = Bounded(rig, [&] {
+    rig.ImuUntil(kT0 + time::Duration{299 * kImuPeriod.ns});  // 300 IMU copies
+    const time::SensorTime last = rig.now();
+    const bool a = rig.Scan(rig.MakeScan(ScanKind::kRoom, last - kScanPeriod - kScanPeriod, last - kScanPeriod))
+                       .has_value();
+    const bool b = rig.Scan(rig.MakeScan(ScanKind::kRoom, last - kScanPeriod, last)).has_value();
+    return a && b;
+  });
+  ASSERT_TRUE(pushed) << "the ingest thread waited on the blocked backend";
+  ASSERT_TRUE(admitted);
   ASSERT_TRUE(Eventually([&] { return rig.clock().gate.blocked() == 1; })) << "the backend waits in the gate";
   auto q = rig.runner().request_queue_stats();
   ASSERT_EQ(q.pushed, 302U);
@@ -792,9 +812,76 @@ TEST(LioRunner, ThrowingClockIsAnEventNotADeadWorker) {
   ASSERT_TRUE(tracking);
   EXPECT_EQ(rig.state(), LioState::kTracking);
 
+  ASSERT_EQ(rig.Events("LioClockFailed").size(), 2U) << "rate-limited: the 1st and the kEventSummaryEvery-th";
+  rig.runner().stop();  // run() returned: the final count is reported once more
   const auto failed = rig.Events("LioClockFailed");
-  ASSERT_EQ(failed.size(), 2U) << "rate-limited: the 1st and the kEventSummaryEvery-th failure";
+  ASSERT_EQ(failed.size(), 3U);
   EXPECT_EQ(failed[0].reason, "CLOCK_FAILED");
   EXPECT_EQ(Value(failed[0], "count"), 1.0);
   EXPECT_EQ(Value(failed[1], "count"), static_cast<double>(lio::limits::kEventSummaryEvery));
+  EXPECT_EQ(Value(failed[2], "count"), 1001.0) << "the summary at the end of run()";
+}
+
+// Review round 1 (3): a restart answer carried from a refused push_scan must never be taken for the answer to a
+// NEWER restart command: restart() is refused kBackendBusy (with its LioInputRejected event) until the carried
+// answer has been returned.
+TEST(LioRunner, RestartIsRefusedWhileAnOlderAnswerIsCarried) {
+  Rig rig;
+  rig.RunUntilTracking();
+  rig.Run(10, std::nullopt);  // LiDAR gap -> LOST
+  rig.Run(1);                 // geometry returned -> RESTARTING
+  ASSERT_EQ(rig.state(), LioState::kRestarting);
+  const time::SensorTime last_scan = rig.scan_end();
+
+  // The backend's only reachable refusal of a seed through the frontend: a carried velocity that overflows when
+  // rotated into the seed's world (applicator: non-finite state -> kRestartRejected). Huge but finite specific
+  // force along y and z drives the predictor's newest velocity to >= 7e307 per axis (finite: each component is capped
+  // near DBL_MAX / 2 by the trapezoid sum); a seed turned by pi about (0, 1, -1) then gives a rotated x component
+  // of about 2.8 x 7e307 > DBL_MAX.
+  const auto [pumped, v_max] = Bounded(rig, [&] {
+    double v = 0.0;
+    for (int i = 0; i < 2000 && v < 7e307; ++i) {
+      const time::SensorTime t = rig.now() + kImuPeriod;
+      const ImuInput huge{t, Eigen::Vector3d::Zero(), Eigen::Vector3d(0.0, 8e307, 8e307)};
+      rig.ImuUntilWith(huge);
+      if (!rig.outputs().empty() && !rig.outputs().back().states.empty()) {
+        v = rig.outputs().back().states.back().sample.v_world_mps.lpNorm<Eigen::Infinity>();  // norm() overflows
+      }
+    }
+    return v;
+  });
+  ASSERT_TRUE(pumped);
+  ASSERT_GE(v_max, 7e307);
+  ASSERT_TRUE(std::isfinite(v_max));
+  ASSERT_EQ(rig.state(), LioState::kRestarting);
+
+  const SeedPose turned{Eigen::Vector3d::Zero(), Eigen::Quaterniond(Eigen::AngleAxisd(3.14, Eigen::Vector3d(0.0, 1.0, -1.0).normalized()))};
+  ASSERT_TRUE(rig.Restart(turned));
+  ASSERT_TRUE(Eventually([&] {
+    const auto r = rig.runner().result_queue_stats();
+    return r.pushed - r.popped == 1U;
+  })) << "the answer waits in the result queue";
+
+  // A refused scan: the poll before the push applies the rejection, which is carried.
+  const auto refused = rig.Scan(rig.MakeScan(ScanKind::kRoom, last_scan - kScanPeriod, last_scan - kImuPeriod));
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error(), EstimatorReason::kOutOfOrder);
+  ASSERT_EQ(rig.Events("LioRestartRejected").size(), 1U) << "the backend refused the seed";
+  const std::size_t busy_events = rig.Events("LioInputRejected").size();
+
+  // A new command now would get the OLD rejection as its answer: refused while it is carried.
+  const auto again = rig.runner().restart(kSeed, Snap(rig.now()));
+  ASSERT_FALSE(again.has_value()) << "accepted while an older restart answer was carried";
+  EXPECT_EQ(again.error(), EstimatorReason::kBackendBusy);
+  const auto rejected = rig.Events("LioInputRejected");
+  ASSERT_EQ(rejected.size(), busy_events + 1U) << "one event at the decision point";
+  EXPECT_EQ(rejected.back().reason, "BACKEND_BUSY");
+  EXPECT_EQ(Value(rejected.back(), "stream"), 2.0) << "the restart stream";
+
+  // The carried answer comes out once, then a new command is accepted.
+  const StepOutputs polled = rig.Poll();
+  ASSERT_TRUE(polled.restart.has_value());
+  ASSERT_FALSE(polled.restart->has_value());
+  EXPECT_EQ(polled.restart->error(), EstimatorReason::kNotFinite);
+  EXPECT_TRUE(rig.runner().restart(kSeed, Snap(rig.now())).has_value());
 }
