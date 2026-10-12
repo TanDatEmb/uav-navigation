@@ -41,7 +41,8 @@ enum class LioReason : std::uint8_t {
   kCovarianceExceeded,
   kGeometryReturned,
   kRestartSeeded,
-  kMapReady
+  kMapReady,
+  kCorrectionRejected  // D31: a run of kScanGood results the output predictor did not apply
 };
 
 constexpr std::string_view to_string(LioState s) {
@@ -69,6 +70,7 @@ constexpr std::string_view to_string(LioReason r) {
     case LioReason::kGeometryReturned: return "GEOMETRY_RETURNED";
     case LioReason::kRestartSeeded: return "RESTART_SEEDED";
     case LioReason::kMapReady: return "MAP_READY";
+    case LioReason::kCorrectionRejected: return "CORRECTION_REJECTED";
   }
   return "";
 }
@@ -77,8 +79,23 @@ static_assert(ReasonEnum<LioState>);
 static_assert(ReasonEnum<LioReason>);
 
 /// One per scan result or IMU-time tick.
+///
+/// kScanCorrectionRejected (D31, SYSTEM_DESIGN §3.5): a kScanGood scan result whose correction the output
+/// predictor rejected (e.g. older than its 300 ms buffer). Only a scan the predictor applied counts as a scan
+/// with a correction, so this kind is handled exactly like kScanDegenerate by the transition rules (it counts
+/// in the TRACKING degenerate run, whose transition then has reason kCorrectionRejected, counts toward
+/// "degenerate since > degeneracy_lost" in DEGRADED, breaks the confirmation runs, is ignored in LOST and
+/// RESTARTING), but it does NOT advance last_scan_time(): a backend that stays slow ends in DEGRADED and LOST.
 struct LioEvent {
-  enum class Kind : std::uint8_t { kScanGood, kScanDegenerate, kScanEmpty, kImuTick, kMapReady, kRestartSeeded } kind;
+  enum class Kind : std::uint8_t {
+    kScanGood,
+    kScanDegenerate,
+    kScanEmpty,
+    kImuTick,
+    kMapReady,
+    kRestartSeeded,
+    kScanCorrectionRejected
+  } kind;
   /// IMU sample stamp, or for scan events the scan END time (what the §3.1 gap rule measures from).
   /// Must come from the range-checked converters (time::from_stamp<SensorTag>: non-negative and
   /// at most time::kMaxStampSeconds), so `t - last_scan_time()` cannot overflow int64.
@@ -89,7 +106,7 @@ struct LioEvent {
 /// Tier (b), loaded from kLioSpecs (see config.hpp). Beta values in parentheses.
 struct LifecycleConfig {
   std::uint32_t confirm_scans;      ///< consecutive good scans to enter TRACKING (5)
-  std::uint32_t degenerate_scans;   ///< consecutive degenerate/empty scans TRACKING -> DEGRADED (3)
+  std::uint32_t degenerate_scans;   ///< consecutive degenerate/empty/correction-rejected scans TRACKING -> DEGRADED (3)
   time::Duration gap_degraded;      ///< LiDAR gap TRACKING -> DEGRADED (0.25 s)
   time::Duration gap_lost;          ///< LiDAR gap DEGRADED -> LOST (0.5 s)
   time::Duration degeneracy_lost;   ///< degenerate run length DEGRADED -> LOST (1.0 s)
@@ -116,6 +133,7 @@ inline constexpr std::array kLioTransitions = std::to_array<TransitionEdge>({
     {LioState::kInitializing, LioState::kTracking, LioReason::kConfirmationReached},
     {LioState::kTracking, LioState::kDegraded, LioReason::kDegenerateScans},
     {LioState::kTracking, LioState::kDegraded, LioReason::kLidarGapDegraded},
+    {LioState::kTracking, LioState::kDegraded, LioReason::kCorrectionRejected},
     {LioState::kDegraded, LioState::kTracking, LioReason::kConfirmationReached},
     {LioState::kDegraded, LioState::kLost, LioReason::kLidarGapLost},
     {LioState::kDegraded, LioState::kLost, LioReason::kDegeneracyPersisted},
@@ -140,7 +158,8 @@ class LioLifecycle {
   Transition on(const LioEvent& e) noexcept;
 
   LioState state() const noexcept { return state_; }
-  /// Stamp of the most recently received scan event of any kind (good, degenerate, empty); the reference for gap checks.
+  /// Stamp of the most recently received scan event of kind good, degenerate or empty (never
+  /// kScanCorrectionRejected, D31); the reference for gap checks.
   time::SensorTime last_scan_time() const noexcept { return last_scan_; }
 
  private:
@@ -164,8 +183,8 @@ class LioLifecycle {
   // because that transition does not end the degenerate run that caused it.
   InitPhase init_phase_{InitPhase::kWaitingForMap};    // INITIALIZING only: scans count once the map is ready
   std::uint32_t good_run_{0};                         // INITIALIZING (after map ready) / DEGRADED: consecutive good scans
-  std::uint32_t bad_run_{0};                          // TRACKING: consecutive degenerate or empty scans
-  std::optional<time::SensorTime> degenerate_since_;  // first degenerate/empty scan of the current run
+  std::uint32_t bad_run_{0};                          // TRACKING: consecutive degenerate/empty/rejected scans
+  std::optional<time::SensorTime> degenerate_since_;  // first degenerate/empty/rejected scan of the current run
 };
 
 }  // namespace uavnav::lio

@@ -104,13 +104,26 @@ TEST(LioLifecycleNames, ReasonNames) {
   EXPECT_EQ(to_string(LioReason::kGeometryReturned), "GEOMETRY_RETURNED");
   EXPECT_EQ(to_string(LioReason::kRestartSeeded), "RESTART_SEEDED");
   EXPECT_EQ(to_string(LioReason::kMapReady), "MAP_READY");
+  EXPECT_EQ(to_string(LioReason::kCorrectionRejected), "CORRECTION_REJECTED");
 }
 
 TEST(LioLifecycleTable, NoEdgeFromLostToTracking) {
   for (const auto& edge : kLioTransitions) {
     EXPECT_FALSE(edge.from == LioState::kLost && edge.to == LioState::kTracking);
   }
-  EXPECT_EQ(kLioTransitions.size(), 10U);
+  EXPECT_EQ(kLioTransitions.size(), 11U);
+}
+
+// D31: the one new edge, TRACKING -> DEGRADED for a run of corrections the output predictor rejected.
+TEST(LioLifecycleTable, CorrectionRejectedIsATrackingToDegradedEdge) {
+  std::size_t n = 0;
+  for (const auto& edge : kLioTransitions) {
+    if (edge.reason != LioReason::kCorrectionRejected) continue;
+    ++n;
+    EXPECT_EQ(edge.from, LioState::kTracking);
+    EXPECT_EQ(edge.to, LioState::kDegraded);
+  }
+  EXPECT_EQ(n, 1U);
 }
 
 // --- one test per table row -------------------------------------------------------------
@@ -304,7 +317,7 @@ TEST(LioLifecycle, GoodScanRestartsTheDegenerateRunClock) {
 // Row 8: TRACKING/DEGRADED, any event with sigma > position_sigma_lost_m -> LOST.
 TEST(LioLifecycle, CovarianceExceededInTrackingOnAnyEvent) {
   for (const Kind k : {Kind::kScanGood, Kind::kScanDegenerate, Kind::kScanEmpty, Kind::kImuTick, Kind::kMapReady,
-                       Kind::kRestartSeeded}) {
+                       Kind::kRestartSeeded, Kind::kScanCorrectionRejected}) {
     Rig r;
     r.ToTracking();
     ExpectChange(r.lc.on(Ev(k, r.now_ms + 10, 0.51)), LioState::kTracking, LioState::kLost,
@@ -314,7 +327,7 @@ TEST(LioLifecycle, CovarianceExceededInTrackingOnAnyEvent) {
 
 TEST(LioLifecycle, CovarianceExceededInDegradedOnAnyEvent) {
   for (const Kind k : {Kind::kScanGood, Kind::kScanDegenerate, Kind::kScanEmpty, Kind::kImuTick, Kind::kMapReady,
-                       Kind::kRestartSeeded}) {
+                       Kind::kRestartSeeded, Kind::kScanCorrectionRejected}) {
     Rig r;
     r.ToDegraded();
     ExpectChange(r.lc.on(Ev(k, r.now_ms + 10, 0.51)), LioState::kDegraded, LioState::kLost,
@@ -470,7 +483,7 @@ TEST(LioLifecycle, TransitionsAlwaysFollowTheTable) {
   std::int64_t ms = 0;
   for (int i = 0; i < 5'000; ++i) {
     seed = seed * 1664525U + 1013904223U;
-    const auto k = static_cast<Kind>((seed >> 16) % 6);
+    const auto k = static_cast<Kind>((seed >> 16) % 7);  // every kind, kScanCorrectionRejected (D31) included
     ms += 5 + static_cast<std::int64_t>((seed >> 8) % 120);
     const double sigma = ((seed >> 4) % 50 == 0) ? 0.9 : 0.1;
     const LioState before = lc.state();
@@ -486,6 +499,96 @@ TEST(LioLifecycle, TransitionsAlwaysFollowTheTable) {
       EXPECT_TRUE(listed) << to_string(tr.before) << " -> " << to_string(tr.after) << " " << to_string(tr.reason);
     }
   }
+}
+
+// --- D31: a kScanGood whose correction the output predictor rejected --------------------------
+
+TEST(LioLifecycle, CorrectionRejectedCountsLikeDegenerateButKeepsTheGapReference) {
+  // TRACKING: three consecutive rejected corrections -> DEGRADED, reason CORRECTION_REJECTED; none of them
+  // moves the gap reference.
+  {
+    Rig r;
+    r.ToTracking();
+    const time::SensorTime last = r.lc.last_scan_time();
+    ExpectUnchanged(r.Scan(Kind::kScanCorrectionRejected), LioState::kTracking);
+    ExpectUnchanged(r.Scan(Kind::kScanCorrectionRejected), LioState::kTracking);
+    EXPECT_EQ(r.lc.last_scan_time(), last);
+    ExpectChange(r.Scan(Kind::kScanCorrectionRejected), LioState::kTracking, LioState::kDegraded,
+                 LioReason::kCorrectionRejected);
+    EXPECT_EQ(r.lc.last_scan_time(), last);
+    // DEGRADED: the gap still runs from the last real scan, so IMU ticks reach LOST at last + gap_lost.
+    const std::int64_t last_ms = last.ns / 1'000'000;
+    ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, last_ms + 500)), LioState::kDegraded);
+    ExpectChange(r.lc.on(Ev(Kind::kImuTick, last_ms + 501)), LioState::kDegraded, LioState::kLost,
+                 LioReason::kLidarGapLost);
+  }
+  // A good scan between them resets the run.
+  {
+    Rig r;
+    r.ToTracking();
+    r.Scan(Kind::kScanCorrectionRejected);
+    r.Scan(Kind::kScanCorrectionRejected);
+    ExpectUnchanged(r.Scan(Kind::kScanGood), LioState::kTracking);
+    ExpectUnchanged(r.Scan(Kind::kScanCorrectionRejected), LioState::kTracking);
+    ExpectUnchanged(r.Scan(Kind::kScanCorrectionRejected), LioState::kTracking);
+    ExpectChange(r.Scan(Kind::kScanCorrectionRejected), LioState::kTracking, LioState::kDegraded,
+                 LioReason::kCorrectionRejected);
+  }
+  // Mixed with degenerate scans it counts in the same run; the event that completes the run names the reason.
+  {
+    Rig r;
+    r.ToTracking();
+    r.Scan(Kind::kScanCorrectionRejected);
+    r.Scan(Kind::kScanCorrectionRejected);
+    ExpectChange(r.Scan(Kind::kScanDegenerate), LioState::kTracking, LioState::kDegraded, LioReason::kDegenerateScans);
+  }
+  // INITIALIZING: breaks the confirmation run.
+  {
+    Rig r;
+    r.lc.on(Ev(Kind::kMapReady, 0));
+    for (int i = 0; i < 4; ++i) r.Scan(Kind::kScanGood);
+    ExpectUnchanged(r.Scan(Kind::kScanCorrectionRejected), LioState::kInitializing);
+    for (int i = 0; i < 4; ++i) ExpectUnchanged(r.Scan(Kind::kScanGood), LioState::kInitializing);
+    ExpectChange(r.Scan(Kind::kScanGood), LioState::kInitializing, LioState::kTracking,
+                 LioReason::kConfirmationReached);
+  }
+  // DEGRADED: breaks the confirmation run, and counts toward "degenerate since > degeneracy_lost".
+  {
+    Rig r;
+    r.ToDegraded();
+    for (int i = 0; i < 4; ++i) r.Scan(Kind::kScanGood);
+    ExpectUnchanged(r.Scan(Kind::kScanCorrectionRejected), LioState::kDegraded);
+    for (int i = 0; i < 4; ++i) ExpectUnchanged(r.Scan(Kind::kScanGood), LioState::kDegraded);
+    ExpectChange(r.Scan(Kind::kScanGood), LioState::kDegraded, LioState::kTracking, LioReason::kConfirmationReached);
+  }
+  {
+    Rig r;
+    r.ToDegraded();
+    r.Scan(Kind::kScanGood);  // clears the degenerate run
+    const std::int64_t first = r.now_ms + 100;
+    r.lc.on(Ev(Kind::kScanCorrectionRejected, first));
+    ExpectUnchanged(r.lc.on(Ev(Kind::kScanCorrectionRejected, first + 1'000)), LioState::kDegraded);
+    ExpectChange(r.lc.on(Ev(Kind::kScanCorrectionRejected, first + 1'001)), LioState::kDegraded, LioState::kLost,
+                 LioReason::kDegeneracyPersisted);
+  }
+  // LOST and RESTARTING ignore it.
+  {
+    Rig r;
+    r.ToLost();
+    ExpectUnchanged(r.Scan(Kind::kScanCorrectionRejected), LioState::kLost);
+  }
+  {
+    Rig r;
+    r.ToRestarting();
+    ExpectUnchanged(r.Scan(Kind::kScanCorrectionRejected), LioState::kRestarting);
+  }
+}
+
+TEST(LioLifecycle, LastScanTimeIgnoresRejectedCorrections) {
+  LioLifecycle lc(kCfg);
+  lc.on(Ev(Kind::kScanGood, 100));
+  lc.on(Ev(Kind::kScanCorrectionRejected, 900));
+  EXPECT_EQ(lc.last_scan_time(), T(100));
 }
 
 // --- rule precedence (sigma first) ---------------------------------------------------------

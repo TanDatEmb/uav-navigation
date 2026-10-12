@@ -11,12 +11,15 @@ constexpr bool is_listed(LioState from, LioState to, LioReason reason) {
   return false;
 }
 
+// The scan kinds that move the gap reference. kScanCorrectionRejected does not (D31).
 constexpr bool is_scan(LioEvent::Kind k) {
   return k == LioEvent::Kind::kScanGood || k == LioEvent::Kind::kScanDegenerate || k == LioEvent::Kind::kScanEmpty;
 }
 
+// Scans without an applied correction: degenerate, empty, or good but rejected by the output predictor (D31).
 constexpr bool is_bad_scan(LioEvent::Kind k) {
-  return k == LioEvent::Kind::kScanDegenerate || k == LioEvent::Kind::kScanEmpty;
+  return k == LioEvent::Kind::kScanDegenerate || k == LioEvent::Kind::kScanEmpty ||
+         k == LioEvent::Kind::kScanCorrectionRejected;
 }
 
 // Fails closed: a sigma is acceptable only when it is a number in [0, limit]. NaN, negative
@@ -81,7 +84,11 @@ Transition LioLifecycle::on_tracking(const LioEvent& e) noexcept {
     degenerate_since_.reset();
   } else if (is_bad_scan(e.kind)) {
     if (!degenerate_since_) degenerate_since_ = e.t;
-    if (++bad_run_ >= cfg_.degenerate_scans) return go(LioState::kDegraded, LioReason::kDegenerateScans);
+    if (++bad_run_ >= cfg_.degenerate_scans) {
+      // The event that completes the run names the transition.
+      return go(LioState::kDegraded, e.kind == Kind::kScanCorrectionRejected ? LioReason::kCorrectionRejected
+                                                                             : LioReason::kDegenerateScans);
+    }
   } else if (e.kind == Kind::kImuTick) {
     if (e.t - last_scan_ > cfg_.gap_degraded) return go(LioState::kDegraded, LioReason::kLidarGapDegraded);
   }

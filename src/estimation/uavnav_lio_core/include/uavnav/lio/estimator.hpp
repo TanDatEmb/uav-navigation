@@ -16,6 +16,7 @@
 #include "uavnav/lio/config.hpp"
 #include "uavnav/lio/lifecycle.hpp"
 #include "uavnav/lio/output_predictor.hpp"
+#include "uavnav/lio/outputs.hpp"
 #include "uavnav/lio/types.hpp"
 
 // LioEstimator: the ROS-free facade the S1b `lio` node calls (SYSTEM_DESIGN §3, D20). It wires the reused
@@ -38,46 +39,7 @@
 namespace uavnav::lio {
 
 // ImuInput, ScanInput, SeedPose, EstimatorReason, EstimatorEventReason and the event catalogue: types.hpp.
-
-/// One per accepted IMU sample once the output predictor is aligned (S1b decimates to 100 Hz).
-/// `sample` is the predictor output of the IMU origin (q_world_imu, p/v of the IMU), see output_predictor.hpp.
-struct StateOutput {
-  OutputSample sample;
-  std::uint32_t epoch;
-  LioState state;
-};
-
-/// Corrected ESKF state at the scan END time, converted to base_link (fast_lio_core navigation converters).
-struct OdometryOutput {
-  time::SensorTime t;
-  std::uint32_t epoch;
-  std::uint32_t reset_counter;
-  Eigen::Vector3d p_world_m;
-  Eigen::Quaterniond q_world_base;
-  Eigen::Vector3d v_world_mps;           ///< base_link origin velocity in the world
-  Eigen::Matrix<double, 6, 6> pose_cov;  ///< (position world, rotation world) of base_link
-  Eigen::Matrix3d vel_cov;               ///< base_link linear velocity, world frame
-  std::uint8_t quality;                  ///< 0..100 from the degeneracy report of this scan
-};
-
-struct HealthOutput {
-  time::SensorTime t;  ///< newest IMU time seen (the scan end before any IMU): monotonic across outputs
-  LioState state;
-  std::uint32_t epoch;
-  LioReason reason;  ///< reason of the latest lifecycle transition (kNone before the first)
-  /// Of the latest scan's degeneracy report; 0 when the latest scan had no report (empty, failed prediction).
-  double translation_min_eigenvalue, rotation_min_eigenvalue;
-  /// Newest IMU time - end time of the latest GOOD scan (kScanGood; empty and degenerate scans do not count).
-  /// 0 before the first good scan of the estimator's life.
-  double correction_age_s;
-  Eigen::Vector3d output_tracking_error;  ///< OutputPredictor::tracking_error()
-};
-
-struct StepOutputs {
-  std::vector<StateOutput> states;
-  std::optional<OdometryOutput> odometry;
-  std::optional<HealthOutput> health;  ///< set on every transition and every limits::kHealthPeriod of IMU time
-};
+// StateOutput, OdometryOutput, HealthOutput, StepOutputs: outputs.hpp.
 
 class LioEstimator {
  public:

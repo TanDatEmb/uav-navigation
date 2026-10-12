@@ -32,7 +32,9 @@ struct LioConfig {
 };
 
 inline BackendConfig backend_config(const LioConfig& c) { return BackendConfig{c.math, c.degeneracy}; }
-inline FrontendConfig frontend_config(const LioConfig& c) { return FrontendConfig{c.lifecycle, c.predictor}; }
+inline FrontendConfig frontend_config(const LioConfig& c) {
+  return FrontendConfig{c.lifecycle, c.predictor, c.math.imu_max_gap};
+}
 
 /// The single definition of every LIO key, its unit and its inclusive bounds. Beta values:
 /// confirm 5, degenerate 3, gap_degraded 0.25 s, gap_lost 0.5 s, degeneracy_lost 1.0 s, sigma_lost 0.5 m,
