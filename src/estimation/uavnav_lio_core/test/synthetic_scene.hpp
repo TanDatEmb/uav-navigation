@@ -1,6 +1,6 @@
 #pragma once
 
-// Test-only synthetic scene for LioEstimator: an axis-aligned box room, 20 x 20 x 6 m, seen by a LiDAR that
+// Test-only synthetic scene for the LIO frontend, backend and pipeline tests: an axis-aligned box room, 20 x 20 x 6 m, seen by a LiDAR that
 // casts a fixed, deterministic set of rays (a Fibonacci sphere) from its pose. No randomness, no clock.
 
 #include <Eigen/Core>

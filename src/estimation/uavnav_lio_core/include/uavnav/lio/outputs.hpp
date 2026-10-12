@@ -14,7 +14,7 @@
 
 // What the LIO frontend (ingest thread) publishes, SYSTEM_DESIGN §3.3/§3.5: /lio/state,
 // /lio/odometry and /lio/health, plus the answer to a restart. Built only by the frontend (and the
-// S1a facade until Task 6); the backend never includes this header (it carries a LioState).
+// synchronous LioPipeline driver, which only merges); the backend never includes this header (it carries a LioState).
 namespace uavnav::lio {
 
 /// One per accepted IMU sample once the output predictor is aligned (S1b decimates to 100 Hz).
@@ -51,7 +51,7 @@ struct HealthOutput {
   double translation_min_eigenvalue, rotation_min_eigenvalue;
   /// Newest IMU time - end time of the latest GOOD scan (kScanGood whose correction the output
   /// predictor applied; empty, degenerate and rejected-correction scans do not count; the S1a
-  /// facade counts every kScanGood). 0 before the first good scan.
+  /// estimator counted every kScanGood). 0 before the first good scan.
   double correction_age_s;
   Eigen::Vector3d output_tracking_error;  ///< OutputPredictor::tracking_error()
 };
@@ -65,8 +65,8 @@ struct StepOutputs {
   std::optional<HealthOutput>
       health;  ///< set on every transition and every limits::kHealthPeriod of IMU time
   /// Set by the call that applied the backend's answer to a restart (LioFrontend): the ResetDelta
-  /// of the output predictor, or kNotFinite when the backend rejected the seed. Never set by the
-  /// S1a facade.
+  /// of the output predictor, or kNotFinite when the backend rejected the seed. Set in the
+  /// restart call itself when driven through LioPipeline.
   std::optional<Result<ResetDelta, EstimatorReason>> restart;
 };
 

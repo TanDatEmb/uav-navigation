@@ -36,7 +36,7 @@ static_assert(static_cast<std::int64_t>(kPredictorBufferCapacity - 1) * kPredict
 inline constexpr time::Duration kPredictorDtMin = time::nanoseconds(100'000);
 inline constexpr time::Duration kPredictorDtMax = time::milliseconds(30);
 
-// --- estimator facade (SYSTEM_DESIGN §3, LioEstimator) ----------------------------------------------
+// --- frontend / backend (SYSTEM_DESIGN §3, §3.5) ----------------------------------------------
 
 /// IMU samples kept for the ESKF prediction between scans. 1024 samples = 5.1 s at 200 Hz, which covers the
 /// largest allowed lifecycle_gap_lost_s (5 s), so the first scan after a LiDAR outage that ended in LOST can
@@ -59,7 +59,7 @@ inline constexpr double kRebaseCovarianceInflation = 10.0;
 /// Numerical guard only (not a claim of certainty): keeps the IKFoM normal equations from overflowing.
 inline constexpr double kRebaseMaxCovarianceEigenvalue = 100.0;
 
-/// Per-sample facade events (ImuDuplicate, LioInputRejected) are emitted on the 1st occurrence per reason
+/// Per-sample frontend events (ImuDuplicate, LioInputRejected) are emitted on the 1st occurrence per reason
 /// and epoch and then on every kEventSummaryEvery-th, so a misbehaving driver cannot flood the event ring
 /// (10 Hz worth of events at a 10 kHz fault rate).
 inline constexpr std::uint64_t kEventSummaryEvery = 1000;
@@ -86,7 +86,7 @@ static_assert(kBackendResultCapacity >= kMaxScansInFlight + 2,
 
 /// OpenMP threads of one ICP correction (fast_lio_core ResidualBuilderConfig::parallel_thread_count), used by
 /// the backend only (§3.5: the libgomp team runs only inside the backend's correction call). 3 = fast_lio_core's
-/// default, the value main's pipeline and the S1a facade ran with; the residuals are computed per point, so
+/// default, the value main's pipeline and the S1a estimator ran with; the residuals are computed per point, so
 /// the count changes the ICP time, not its result.
 inline constexpr std::size_t kIcpThreads = 3;
 

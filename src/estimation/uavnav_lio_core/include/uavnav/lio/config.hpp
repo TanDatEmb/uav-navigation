@@ -22,7 +22,7 @@ namespace uavnav::lio {
 /// assembly (LioPipeline, LioRunner), the node and tests include it, never a backend or frontend file.
 /// LioConfig keeps its four members (lifecycle, degeneracy, predictor, math); backend_config() and
 /// frontend_config() hand each block its part.
-using MathConfig = EstimatorMathConfig;  ///< the S1a name, kept for load_lio_config and the facade
+using MathConfig = EstimatorMathConfig;  ///< the S1a name, kept for load_math and test_lio_config
 
 struct LioConfig {
   LifecycleConfig lifecycle;

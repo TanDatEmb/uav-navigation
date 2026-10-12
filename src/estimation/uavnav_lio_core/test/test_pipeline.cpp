@@ -16,8 +16,8 @@
 #include "uavnav/core/config.hpp"
 #include "uavnav/core/event_recorder.hpp"
 #include "uavnav/lio/config.hpp"
-#include "uavnav/lio/estimator.hpp"
 #include "uavnav/lio/limits.hpp"
+#include "uavnav/lio/pipeline.hpp"
 
 using namespace uavnav;
 using namespace uavnav::lio;
@@ -98,7 +98,7 @@ bool Finite(const StepOutputs& out) {
 
 enum class ScanKind { kRoom, kPlane, kCorridor, kEmpty };
 
-// Drives one estimator with the synthetic scene. Every output is checked for NaN, and every call that
+// Drives one pipeline (frontend + backend, synchronous) with the synthetic scene. Every output is checked for NaN, and every call that
 // changes the state is counted (at most one transition per call).
 class Harness {
  public:
@@ -107,14 +107,14 @@ class Harness {
     auto recorder = events::EventRecorder::create(std::make_unique<FakeSink>(store_));
     EXPECT_TRUE(recorder.has_value());
     recorder_ = std::move(*recorder);
-    auto est = LioEstimator::create(cfg, scene::base_T_imu(), scene::imu_T_lidar(), *recorder_);
+    auto est = LioPipeline::create(cfg, scene::base_T_imu(), scene::imu_T_lidar(), *recorder_);
     EXPECT_TRUE(est.has_value()) << (est ? "" : est.error().detail);
     est_ = std::move(*est);
     traj_.t0 = kT0;
   }
 
-  LioEstimator& est() { return *est_; }
-  const LioEstimator& est() const { return *est_; }
+  LioPipeline& est() { return *est_; }
+  const LioPipeline& est() const { return *est_; }
   time::SensorTime now() const { return next_imu_ - imu_period_; }
 
   /// Event clocks deliberately on other time bases than sensor time (x3, +7 s), so a decision that used the
@@ -225,7 +225,7 @@ class Harness {
 
   std::shared_ptr<Store> store_;
   std::unique_ptr<events::EventRecorder> recorder_;
-  std::unique_ptr<LioEstimator> est_;
+  std::unique_ptr<LioPipeline> est_;
   scene::Trajectory traj_;
   time::Duration imu_period_;
   time::SensorTime next_imu_{kT0};
@@ -279,7 +279,7 @@ bool Contains(const std::vector<LioReason>& v, LioReason r) { return std::find(v
 
 // ---------------------------------------------------------------------------------------------------
 
-TEST(LioEstimator, ReachesTrackingInStaticRoom) {
+TEST(LioPipeline, ReachesTrackingInStaticRoom) {
   Harness h;
   h.Run(20);  // 2 s of 200 Hz IMU and 10 Hz scans
   EXPECT_EQ(h.est().state(), LioState::kTracking);
@@ -336,7 +336,7 @@ TEST(LioEstimator, ReachesTrackingInStaticRoom) {
   EXPECT_EQ(newest.epoch, 1U);
 }
 
-TEST(LioEstimator, ImuOnlyGapReachesLost) {
+TEST(LioPipeline, ImuOnlyGapReachesLost) {
   Harness h;
   h.RunUntilTracking();
   const std::size_t from = h.outputs().size();
@@ -385,7 +385,7 @@ TEST(LioEstimator, ImuOnlyGapReachesLost) {
   }
 }
 
-TEST(LioEstimator, PlaneOnlyScansDegradeWithoutThrowing) {
+TEST(LioPipeline, PlaneOnlyScansDegradeWithoutThrowing) {
   Harness h;
   h.RunUntilTracking();
   const std::size_t from = h.outputs().size();
@@ -409,7 +409,7 @@ TEST(LioEstimator, PlaneOnlyScansDegradeWithoutThrowing) {
 // Ruling 6: the information matrix reaches evaluate_degeneracy with the right blocks. A floor-only scan
 // never confirms TRACKING (translation block rank-deficient); a corridor (floor, ceiling, x walls) is
 // translation-degenerate along y but rotation well constrained, which a swapped block would invert.
-TEST(LioEstimator, PlaneOnlyScansNeverReachTrackingAndBlocksAreNotSwapped) {
+TEST(LioPipeline, PlaneOnlyScansNeverReachTrackingAndBlocksAreNotSwapped) {
   Harness h;
   h.Run(11);  // IMU init (1 s) and the map bootstrap scan, all faces
   h.Run(20, ScanKind::kPlane);
@@ -444,7 +444,7 @@ TEST(LioEstimator, PlaneOnlyScansNeverReachTrackingAndBlocksAreNotSwapped) {
   EXPECT_GT(Value(scans.back(), "quality"), 50.0);
 }
 
-TEST(LioEstimator, EmptyScanIsAnEventNotAnException) {
+TEST(LioPipeline, EmptyScanIsAnEventNotAnException) {
   Harness h;
   h.RunUntilTracking();
   const std::size_t from = h.outputs().size();
@@ -468,8 +468,8 @@ TEST(LioEstimator, EmptyScanIsAnEventNotAnException) {
 }
 
 // The S1b precondition (IMU reached scan.end) broken: the scan is refused before any state change, and the
-// estimator then behaves bit for bit like a twin that never saw it.
-TEST(LioEstimator, ScanAheadOfImuIsRefusedAndChangesNothing) {
+// pipeline then behaves bit for bit like a twin that never saw it.
+TEST(LioPipeline, ScanAheadOfImuIsRefusedAndChangesNothing) {
   Harness a;
   Harness b;
   a.RunUntilTracking();
@@ -492,7 +492,7 @@ TEST(LioEstimator, ScanAheadOfImuIsRefusedAndChangesNothing) {
 
 // F22 hazard: one scan stamped 10 s ahead of the IMU must not move the LiDAR-gap reference. The gap rule
 // still fires from the last real scan end: DEGRADED at +0.255 s, LOST at +0.505 s of IMU time.
-TEST(LioEstimator, ScanAheadOfImuDoesNotHideALidarGap) {
+TEST(LioPipeline, ScanAheadOfImuDoesNotHideALidarGap) {
   Harness h;
   h.RunUntilTracking();
   const time::SensorTime last = h.now();
@@ -516,7 +516,7 @@ TEST(LioEstimator, ScanAheadOfImuDoesNotHideALidarGap) {
 }
 
 // After a refused ahead-scan the next normal scans are accepted (no kOutOfOrder) and tracking continues.
-TEST(LioEstimator, NormalScansAreAcceptedAfterAScanAheadOfImu) {
+TEST(LioPipeline, NormalScansAreAcceptedAfterAScanAheadOfImu) {
   Harness h;
   h.RunUntilTracking();
   (void)h.ScanAhead(time::seconds(10));
@@ -536,7 +536,7 @@ TEST(LioEstimator, NormalScansAreAcceptedAfterAScanAheadOfImu) {
 // D28 (the IMU leads each scan by 120 ms, so a periodic health at scan end + 100 ms precedes the scan-path
 // transition): health stamps follow the newest IMU time, so they never decrease, even when the IMU leads the LiDAR and
 // a scan-path transition reports health for an older scan end.
-TEST(LioEstimator, HealthStampsNeverDecrease) {
+TEST(LioPipeline, HealthStampsNeverDecrease) {
   Harness h;
   h.set_imu_lead(time::milliseconds(120));  // past the next 100 ms health grid point
   h.RunUntilTracking();                     // scan-path transition INITIALIZING -> TRACKING
@@ -557,7 +557,7 @@ TEST(LioEstimator, HealthStampsNeverDecrease) {
   EXPECT_GT(count, 20);
 }
 
-TEST(LioEstimator, RejectsOutOfOrderInput) {
+TEST(LioPipeline, RejectsOutOfOrderInput) {
   Harness h;
   const time::SensorTime t1{kT0.ns + 1'000'000'000};
   ASSERT_TRUE(h.Imu(scene::make_imu({}, t1)).has_value());
@@ -574,7 +574,7 @@ TEST(LioEstimator, RejectsOutOfOrderInput) {
 // A forward jump of the IMU stamps (one period, ten periods, a 1.7e9 s clock-domain jump) costs one health
 // output for that sample and the grid continues at 100 ms afterwards. The catch-up is closed-form: an
 // iterative catch-up would loop 1.7e10 times on the large jump.
-TEST(LioEstimator, HealthGridSurvivesForwardTimeJumps) {
+TEST(LioPipeline, HealthGridSurvivesForwardTimeJumps) {
   for (const std::int64_t jump_ns :
        {std::int64_t{100'000'000}, std::int64_t{1'000'000'000}, std::int64_t{1'700'000'000} * 1'000'000'000}) {
     Harness h;
@@ -597,7 +597,7 @@ TEST(LioEstimator, HealthGridSurvivesForwardTimeJumps) {
 }
 
 // Per-sample events are rate-limited: 1st, 1000th, 2000th occurrence per reason and epoch.
-TEST(LioEstimator, PerSampleEventsAreRateLimited) {
+TEST(LioPipeline, PerSampleEventsAreRateLimited) {
   Harness h;
   const time::SensorTime t1{kT0.ns + 1'000'000'000};
   ASSERT_TRUE(h.Imu(scene::make_imu({}, t1)).has_value());
@@ -613,7 +613,7 @@ TEST(LioEstimator, PerSampleEventsAreRateLimited) {
   EXPECT_EQ(rejected[0].reason, "OUT_OF_ORDER");
 }
 
-TEST(LioEstimator, RejectsOutOfOrderScan) {
+TEST(LioPipeline, RejectsOutOfOrderScan) {
   Harness h;
   h.RunUntilTracking();
   const time::SensorTime end = h.now();
@@ -628,7 +628,7 @@ TEST(LioEstimator, RejectsOutOfOrderScan) {
   EXPECT_EQ(h.est().state(), LioState::kTracking);
 }
 
-TEST(LioEstimator, NotFiniteInputsAreRejectedAndChangeNothing) {
+TEST(LioPipeline, NotFiniteInputsAreRejectedAndChangeNothing) {
   Harness h;
   h.RunUntilTracking();
   const double nan = std::numeric_limits<double>::quiet_NaN();
@@ -651,7 +651,7 @@ TEST(LioEstimator, NotFiniteInputsAreRejectedAndChangeNothing) {
   EXPECT_EQ(h.est().state(), LioState::kTracking);
 }
 
-TEST(LioEstimator, TooManyPointsIsRejected) {
+TEST(LioPipeline, TooManyPointsIsRejected) {
   Harness h;
   h.RunUntilTracking();
   ScanInput scan{h.now(), h.now() + kScanPeriod, {}, false};
@@ -663,7 +663,7 @@ TEST(LioEstimator, TooManyPointsIsRejected) {
   EXPECT_EQ(h.est().state(), LioState::kTracking);
 }
 
-TEST(LioEstimator, RestartSeedsNewEpoch) {
+TEST(LioPipeline, RestartSeedsNewEpoch) {
   Harness h;
   h.RunUntilTracking();
   h.Run(10, std::nullopt);  // LiDAR gap -> LOST
@@ -745,7 +745,38 @@ TEST(LioEstimator, RestartSeedsNewEpoch) {
   EXPECT_TRUE(h.all_finite());
 }
 
-TEST(LioEstimator, RestartRejectedOutsideRestarting) {
+// The backend answers within the restart call itself (synchronous driver): the ResetDelta, the new epoch and the
+// INITIALIZING state are all visible on return, as with the S1a facade.
+TEST(LioPipeline, RestartReturnsTheResetDeltaInTheSameCall) {
+  Harness h;
+  h.RunUntilTracking();
+  h.Run(10, std::nullopt);  // LiDAR gap -> LOST
+  ASSERT_EQ(h.est().state(), LioState::kLost);
+  h.Run(1);  // geometry returned
+  ASSERT_EQ(h.est().state(), LioState::kRestarting);
+  h.ImuUntil(h.now() + kImuPeriod);  // the newest predictor output is known exactly
+
+  std::optional<StateOutput> old_state;
+  for (const StepOutputs& o : h.outputs()) {
+    if (!o.states.empty()) old_state = o.states.back();
+  }
+  ASSERT_TRUE(old_state.has_value());
+  ASSERT_EQ(old_state->sample.t, h.now());
+
+  // Seed the pose shifted by (2, 0, 0) from the dead-reckoned one: the IMU pose moves by the same offset.
+  const Eigen::Quaterniond q_old = old_state->sample.q_world_imu * Eigen::Quaterniond(scene::base_T_imu().linear()).conjugate();
+  const Eigen::Vector3d p_base_old = old_state->sample.p_world_m - q_old * scene::base_T_imu().translation();
+  const SeedPose seed{p_base_old + Eigen::Vector3d(2.0, 0.0, 0.0), q_old};
+
+  ASSERT_EQ(h.est().epoch(), 1U);
+  const auto delta = h.Restart(seed);
+  ASSERT_TRUE(delta.has_value());
+  EXPECT_LT((delta->position_m - Eigen::Vector3d(2.0, 0.0, 0.0)).norm(), 1e-6) << delta->position_m.transpose();
+  EXPECT_EQ(h.est().epoch(), 2U);
+  EXPECT_EQ(h.est().state(), LioState::kInitializing);
+}
+
+TEST(LioPipeline, RestartRejectedOutsideRestarting) {
   Harness h;
   const SeedPose seed{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()};
   auto r = h.Restart(seed);  // INITIALIZING, not even IMU-initialised
@@ -760,7 +791,7 @@ TEST(LioEstimator, RestartRejectedOutsideRestarting) {
   EXPECT_TRUE(h.Events("LioRestart").empty());
 }
 
-TEST(LioEstimator, OneStateTransitionEventPerTransition) {
+TEST(LioPipeline, OneStateTransitionEventPerTransition) {
   Harness h;
   h.RunUntilTracking();        // INITIALIZING -> TRACKING
   h.Run(3, ScanKind::kEmpty);  // -> DEGRADED
@@ -782,7 +813,7 @@ TEST(LioEstimator, OneStateTransitionEventPerTransition) {
   }
 }
 
-TEST(LioEstimator, ImuRateTooHighIsReportedOncePerEpoch) {
+TEST(LioPipeline, ImuRateTooHighIsReportedOncePerEpoch) {
   Harness fast(DefaultConfig(), time::nanoseconds(2'500'000));  // 400 Hz: 64 x 2.5 ms < 300 ms
   fast.Run(20);
   const auto events = fast.Events("ImuRateTooHigh");
@@ -794,7 +825,7 @@ TEST(LioEstimator, ImuRateTooHighIsReportedOncePerEpoch) {
   EXPECT_TRUE(nominal.Events("ImuRateTooHigh").empty());
 }
 
-TEST(LioEstimator, IdenticalRunsProduceIdenticalOutputs) {
+TEST(LioPipeline, IdenticalRunsProduceIdenticalOutputs) {
   const auto scenario = [](Harness& h) {
     h.RunUntilTracking();
     h.Run(2, ScanKind::kPlane);
@@ -809,17 +840,17 @@ TEST(LioEstimator, IdenticalRunsProduceIdenticalOutputs) {
   ExpectSameOutputs(a, b);
 }
 
-TEST(LioEstimator, CreateRejectsAnExtrinsicThatDisagreesWithTheConfig) {
+TEST(LioPipeline, CreateRejectsAnExtrinsicThatDisagreesWithTheConfig) {
   auto store = std::make_shared<Store>();
   auto recorder = events::EventRecorder::create(std::make_unique<FakeSink>(store));
   ASSERT_TRUE(recorder.has_value());
   Eigen::Isometry3d imu_T_lidar = scene::imu_T_lidar();
   imu_T_lidar.translation().x() += 0.01;
-  const auto r = LioEstimator::create(DefaultConfig(), scene::base_T_imu(), imu_T_lidar, **recorder);
+  const auto r = LioPipeline::create(DefaultConfig(), scene::base_T_imu(), imu_T_lidar, **recorder);
   ASSERT_FALSE(r.has_value());
   EXPECT_EQ(r.error().key, "extrinsic_imu_lidar_x_m");
 
   Eigen::Isometry3d bad_base = scene::base_T_imu();
   bad_base.translation().z() = std::numeric_limits<double>::quiet_NaN();
-  EXPECT_FALSE(LioEstimator::create(DefaultConfig(), bad_base, scene::imu_T_lidar(), **recorder).has_value());
+  EXPECT_FALSE(LioPipeline::create(DefaultConfig(), bad_base, scene::imu_T_lidar(), **recorder).has_value());
 }

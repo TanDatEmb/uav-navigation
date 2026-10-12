@@ -28,7 +28,6 @@
 #include "uavnav/lio/backend.hpp"
 #include "uavnav/lio/channels.hpp"
 #include "uavnav/lio/config.hpp"
-#include "uavnav/lio/estimator.hpp"  // transitional: OdometryMatchesTheS1aFacade (deleted in Task 6)
 #include "uavnav/lio/types.hpp"
 
 using namespace uavnav;
@@ -430,57 +429,6 @@ TEST(LioBackend, ScansOfAnOlderEpochAreNotProcessed) {
   EXPECT_FALSE(r.snapshot.has_value());
   EXPECT_EQ(h.backend().stats().map_points, 0U);
   EXPECT_EQ(h.Events("LioScan").back().reason, "STALE_EPOCH");
-}
-
-// Transitional (deleted in Task 6 with LioEstimator): the extracted backend computes the same base_link
-// odometry as the S1a facade on the same inputs.
-TEST(LioBackend, OdometryMatchesTheS1aFacade) {
-  auto store = std::make_shared<Store>();
-  auto recorder = events::EventRecorder::create(std::make_unique<FakeSink>(store));
-  ASSERT_TRUE(recorder.has_value());
-  auto facade = LioEstimator::create(DefaultConfig(), scene::base_T_imu(), scene::imu_T_lidar(), **recorder);
-  ASSERT_TRUE(facade.has_value());
-  BackendHarness h;
-
-  time::SensorTime next_imu = kT0;
-  time::SensorTime scan_end = kT0;
-  std::uint64_t seq = 0;
-  int compared = 0;
-  const auto scans = {std::pair{30, ScanKind::kRoom}, std::pair{2, ScanKind::kPlane}, std::pair{6, ScanKind::kRoom}};
-  for (const auto& [n, kind] : scans) {
-    for (int i = 0; i < n; ++i) {
-      const time::SensorTime end = scan_end + kScanPeriod;
-      for (; next_imu <= end; next_imu = next_imu + kImuPeriod) {
-        const ImuInput imu = scene::make_imu({}, next_imu);
-        ASSERT_TRUE((*facade)->push_imu(imu, Snap(imu.t)).has_value());
-        (void)h.Push(imu, imu.t);
-      }
-      const auto f = (*facade)->push_scan(MakeScan(kind, scan_end, end), Snap(end));
-      ASSERT_TRUE(f.has_value());
-      const auto b = h.Push(ScanJob{++seq, 1, MapPolicy::kInsert, MakeScan(kind, scan_end, end)}, end);
-      ASSERT_EQ(b.size(), 1U);
-      scan_end = end;
-      (*recorder)->flush();
-      std::string facade_reason;
-      {
-        const std::scoped_lock lock(store->mutex);
-        for (const auto& r : store->records) {
-          if (r.event == "LioScan") facade_reason = std::string(r.reason);
-        }
-      }
-      EXPECT_EQ(b.front().kind == BackendResultKind::kScanGood, facade_reason == "SCAN_GOOD") << seq << facade_reason;
-      if (!f->odometry) continue;
-      ASSERT_TRUE(b.front().odometry.has_value()) << seq;
-      const BaseOdometry& o = *b.front().odometry;
-      EXPECT_LT((o.p_world_m - f->odometry->p_world_m).norm(), 1e-12) << seq;
-      EXPECT_LT(o.q_world_base.angularDistance(f->odometry->q_world_base), 1e-12) << seq;
-      EXPECT_LT((o.pose_cov - f->odometry->pose_cov).cwiseAbs().maxCoeff(), 1e-12) << seq;
-      EXPECT_LT((o.v_world_mps - f->odometry->v_world_mps).norm(), 1e-12) << seq;
-      EXPECT_LT((o.vel_cov - f->odometry->vel_cov).cwiseAbs().maxCoeff(), 1e-12) << seq;
-      ++compared;
-    }
-  }
-  EXPECT_GE(compared, 15);
 }
 
 TEST(LioBackend, RunReturnsPromptlyOnStop) {

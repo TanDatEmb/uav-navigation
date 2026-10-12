@@ -13,10 +13,10 @@ set(UAVNAV_LIO_CORE_SOURCES
   src/backend_math.cpp
   src/config.cpp
   src/degeneracy.cpp
-  src/estimator.cpp
   src/frontend.cpp
   src/lifecycle.cpp
-  src/output_predictor.cpp)
+  src/output_predictor.cpp
+  src/pipeline.cpp)
 
 add_library(uavnav_lio_core STATIC ${UAVNAV_LIO_CORE_SOURCES})
 add_library(uavnav_lio_core::uavnav_lio_core ALIAS uavnav_lio_core)
@@ -43,7 +43,7 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   # The tracked default parameter file, found from this package's source dir (portable, no install step).
   get_filename_component(UAVNAV_LIO_DEFAULT_YAML "${CMAKE_CURRENT_SOURCE_DIR}/../../../config/lio/sim.yaml" ABSOLUTE)
-  foreach(test_name test_lio_config test_lifecycle test_degeneracy test_output_predictor test_estimator
+  foreach(test_name test_lio_config test_lifecycle test_degeneracy test_output_predictor test_pipeline
       test_backend test_backend_boundary test_frontend)
     ament_add_gtest(${test_name} test/${test_name}.cpp TIMEOUT 300)
     target_link_libraries(${test_name} uavnav_lio_core::uavnav_lio_core)
