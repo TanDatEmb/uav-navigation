@@ -41,8 +41,9 @@
 // NOT offered to the output predictor ("ScanResultTooOld", kResultTooOld); or
 // (2) the output predictor rejected its correction ("PredictorCorrectionRejected").
 // The age is newest IMU time - scan end, where the newest IMU time is the newest accepted sample
-// already TICKED: results are applied at the start of push_imu, push_scan and poll_results, so the
-// sample of the current push_imu call does not count yet. A too-old result can only arrive outside
+// already TICKED: push_imu and push_scan apply the results once their input passed its checks
+// (before anything else; poll_results at once), so the sample of the current push_imu call does
+// not count yet. A too-old result can only arrive outside
 // TRACKING: its scan end is not before the gap reference, so the tick that made it too old already
 // fired the TRACKING -> DEGRADED gap rule. A stalled, slow or saturated backend therefore reads as
 // a LiDAR gap: DEGRADED, then LOST, on IMU time alone, and old results never confirm TRACKING.

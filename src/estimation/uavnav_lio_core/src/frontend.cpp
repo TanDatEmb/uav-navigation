@@ -230,14 +230,11 @@ void LioFrontend::apply_scan(const BackendResult& r, StepOutputs& out,
                         : r.kind == K::kMapReady  ? LioEvent::Kind::kMapReady
                                                   : LioEvent::Kind::kScanDegenerate;
   bool applied = false;
-  // D33/O15: the age of the result when applied, from the newest IMU sample ticked so far (see
-  // "Gap semantics" in frontend.hpp). last_imu_ is always set here: a scan is admitted only after
-  // an IMU sample.
+  // D33/O15 age, see "Gap semantics" in frontend.hpp. No IMU yet is unreachable (F22 admission).
+  assert(last_imu_ && "scan result before any IMU sample");
   const time::Duration age = last_imu_ ? last_imu_->t - r.t : time::Duration{0};
   if (r.kind == BackendResultKind::kScanGood && age > cfg_.lifecycle.gap_degraded) {
-    // Older than gap_degraded: a rejected correction, never offered to the predictor (fail closed:
-    // /lio/state does not move on a result the lifecycle refuses); no odometry, the gap reference
-    // stays.
+    // Too old: a rejected correction, never offered to the predictor (fail closed).
     emit(event("ScanResultTooOld", now)
              .reason(EstimatorEventReason::kResultTooOld)
              .value("sensor_time_s", seconds(r.t))
@@ -262,8 +259,7 @@ void LioFrontend::apply_scan(const BackendResult& r, StepOutputs& out,
   }
   const Transition tr = lifecycle_.on(LioEvent{kind, r.t, position_sigma_m_});
   on_transition(tr, r.t, now, out, r.report);
-  // Odometry only for an applied good scan leaving TRACKING (D28 beta: quality is not gated
-  // downstream; degenerate and rejected scans publish nothing even while still TRACKING).
+  // Odometry only for an applied good scan leaving TRACKING (D28 beta: no downstream quality gate).
   if (applied && lifecycle_.state() == LioState::kTracking && r.odometry && r.report) {
     const BaseOdometry& o = *r.odometry;
     out.odometry = OdometryOutput{r.t,         epoch_,         predictor_.reset_counter(),
@@ -288,10 +284,7 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
     out.restart = std::unexpected(EstimatorReason::kNotFinite);
     return;
   }
-  // The snapshot is stamped at the command's IMU time. While the answer arrives within the predictor buffer
-  // span (300 ms of IMU time) the buffer still holds that time and reset_to shifts it there without a rewind
-  // (output_predictor.hpp). A later answer rewinds the output to the command time: see "Late restart answer"
-  // in runner.hpp.
+  // Stamped at the command's IMU time; see "Late restart answer" in runner.hpp.
   const ResetDelta delta = predictor_.reset_to(*r.snapshot);
   flush_spam(now);  // end of the old epoch: summaries, under the old epoch id
   const std::uint32_t old_epoch = epoch_;
@@ -377,9 +370,8 @@ Result<StepOutputs, EstimatorReason> LioFrontend::push_imu(const ImuInput& imu,
                .value("site", 1));
     }
   }
-  // Health on the sensor-time grid next_health_t + k * kHealthPeriod (no drift with jitter), at
-  // most one per sample; the grid advances past imu.t in closed form, so a stamp jump costs O(1).
-  // No overflow: range-checked stamps (<= 9e18 ns) give 0 <= imu.t - next < 9.3e18.
+  // Health on the grid next_health_t + k * kHealthPeriod, at most one per sample; the grid skips a
+  // stamp jump in O(1). No overflow: range-checked stamps give 0 <= imu.t - next < 9.3e18.
   if (!next_health_t_ || imu.t >= *next_health_t_) {
     out.health = health(imu.t);
     if (!next_health_t_) next_health_t_ = imu.t;
@@ -391,21 +383,16 @@ Result<StepOutputs, EstimatorReason> LioFrontend::push_imu(const ImuInput& imu,
 
 Result<StepOutputs, EstimatorReason> LioFrontend::push_scan(ScanInput&& in,
                                                             const time::TimeSnapshot& now) {
-  if (in.points.size() > limits::kMaxScanPoints) {
+  if (in.points.size() > limits::kMaxScanPoints)
     return std::unexpected(reject(EstimatorReason::kTooManyPoints, kStreamScan, in.end, now));
-  }
   if (!std::all_of(in.points.begin(), in.points.end(), [](const auto& p) { return p.allFinite(); }))
     return std::unexpected(reject(EstimatorReason::kNotFinite, kStreamScan, in.end, now));
-  if (in.end < in.start || (last_scan_end_ && in.end < *last_scan_end_)) {
+  if (in.end < in.start || (last_scan_end_ && in.end < *last_scan_end_))
     return std::unexpected(reject(EstimatorReason::kOutOfOrder, kStreamScan, in.end, now));
-  }
-  // F22: an admitted scan never ends after the newest IMU sample, so no result time (the gap
-  // reference) can run ahead of IMU time and hide a LiDAR gap. Refused before the queue.
-  if (!last_imu_ || in.end > last_imu_->t) {
+  // F22: no admitted scan ends after the newest IMU sample, so no gap reference runs ahead of it.
+  if (!last_imu_ || in.end > last_imu_->t)
     return std::unexpected(reject(EstimatorReason::kScanAheadOfImu, kStreamScan, in.end, now));
-  }
-  // Drop-newest (§3.5). `pushed` is exact on this (the only producing) thread and `popped` can
-  // only lag, so a free slot seen here stays free.
+  // Drop-newest (§3.5). Only this thread pushes and `popped` only lags: a free slot stays free.
   const concurrency::QueueStats q = channels_.requests.stats();
   if (stats_.scans_in_flight >= limits::kMaxScansInFlight ||
       q.pushed - q.popped >= RequestQueue::capacity()) {
