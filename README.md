@@ -35,7 +35,8 @@ is active.
 
 ```bash
 make build   # colcon build --packages-up-to $(PKGS), -j3 and 2 workers
-make test    # colcon test for $(PKGS), then colcon test-result --verbose
+make test    # deletes the stale result XMLs of $(PKGS) in build/, then colcon test and colcon test-result --verbose
+make sanitize # TSan build and tests of uavnav_core and uavnav_lio_core (setarch -R), then restores the normal build, also on Ctrl-C
 make gate    # tools/uavnav/gate.sh all: static, python, ros; ends GATE_RESULT=PASS|FAIL
 make clean   # prints what to remove (log/); deletes nothing
 ```
@@ -45,7 +46,8 @@ uavnav_px4_bridge`; override it
 with `make build PKGS="..."`. `COLCON_EXTRA` passes extra `colcon build`
 arguments, e.g. `COLCON_EXTRA="--cmake-clean-cache"` after a package moves.
 `tools/uavnav/gate.sh static|python|ros|all` runs a
-single stage. `build/` and `install/` are a shared incremental build and are
+single stage. `make sanitize` does not instrument `fast_lio_core` or
+`uavnav_px4_bridge`. `build/` and `install/` are a shared incremental build and are
 kept.
 
 ## Documentation

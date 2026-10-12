@@ -12,13 +12,17 @@ virtual environment for normal verification.
   `make build PKGS="..."`. `COLCON_EXTRA="--cmake-clean-cache"` adds colcon
   arguments (use it after a package moves); the Makefile sets the colcon
   arguments, never call bare `colcon`.
-- `make test` runs `colcon test` for `PKGS`, then `colcon test-result --verbose`.
+- `make test` first deletes the stale result XMLs of `PKGS` under `build/<pkg>`
+  (only those; `build/` outputs, `install/` and other packages stay), then runs
+  `colcon test` for `PKGS` and `colcon test-result --verbose` per package. A bad
+  package name stops it before anything runs.
 - `make sanitize` builds and tests `uavnav_core` and `uavnav_lio_core` under
-  ThreadSanitizer, then rebuilds them normally (also on Ctrl-C); run nothing
-  heavy meanwhile. A second Ctrl-C during that restore leaves a sanitized CMake
-  cache (`UAVNAV_SANITIZE:STRING=thread`) that a plain `make build` keeps: run
-  `make sanitize` again, or `make build PKGS="uavnav_core uavnav_lio_core"
-  COLCON_EXTRA=--cmake-clean-cache`.
+  ThreadSanitizer (tests run under `setarch -R`, ASLR off), then rebuilds them
+  normally, also on Ctrl-C (exit 130). `fast_lio_core` and `uavnav_px4_bridge`
+  are not instrumented. Run nothing heavy meanwhile. A second Ctrl-C during
+  that restore leaves a sanitized CMake cache (`UAVNAV_SANITIZE:STRING=thread`)
+  that a plain `make build` keeps: run `make sanitize` again, or
+  `make build PKGS="uavnav_core uavnav_lio_core" COLCON_EXTRA=--cmake-clean-cache`.
 - `make gate` runs `tools/uavnav/gate.sh all`. The script also takes
   `static|python|ros`, and its last line is `GATE_RESULT=PASS|FAIL`.
 - `make clean` only prints what to remove (`log/`); `build/` and `install/` are

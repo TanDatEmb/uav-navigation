@@ -860,7 +860,7 @@ Spec §4.1, D7, D21, F13.
                          Eigen::Vector2d delta_xy_m; double delta_z_m; double delta_heading_rad; };  // from vehicle_local_position
   struct LioPoseSample { time::SensorTime t; Eigen::Vector3d p_frd_m; double yaw_frd_rad; bool tracking; };
   struct AlignmentConfig { time::Duration tau; std::uint32_t consistent_pairs; double jump_position_m; double jump_yaw_rad;
-                           double max_rate_mps; double max_yaw_rate_rad_s; time::Duration valid_stale;
+                           double max_rate_mps; double max_yaw_rate_rad_s; time::Duration valid_stale;  // max_rate_mps, max_yaw_rate_rad_s: removed by D30 (superseded)
                            time::Duration frozen_max; };
   struct AlignmentOutput { AlignmentState state; Pose4 filtered; std::optional<Pose4> raw; time::SensorTime stamp;
                            double age_s; double residual_position_m; double residual_yaw_rad; AlignmentReason reason; };
@@ -883,15 +883,15 @@ Spec §4.1, D7, D21, F13.
   | `alignment_consistent_pairs` | kNone | 1 | 200 | 20 |
   | `alignment_jump_position_m` | kMeters | 0.05 | 5 | 0.5 |
   | `alignment_jump_yaw_rad` | kRadians | 0.01 | 0.5 | 0.0873 (5°) |
-  | `alignment_max_rate_mps` | kMetersPerSecond | 0.01 | 5 | 0.5 |
-  | `alignment_max_yaw_rate_rad_s` | kRadiansPerSecond | 0.001 | 0.5 | 0.0873 |
+  | ~~`alignment_max_rate_mps`~~ | ~~kMetersPerSecond~~ | ~~0.01~~ | ~~5~~ | ~~0.5~~ (superseded by D30: key removed) |
+  | ~~`alignment_max_yaw_rate_rad_s`~~ | ~~kRadiansPerSecond~~ | ~~0.001~~ | ~~0.5~~ | ~~0.0873~~ (superseded by D30: key removed) |
   | `alignment_valid_stale_s` | kSeconds | 0.2 | 10 | 1.0 |
   | `alignment_frozen_max_s` | kSeconds | 1 | 120 | 10.0 (= `lio_recovery_timeout_s`, D18) |
 
 - Rules (spec §4.1):
   - **Instant T:** `yaw = wrap(yaw_px4 - yaw_lio)`, `t = p_px4 - Rz(yaw)·p_lio`.
   - **INIT → VALID:** after `consistent_pairs` consecutive instant T values all lie within the jump thresholds of their running mean.
-  - **Filter:** first order, `alpha = dt/τ`. Each step is then rate-limited by `max_rate·dt` (translation) and `max_yaw_rate·dt` (yaw).
+  - **Filter:** first order, `alpha = dt/τ`. ~~Each step is then rate-limited by `max_rate·dt` (translation) and `max_yaw_rate·dt` (yaw).~~ (superseded by D30: no separate rate limiter; the yaw step is a rotation about the vehicle point)
   - **Jump rejection:** an instant T farther than the jump thresholds from the filtered T is rejected with `kPairRejectedJump`; the filtered T is unchanged.
   - **PX4 reset:** whenever any of `xy`/`z`/`heading_reset_counter` differs from the last seen value, by **any** step (F13), add `delta_xy`, `delta_z` and `delta_heading` to the filtered T and to the buffered PX4 samples, then emit `kPx4ResetApplied`. In FROZEN, the same event produces INVALID with `kPx4ResetWhileFrozen`.
   - **Transitions:**
@@ -906,7 +906,8 @@ Spec §4.1, D7, D21, F13.
   ```cpp
   TEST(Alignment, ConvergesToTrueOffset) { /* truth T=(3,-2,0.5,0.6 rad); 30 noise-free pairs -> VALID, filtered within 1e-3 after 20 s */ }
   TEST(Alignment, RejectsGnssGlitchJump) { /* VALID, one PX4 sample offset +2 m -> kPairRejectedJump, filtered unchanged */ }
-  TEST(Alignment, RateLimitsSlowDrift) { /* truth drifts 2 m/s -> filtered moves <= 0.5 m/s */ }
+  // (superseded by D30: the rate limiter was removed, so there is no RateLimitsSlowDrift test)
+  // TEST(Alignment, RateLimitsSlowDrift) { /* truth drifts 2 m/s -> filtered moves <= 0.5 m/s */ }
   TEST(Alignment, AppliesDoubleResetDeltas) {   // F13
     // VALID; PX4 sample with xy_reset_counter += 2 and delta_xy=(1,0) -> filtered.x += 1 exactly, state stays VALID
   }
@@ -987,19 +988,19 @@ Obligations found during S1a that S1b must schedule or explicitly reject. Each l
 
 ### Owner decisions needed before S1b
 
-- O11: §4.1 says "add xy/z/heading deltas to T" but `AlignmentEstimator` applies the frame change G (yaw_T += dh and a rotation of T about the vehicle's PX4 position, same G on buffered PX4 samples); update §4.1 or reject the implementation (T10).
-- O12: the alignment jump gate, residual and rate limiter are measured at the LIO origin, not at the vehicle (lever arm R·δyaw: at R = 300 m the 0.5 m gate tolerates only about 1.7 mrad heading noise, so persistent `kPairRejectedJump` leads to STALE and INVALID mid-mission); decide before long-range SITL (T10).
-- O13: §3.3 output predictor: PX4's 0.03 s clamp makes the effective time constant about τ·T_scan/0.03 (about 0.83 s at 10 Hz) and the "no jump" test (F23) needs that clamp; also a bounded attitude-correction hold window that PX4 does not have; state the intended τ semantics (T7).
-- O14: §3.5 threading: `LioEstimator` is single-threaded (`push_scan` runs ICP, the synchronous ikd-tree rebuild and the predictor correction inside the object that `push_imu` drives), while §3.5 puts the predictor and the gap check on the ingest thread and scan processing on the estimator thread; the only S1b options are one serialised thread (violates §3.5) or a lock (stalls `/lio/state` at 100 Hz and the gap check for a whole scan, undermining P7); OpenMP workers inside `push_scan` are threads the design does not list either (T8).
+- (closed by the D30 rework: decided in D30, already implemented) O11: §4.1 says "add xy/z/heading deltas to T" but `AlignmentEstimator` applies the frame change G (yaw_T += dh and a rotation of T about the vehicle's PX4 position, same G on buffered PX4 samples); update §4.1 or reject the implementation (T10).
+- (closed by the D30 rework: decided in D30 and implemented in the vehicle-point alignment) O12: the alignment jump gate, residual and rate limiter are measured at the LIO origin, not at the vehicle (lever arm R·δyaw: at R = 300 m the 0.5 m gate tolerates only about 1.7 mrad heading noise, so persistent `kPairRejectedJump` leads to STALE and INVALID mid-mission); decide before long-range SITL (T10).
+- (closed by the D30 rework: decided in D30; the τ re-evaluation on SITL logs stays open for S1b) O13: §3.3 output predictor: PX4's 0.03 s clamp makes the effective time constant about τ·T_scan/0.03 (about 0.83 s at 10 Hz) and the "no jump" test (F23) needs that clamp; also a bounded attitude-correction hold window that PX4 does not have; state the intended τ semantics (T7).
+- (closed by the D30 rework: decided in D30 and implemented as frontend, backend and the two-thread `LioRunner`) O14: §3.5 threading: `LioEstimator` is single-threaded (`push_scan` runs ICP, the synchronous ikd-tree rebuild and the predictor correction inside the object that `push_imu` drives), while §3.5 puts the predictor and the gap check on the ingest thread and scan processing on the estimator thread; the only S1b options are one serialised thread (violates §3.5) or a lock (stalls `/lio/state` at 100 Hz and the gap check for a whole scan, undermining P7); OpenMP workers inside `push_scan` are threads the design does not list either (T8).
 - Decide whether the S1a-T8 interface additions stay: `push_imu` and `push_scan` take a `TimeSnapshot`, `restart` returns `Result<ResetDelta, EstimatorReason>`, `AlignmentEstimator::on_px4` returns `AlignmentOutput` (T8, T10).
 - Spec sync (the owner edits the spec): §3.2 says the degeneracy thresholds have hysteresis, but `degeneracy.cpp` is stateless and the lifecycle's consecutive-scan counts act as the hysteresis; say so in §3.2 or open an O item (`src/estimation/uavnav_lio_core/src/degeneracy.cpp`, T6).
 - Spec sync: the implemented lifecycle has TRACKING to LOST on sigma, which the §3.1 diagram lacks, and the alignment table has INVALID to INIT, which §4.1 lacks; both are fail-safer, so add them to the spec; the test name `Alignment.TransitionTableIsTheSpecDiagram` overclaims for the same reason (`src/px4/uavnav_px4_bridge/test/test_alignment.cpp`, T5, T10).
-- Doc sync: AGENTS.md section 6 and the S1a Task 4 text say the owner runs the prune script, but the controller ran it under the owner's standing permission; align the wording or confirm the process (T4).
-- Owner one-time cleanup: stale result XMLs of five deleted tests in `build/fast_lio_core` (the gate shows 182 against 101 real tests) and stale headers in `install/fast_lio_core` (T4).
+- (closed by the D30 rework: wording aligned in the D30 commit) Doc sync: AGENTS.md section 6 and the S1a Task 4 text say the owner runs the prune script, but the controller ran it under the owner's standing permission; align the wording or confirm the process (T4).
+- (closed by the D30 rework: `make test` now deletes stale result XMLs of the selected packages; the stale headers in `install/fast_lio_core` are not covered by this) Owner one-time cleanup: stale result XMLs of five deleted tests in `build/fast_lio_core` (the gate shows 182 against 101 real tests) and stale headers in `install/fast_lio_core` (T4).
 
 ### LIO facade (`LioEstimator`)
 
-- Ingest rule: feed a scan only after the IMU has reached `scan.end`; when the bounded wait times out, DROP the scan and emit an event. `LioEstimator::push_scan` refuses a scan stamped ahead of the newest IMU sample with `EstimatorReason::kScanAheadOfImu` and changes nothing (commit `a5fa24c`), so the ingest policy owns the wait and the drop (`src/estimation/uavnav_lio_core/include/uavnav/lio/estimator.hpp`, T8).
+- (closed by the D30 rework, enforcement side only: the frontend refuses a scan ahead of the IMU; the bounded wait and the drop stay in S1b) Ingest rule: feed a scan only after the IMU has reached `scan.end`; when the bounded wait times out, DROP the scan and emit an event. `LioEstimator::push_scan` refuses a scan stamped ahead of the newest IMU sample with `EstimatorReason::kScanAheadOfImu` and changes nothing (commit `a5fa24c`), so the ingest policy owns the wait and the drop (`src/estimation/uavnav_lio_core/include/uavnav/lio/estimator.hpp`, T8).
 - Rebase fallback after a solver failure inflates P to 10·P without a cap; NaN fails closed in the lifecycle but cap or reject it explicitly (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
 - LOST recovery registers against the stale map and stays LOST forever once the drift exceeds about 2 m; add a pose-independent geometry check for LOST to RESTARTING (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
 - Restart uses a velocity from dead-reckoning and a 1e-3·I covariance; review both, and add a SeedPose velocity or a re-bootstrap after N degenerate scans (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
@@ -1013,7 +1014,7 @@ Obligations found during S1a that S1b must schedule or explicitly reject. Each l
 - The floor-only translation eigenvalue is about 1.6% of the threshold; re-check the degeneracy thresholds on SITL logs (`config/lio/sim.yaml`, T8).
 - Measure OpenMP and ikd-tree rebuild latency against the budget; the 100 Hz publisher must not be starved by the estimator thread (`src/estimation/fast_lio_core/src/mapping/ikd_tree_registration_map.cpp`, T4, T8).
 - IMU rate above about 210 Hz cannot fill the 300 ms buffer of capacity 64; `ImuRateTooHigh` is reported once per epoch, so decide the real IMU rate and capacity (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T7, T8).
-- `estimator.cpp` is about 750 lines and the exception catch path has no test (no fault injection into `fast_lio_core`); split or add an injection seam (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
+- (closed by the D30 rework: split into frontend, backend and pipeline; the exception-path fault injection stays open) `estimator.cpp` is about 750 lines and the exception catch path has no test (no fault injection into `fast_lio_core`); split or add an injection seam (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
 - Test scene is stationary, noise-free and has no per-point time; add a constant-velocity, noisy case with per-point time (`src/estimation/uavnav_lio_core/test/synthetic_scene.hpp`, T8).
 - Add an off-grid forward-jump test for the health grid (phase preservation) and a direct test of `OutputPredictor::latest()`; the comment bound 9.3e18 should say 9e18 (`src/estimation/uavnav_lio_core/test/test_estimator.cpp`, T8).
 
@@ -1024,7 +1025,7 @@ Obligations found during S1a that S1b must schedule or explicitly reject. Each l
 - `vertical_velocity_mps()` is an accessor only; publish it (needs a message field) or drop it (`src/estimation/uavnav_lio_core/include/uavnav/lio/output_predictor.hpp`, T7, T8).
 - The lookup tolerance uses the last IMU dt, not the average; there is no `kNoSampleAtStamp` reason, no anti-windup, and an IMU dt above 300 ms is dropped (`src/estimation/uavnav_lio_core/src/output_predictor.cpp`, T7).
 - An IMU gap inside the buffer gives `kOlderThanBuffer`; `reset_to` with a stale snapshot rewinds the output and the lag lands in `ResetDelta`, so the facade must always seed with a snapshot at the newest IMU time (`src/estimation/uavnav_lio_core/include/uavnav/lio/output_predictor.hpp`, T7, T8).
-- The 100 Hz publishing of `/lio/state` is S1b work; the predictor is single-thread owned inside the single-threaded facade, which conflicts with §3.5, so the thread layout waits for the owner decision on O14 (`src/estimation/uavnav_lio_core/include/uavnav/lio/output_predictor.hpp`, T7, T8).
+- (closed by the D30 rework, thread layout only: the 100 Hz publishing stays in S1b) The 100 Hz publishing of `/lio/state` is S1b work; the predictor is single-thread owned inside the single-threaded facade, which conflicts with §3.5, so the thread layout waits for the owner decision on O14 (`src/estimation/uavnav_lio_core/include/uavnav/lio/output_predictor.hpp`, T7, T8).
 
 ### Degeneracy and lifecycle
 
@@ -1035,8 +1036,8 @@ Obligations found during S1a that S1b must schedule or explicitly reject. Each l
 
 ### Alignment
 
-- Compute the pair residual, the jump test and the rate limit at the vehicle point and apply yaw filter steps as a rotation about the vehicle; add a regression test at R of about 300 m with 5 mrad yaw noise (`src/px4/uavnav_px4_bridge/src/alignment.cpp`, T10; owner item O12).
-- The rate limiter never engages at the beta values (bound is jump/τ = 0.25 m/s and 0.0436 rad/s); recalibrate the 0.5 m/s and 5°/s values on SITL; they live only in tests today, not in `config/lio/sim.yaml` (see the `config/px4_bridge/sim.yaml` item below) (`src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/config.hpp`, T10).
+- (closed by the D30 rework) Compute the pair residual, the jump test and the rate limit at the vehicle point and apply yaw filter steps as a rotation about the vehicle; add a regression test at R of about 300 m with 5 mrad yaw noise (`src/px4/uavnav_px4_bridge/src/alignment.cpp`, T10; owner item O12).
+- (closed by the D30 rework: the rate limiter was removed) The rate limiter never engages at the beta values (bound is jump/τ = 0.25 m/s and 0.0436 rad/s); recalibrate the 0.5 m/s and 5°/s values on SITL; they live only in tests today, not in `config/lio/sim.yaml` (see the `config/px4_bridge/sim.yaml` item below) (`src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/config.hpp`, T10).
 - A FROZEN to VALID pair that is jump-rejected reports `kLioTracking` and loses the reason (`src/px4/uavnav_px4_bridge/src/alignment.cpp`, T10).
 - `on_tick` with `now` earlier than the last seen time is silent `kNone`; a far-future stamp blocks the input permanently with no recovery (`src/px4/uavnav_px4_bridge/src/alignment.cpp`, T10).
 - A reset lost in a dropped message leaves `T` wrong for up to `valid_stale`; LIO-side resets rely on the seed continuity of section 3.4 (`src/px4/uavnav_px4_bridge/src/alignment.cpp`, T10).
@@ -1059,13 +1060,13 @@ Obligations found during S1a that S1b must schedule or explicitly reject. Each l
 - Document or test the invariant `OdometryOutput::reset_counter == epoch - 1`, or drop the field; two parallel counters invite another F14 (`src/estimation/uavnav_lio_core/include/uavnav/lio/estimator.hpp`, T8, T9).
 - D28: odometry is published only for good scans in TRACKING, so `quality` is always at least 50 and the EV quality signal is effectively constant; record this next to the D28 handling and decide whether `QMIN` can ever matter (`src/estimation/uavnav_lio_core/src/degeneracy.cpp`, T6, T8).
 - A failed registration is also labelled `SCAN_DEGENERATE` with a non-degenerate report; give it its own reason for forensics (`src/estimation/uavnav_lio_core/src/estimator.cpp`, T8).
-- The events the facade emits (`StateTransition`, `LioRestart`, `PredictorCorrectionRejected`, `LioScan`, `LioInputRejected`, `ImuRateTooHigh`, `EskfRebased`, `AllocationFailed`) are not all listed in the `estimator.hpp` list; keep one documented event catalogue for `/events` and `events.py` (`src/estimation/uavnav_lio_core/include/uavnav/lio/estimator.hpp`, `tools/uavnav/events.py`, T8).
+- (closed by the D30 rework: one catalogue in `src/estimation/uavnav_lio_core/include/uavnav/lio/types.hpp`) The events the facade emits (`StateTransition`, `LioRestart`, `PredictorCorrectionRejected`, `LioScan`, `LioInputRejected`, `ImuRateTooHigh`, `EskfRebased`, `AllocationFailed`) are not all listed in the `estimator.hpp` list; keep one documented event catalogue for `/events` and `events.py` (`src/estimation/uavnav_lio_core/include/uavnav/lio/estimator.hpp`, `tools/uavnav/events.py`, T8).
 - Per-IMU heap allocation (`StepOutputs::states`, deque chunks) on the 200 Hz path; measure first, then decide (`src/estimation/uavnav_lio_core/include/uavnav/lio/estimator.hpp`, T8).
 - Duplicate helpers: `yaw_of` in `estimator.cpp` and `output_predictor.cpp`, and `wrap` in `alignment.cpp` against `wrap_pi` in `output_predictor.cpp`; create one angles header in `uavnav_core` before the node adds a third copy (`src/estimation/uavnav_lio_core/src/output_predictor.cpp`, `src/px4/uavnav_px4_bridge/src/alignment.cpp`, T7, T10).
 
 ### Core and tooling
 
-- `make sanitize` has no trap for SIGINT (the cache keeps `UAVNAV_SANITIZE=thread` and a plain `make build` does not reset it), and its grep fails open if the log directory is missing; libtsan needs `setarch -R` on this kernel (`Makefile`, T2).
+- (closed by the D30 rework: trap, fail-closed log check and `setarch -R` are in the Makefile) `make sanitize` has no trap for SIGINT (the cache keeps `UAVNAV_SANITIZE=thread` and a plain `make build` does not reset it), and its grep fails open if the log directory is missing; libtsan needs `setarch -R` on this kernel (`Makefile`, T2).
 - Missing tests for -0.0, tiny values and `nextafter(1e6)` in config parsing; `value()` is not `noexcept` (OOM only); the `too_big` message is built on the success path; the config dir has a TOCTOU FIFO swap (needs write access) (`src/core/uavnav_core/src/config.cpp`, T2).
 - `MissionDefinition` frame comment is a run-on sentence (`src/core/uavnav_interfaces/msg/MissionDefinition.msg`, T3).
 - `README.md` line 43 still lists the old default `PKGS` (it is now `uavnav_core uavnav_interfaces fast_lio_core uavnav_lio_core uavnav_px4_bridge` and S1b adds the ROS shell packages) (`README.md`, T4, T5).
@@ -1075,4 +1076,4 @@ Obligations found during S1a that S1b must schedule or explicitly reject. Each l
 
 - Concurrency test in `test_event_recorder.cpp` does not assert that any drop occurred (statistical); no test for the notice at shutdown drain or a failed-notice re-report; `SlowCountingSink::notices` is dead; the 16-key arrays repeat three times; the golden path is an absolute compile definition (`src/core/uavnav_core/test/test_event_recorder.cpp`, T1).
 - Add an S1b SITL scenario that exercises the tail of section 4.1: PX4 reset during FROZEN and a LiDAR gap with only IMU ticks, with the event log as evidence (`tools/uavnav/events.py`, T8, T10).
-- `make sanitize` covers only `uavnav_core`; extend it to `uavnav_lio_core` and `uavnav_px4_bridge` before the first multi-threaded node (`Makefile`, T2).
+- (closed by the D30 rework for `uavnav_lio_core`; `uavnav_px4_bridge` stays until the S1b node) `make sanitize` covers only `uavnav_core`; extend it to `uavnav_lio_core` and `uavnav_px4_bridge` before the first multi-threaded node (`Makefile`, T2).
