@@ -95,7 +95,11 @@ class LioFrontend {
 
   /// Applies the available backend results, in order (at most limits::kBackendResultCapacity per
   /// call).
-  StepOutputs poll_results(const time::TimeSnapshot& now);
+  StepOutputs poll_results(const time::TimeSnapshot& now) {
+    StepOutputs out;
+    apply_results(out, now);
+    return out;
+  }
 
   LioState state() const noexcept { return lifecycle_.state(); }
   std::uint32_t epoch() const noexcept { return epoch_; }

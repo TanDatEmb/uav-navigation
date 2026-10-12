@@ -56,6 +56,9 @@ struct HealthOutput {
   Eigen::Vector3d output_tracking_error;  ///< OutputPredictor::tracking_error()
 };
 
+/// One call's outputs. When one call applies several backend results (possible on the two-thread
+/// runner), `odometry`, `health` and `restart` hold the LAST one (last wins); every state
+/// transition is still recorded by its own StateTransition event.
 struct StepOutputs {
   std::vector<StateOutput> states;
   std::optional<OdometryOutput> odometry;

@@ -844,6 +844,117 @@ TEST(LioFrontend, IdenticalRunsProduceIdenticalOutputs) {
   EXPECT_EQ(a.fe().state(), LioState::kLost);
 }
 
+// Review fix I1 (D31 consequence): IMU stamps jittered by up to 0.4 ms, scan ends off the IMU grid
+// and results arriving 20 ms after their scan end. Every correction is bracketed by buffered
+// samples, so none is rejected and TRACKING holds for 3 s.
+TEST(LioFrontend, JitteredImuAndOffGridScanEndsKeepTracking) {
+  Rig h;
+  h.ToTracking();  // newest IMU 10.0 s
+  // Sample n after 10.0 s, jittered deterministically by up to 0.4 ms (the IMU and LiDAR share a
+  // clock).
+  const auto stamp = [](std::int64_t n) {
+    return Ms(10'000) + time::Duration{n * kImuPeriod.ns + ((n * 7) % 9 - 4) * 100'000};
+  };
+  std::int64_t n = 0;
+  time::SensorTime last_end = Ms(10'000);
+  for (std::int64_t k = 1; k <= 30; ++k) {
+    // Scan end inside an IMU interval: at the sample, mid-way, or 1 ns before the next sample (the
+    // stamps the S1a rule rejected when the newest dt was shorter than the bracketing interval).
+    // Odd k: the first long (5.7 ms) interval after sample 20k, scan end 1 ns before its next
+    // sample.
+    std::int64_t m = 20 * k;
+    while (k % 2 == 1 && (stamp(m + 1) - stamp(m)).ns < 5'500'000) ++m;
+    const time::Duration interval = stamp(m + 1) - stamp(m);
+    const std::int64_t pick = k % 2 == 1 ? 2 : (k / 2) % 2;
+    const time::SensorTime end = stamp(m) + time::Duration{pick == 0   ? 0
+                                                           : pick == 1 ? interval.ns / 2
+                                                                       : interval.ns - 1};
+    // The result arrives about 20 ms later, after a short (4.8 ms) IMU step: the newest dt is then
+    // shorter than the bracketing interval.
+    while (h.now() < end + time::milliseconds(20) || (stamp(n) - stamp(n - 1)).ns > 5'000'000) {
+      ASSERT_TRUE(h.Imu(stamp(++n)).has_value());
+    }
+    ASSERT_TRUE(h.Scan(last_end, end).has_value()) << k;
+    last_end = end;
+    h.backend().AnswerScan(BackendResultKind::kScanGood);
+    h.Poll();
+    ASSERT_EQ(h.fe().state(), LioState::kTracking) << k;
+  }
+  EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());
+  EXPECT_GE(h.now(), Ms(13'000));
+}
+
+// Review fix (b): a restart refused by a full request queue is one decision and one event.
+TEST(LioFrontend, RestartWithAFullRequestQueueIsBackendBusy) {
+  Rig h;
+  h.ToRestarting();
+  // Nobody pops any more: fill the request queue with IMU copies.
+  while (h.channels().requests.stats().pushed - h.channels().requests.stats().popped <
+         RequestQueue::capacity()) {
+    ASSERT_TRUE(h.Imu(h.now() + kImuPeriod).has_value());
+  }
+  ASSERT_EQ(h.fe().state(), LioState::kRestarting);
+  const std::size_t overflow_before = h.Events("LioQueueOverflow").size();
+  const std::uint64_t rejected_before = h.fe().stats().requests_rejected;
+  const auto r = h.fe().restart(SeedPose{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()},
+                                Snap(h.now()));
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error(), EstimatorReason::kBackendBusy);
+  EXPECT_EQ(h.fe().stats().requests_rejected, rejected_before + 1);
+  EXPECT_EQ(h.Events("LioQueueOverflow").size(), overflow_before);
+  const auto busy = h.Events("LioInputRejected");
+  ASSERT_EQ(busy.size(), 1U);
+  EXPECT_EQ(busy[0].reason, "BACKEND_BUSY");
+  EXPECT_EQ(Value(busy[0], "stream"), 2.0);
+  // Nothing is pending: once the backend drains, the same restart is accepted.
+  h.backend().Drain();
+  EXPECT_TRUE(
+      h.fe()
+          .restart(SeedPose{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()}, Snap(h.now()))
+          .has_value());
+  EXPECT_EQ(h.fe().epoch(), 1U);
+}
+
+/// Answers the oldest scan with kScanGood carrying `snapshot` (nullopt: none), a good report and
+/// odometry.
+void AnswerGood(Rig& h, std::optional<EstimatorSnapshot> snapshot) {
+  const FakeBackend::Job job = h.backend().NextJob();
+  h.backend().Push(BackendResult{
+      BackendResultKind::kScanGood, job.epoch, job.seq, job.end, snapshot, kGoodReport, 0.03,
+      BaseOdometry{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity(), Eigen::Vector3d::Zero(),
+                   Eigen::Matrix<double, 6, 6>::Identity() * 1e-4,
+                   Eigen::Matrix3d::Identity() * 1e-4}});
+}
+
+// Review fix (e): a kScanGood without a snapshot (a wiring error) and a snapshot newer than the
+// newest output (kNewerThanOutput) are rejected corrections: event, kScanCorrectionRejected, no
+// odometry.
+TEST(LioFrontend, GoodResultsThePredictorCannotUseAreRejectedCorrections) {
+  for (const bool without_snapshot : {true, false}) {
+    Rig h(WideGapConfig());  // three rejections inside TRACKING need a gap threshold above 0.3 s
+    h.ToTracking();
+    for (int k = 1; k <= 3; ++k) {
+      const time::SensorTime end = Ms(10'000 + 100 * k);
+      h.ImuUntil(end);
+      ASSERT_TRUE(h.Scan(end - kScanPeriod, end).has_value());
+      AnswerGood(h, without_snapshot
+                        ? std::nullopt
+                        : std::optional<EstimatorSnapshot>(Still(end + time::milliseconds(1))));
+      const StepOutputs out = h.Poll();
+      EXPECT_FALSE(out.odometry.has_value()) << k;
+      const auto rejected = h.Events("PredictorCorrectionRejected");
+      ASSERT_EQ(rejected.size(), static_cast<std::size_t>(k));
+      EXPECT_EQ(rejected.back().reason, without_snapshot ? "NON_FINITE" : "NEWER_THAN_OUTPUT");
+    }
+    EXPECT_EQ(h.fe().state(), LioState::kDegraded);
+    ASSERT_TRUE(h.LastHealth().has_value());
+    EXPECT_EQ(h.LastHealth()->reason, LioReason::kCorrectionRejected);
+    // The gap reference is still 10.0 s: LOST at the first IMU t > 10.0 + 1.5 s.
+    EXPECT_EQ(ImuUntilState(h, Ms(11'600), LioState::kLost, LioReason::kLidarGapLost),
+              std::optional<time::SensorTime>(Ms(11'505)));
+  }
+}
+
 // The ImuGap event threshold comes from the one key imu_max_gap_s (frontend_config copies it, D32).
 TEST(LioFrontend, ImuGapIsReportedAboveTheConfiguredStep) {
   const LioConfig full = DefaultConfig();
@@ -864,7 +975,8 @@ TEST(LioSplit, FrontendSourcesNeverReferenceTheMathLibrary) {
     const std::string text = ReadFile(dir + file);
     ASSERT_FALSE(text.empty()) << file;
     for (const std::string_view token :
-         {"fast_lio_core/", "IkfomEstimator", "IkdTree", "ScanDeskewer", "evaluate_degeneracy"}) {
+         {"fast_lio_core/", "IkfomEstimator", "IkdTree", "ScanDeskewer", "evaluate_degeneracy",
+          "uavnav/lio/config.hpp", "backend_config.hpp"}) {
       EXPECT_EQ(text.find(token), std::string::npos) << file << " names " << token;
     }
   }

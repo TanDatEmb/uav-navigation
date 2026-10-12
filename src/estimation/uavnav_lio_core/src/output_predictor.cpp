@@ -163,7 +163,11 @@ Result<std::size_t, PredictorReason> OutputPredictor::match(time::SensorTime t) 
   for (std::size_t i = size_; i-- > 0;) {
     const time::SensorTime sample_t = at(i).out.t;
     if (sample_t <= t) {
-      if (t - sample_t > tolerance) return std::unexpected(PredictorReason::kOlderThanBuffer);
+      // Covered when within one (newest) IMU period of the sample, or bracketed by the next buffered
+      // sample through an IMU step of at most kPredictorDtMax (jittered IMU, review fix I1). A longer
+      // bracket is an IMU hole: the history does not cover t.
+      const bool bracketed = i + 1 < size_ && at(i + 1).out.t - sample_t <= limits::kPredictorDtMax;
+      if (t - sample_t > tolerance && !bracketed) return std::unexpected(PredictorReason::kOlderThanBuffer);
       return i;
     }
   }

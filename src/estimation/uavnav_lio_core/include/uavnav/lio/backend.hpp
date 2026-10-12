@@ -84,6 +84,9 @@ class LioBackend {
   /// Preconditions on the requests, guaranteed by the frontend (LioFrontend, Task 5) and not re-checked here:
   /// IMU copies are time-ordered, de-duplicated (strictly increasing stamps) and finite; scan points are finite
   /// and at most limits::kMaxScanPoints, end >= start, and end <= the newest IMU copy queued before the scan.
+  /// Exception (fail closed, §3.5 "Full request queue"): after the frontend dropped an IMU copy on a full
+  /// request queue, a later scan can end after the newest copy actually queued; its prediction then fails
+  /// (the IMU history does not reach the scan end), the ESKF is rebased and the scan is degenerate.
   bool step(const time::TimeSnapshot& now);
 
   /// Estimator-thread body: waits for a request, then step(clock()), until `stop` is requested. Checks the

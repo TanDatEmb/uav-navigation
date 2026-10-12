@@ -27,7 +27,7 @@
 //     vertical position); explicit resets with a counter and deltas.
 // Three differences from PX4, all deliberate:
 //   1. the delayed sample is looked up by timestamp (closest buffered output at or before s.t, within one
-//      IMU period), not taken as the oldest sample (PX4's own TODO);
+//      IMU period or one bracketing IMU step), not taken as the oldest sample (PX4's own TODO);
 //   2. a correction older than the buffer is rejected (kOlderThanBuffer) and changes nothing;
 //   3. the held attitude correction (delta angle err * 0.5 * dt / delay) is added only for `delay`
 //      seconds of IMU steps after each applied correction (a countdown decremented by the clamped dt),
@@ -120,9 +120,13 @@ class OutputPredictor {
   ///   kNewerThanOutput  s.t later than the newest output time (equal is accepted);
   ///   kOlderThanBuffer  s.t earlier than the oldest buffered sample or than newest - kPredictorBufferSpan
   ///                     (both limits inclusive: s.t equal to either is accepted), OR the closest
-  ///                     buffered sample at or before s.t is more than one IMU period before it (an IMU
-  ///                     gap: the history does not cover s.t). One IMU period = the last accepted dt_s
-  ///                     clamped to [kPredictorDtMin, kPredictorDtMax]; a distance equal to it is accepted.
+  ///                     buffered sample at or before s.t is more than one IMU period before it AND s.t
+  ///                     is not bracketed by the next buffered sample through a step of at most
+  ///                     kPredictorDtMax (an IMU gap: the history does not cover s.t). One IMU period =
+  ///                     the last accepted dt_s clamped to [kPredictorDtMin, kPredictorDtMax]; a distance
+  ///                     equal to it is accepted. The bracket rule keeps a jittered IMU (a bracket longer
+  ///                     than the newest dt) from rejecting covered stamps (D31: a rejected correction
+  ///                     counts like a degenerate scan).
   /// Every rejection changes nothing. On kApplied the snapshot's biases and gravity are taken for the
   /// following IMU steps, the attitude correction is set for a window of `delay` seconds of IMU steps
   /// (replacing any previous one), and the vel/pos (and vertical) corrections are

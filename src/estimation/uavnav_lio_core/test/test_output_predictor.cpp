@@ -359,6 +359,73 @@ TEST(OutputPredictor, RejectsWhenNoSampleWithinOneImuPeriod) {
   EXPECT_EQ(op.on_correction(s).error(), PredictorReason::kOlderThanBuffer);
 }
 
+namespace {
+
+/// Deterministic IMU jitter in [-0.4, +0.4] ms around the 5 ms grid (Mid-360 IMU and LiDAR share a
+/// clock).
+std::int64_t JitterNs(int k) { return static_cast<std::int64_t>((k * 7) % 9 - 4) * 100'000; }
+
+/// 60 jittered stationary IMU samples after `t0` (buffer not yet at its 300 ms span), the last step
+/// short (4.2 ms) so the newest dt is below most bracketing intervals. Returns the stamps, align
+/// sample first.
+std::vector<std::int64_t> FeedJittered(OutputPredictor& op, std::int64_t t0) {
+  std::vector<std::int64_t> stamps{t0};
+  op.align(Snap(At(t0)));
+  for (int k = 1; k <= 60; ++k) stamps.push_back(t0 + k * kImuNs + JitterNs(k));
+  stamps.push_back(stamps.back() + 4'200'000);
+  for (std::size_t i = 1; i < stamps.size(); ++i) {
+    const double dt = static_cast<double>(stamps[i] - stamps[i - 1]) / 1e9;
+    EXPECT_TRUE(op.on_imu(Stationary(At(stamps[i]), dt)).has_value());
+  }
+  return stamps;
+}
+
+}  // namespace
+
+// Review fix I1 (D31 consequence): with IMU jitter, a scan end bracketed by two buffered samples is
+// accepted anywhere in the bracket, up to 1 ns before the next sample. The S1a rule (distance to
+// the sample at or before <= the NEWEST dt) rejected such stamps systematically; with D31 that
+// would degrade TRACKING.
+TEST(OutputPredictor, JitteredImuAcceptsEveryBracketedStamp) {
+  OutputPredictor op(Beta());
+  const std::vector<std::int64_t> stamps = FeedJittered(op, 1'000'000'000);
+  int checked = 0;
+  for (std::size_t i = 1; i + 1 < stamps.size(); ++i) {
+    const std::int64_t interval = stamps[i + 1] - stamps[i];
+    for (const std::int64_t off :
+         {std::int64_t{0}, std::int64_t{1}, interval / 2, interval - 1'000, interval - 1}) {
+      const auto r = op.on_correction(Snap(At(stamps[i] + off)));
+      ASSERT_TRUE(r.has_value()) << "sample " << i << " offset " << off << ": "
+                                 << to_string(r.error());
+      ++checked;
+    }
+  }
+  EXPECT_GT(checked, 250);
+}
+
+TEST(OutputPredictor, HoleLongerThanDtMaxInsideTheBufferStillRejects) {
+  OutputPredictor op(Beta());
+  op.align(Snap(At(0)));
+  std::int64_t now = 0;
+  for (int k = 1; k <= 10; ++k) op.on_imu(Stationary(At(now += kImuNs)));
+  const std::int64_t before_hole = now;
+  const std::int64_t hole = limits::kPredictorDtMax.ns + 5'000'000;  // 35 ms
+  op.on_imu(Stationary(At(now += hole), static_cast<double>(hole) / 1e9));
+  const std::int64_t before_exact = now;
+  op.on_imu(
+      Stationary(At(now += limits::kPredictorDtMax.ns), time::to_seconds(limits::kPredictorDtMax)));
+  for (int k = 1; k <= 5; ++k) op.on_imu(Stationary(At(now += kImuNs)));
+  // In the 35 ms hole, beyond one (newest, 5 ms) IMU period: rejected.
+  for (const std::int64_t off : {std::int64_t{6'000'000}, hole / 2, hole - 1}) {
+    const auto r = op.on_correction(Snap(At(before_hole + off)));
+    ASSERT_FALSE(r.has_value()) << off;
+    EXPECT_EQ(r.error(), PredictorReason::kOlderThanBuffer);
+  }
+  // A bracket of exactly kPredictorDtMax is covered.
+  EXPECT_TRUE(
+      op.on_correction(Snap(At(before_exact + limits::kPredictorDtMax.ns - 1))).has_value());
+}
+
 TEST(OutputPredictor, CorrectionAtOldestSampleIsAcceptedOneNanosecondOlderIsNot) {
   OutputPredictor op(Beta());
   op.align(Snap(At(1'000)));

@@ -28,6 +28,7 @@ constexpr bool sigma_exceeded(double sigma, double limit) { return !(sigma >= 0.
 
 static_assert(is_listed(LioState::kLost, LioState::kRestarting, LioReason::kGeometryReturned));
 static_assert(!is_listed(LioState::kLost, LioState::kTracking, LioReason::kConfirmationReached));
+static_assert(is_listed(LioState::kTracking, LioState::kDegraded, LioReason::kCorrectionRejected));  // D31
 
 }  // namespace
 

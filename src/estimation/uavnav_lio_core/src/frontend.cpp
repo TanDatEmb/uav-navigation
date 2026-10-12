@@ -263,6 +263,8 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
   const SeedPose seed =
       pending_seed_.value_or(SeedPose{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()});
   pending_seed_.reset();
+  assert((r.kind == BackendResultKind::kRestartRejected || r.snapshot) &&
+         "kRestartSeeded without snapshot");
   if (r.kind == BackendResultKind::kRestartRejected || !r.snapshot) {
     requested_epoch_ = epoch_;  // no restart pending any more; the state stays RESTARTING
     emit(event("LioRestartRejected", now)
@@ -404,6 +406,7 @@ Result<StepOutputs, EstimatorReason> LioFrontend::push_scan(ScanInput&& in,
   const time::SensorTime end = in.end;
   BackendRequest job{ScanJob{seq_ + 1, requested_epoch_, policy, std::move(in)}};
   if (!channels_.requests.try_push(std::move(job))) {  // unreachable (slot checked): fail closed
+    assert(false && "request queue full although a free slot was checked");
     ++stats_.scans_refused_busy;
     request_queue_full(kStreamScan, end, now);
     return out;
@@ -431,19 +434,13 @@ Result<void, EstimatorReason> LioFrontend::restart(const SeedPose& seed,
   // applied correction (latest(), not the value on_imu returned).
   BackendRequest cmd{
       RestartCommand{epoch_ + 1, t, normalized, latest->q_world_imu, latest->v_world_mps}};
-  if (!channels_.requests.try_push(std::move(cmd))) {
-    request_queue_full(kStreamRestart, t, now);
+  if (!channels_.requests.try_push(std::move(cmd))) {  // one decision, one event: LioInputRejected
+    ++stats_.requests_rejected;
     return std::unexpected(reject(EstimatorReason::kBackendBusy, kStreamRestart, t, now));
   }
   requested_epoch_ = epoch_ + 1;
   pending_seed_ = normalized;
   return {};
-}
-
-StepOutputs LioFrontend::poll_results(const time::TimeSnapshot& now) {
-  StepOutputs out;
-  apply_results(out, now);
-  return out;
 }
 
 }  // namespace uavnav::lio
