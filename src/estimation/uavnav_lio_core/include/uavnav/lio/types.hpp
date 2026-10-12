@@ -49,6 +49,9 @@
 //   "LioRestartRejected"   frontend  kRestartRejected: applies the backend's kRestartRejected result
 //   "StateTransition" / "LioRestart"   frontend   the lifecycle's reason enum (LioReason)
 //   "PredictorCorrectionRejected"      frontend   PredictorReason
+//   "ScanResultTooOld"     frontend  kResultTooOld (D33/O15): a kScanGood result older than gap_degraded when
+//                                    applied (newest IMU time - scan end); not offered to the predictor, fed
+//                                    as a rejected correction (values sensor_time_s, age_s, gap_degraded_s)
 //   "LioClockFailed"       runner    kClockFailed: the backend clock (LioClock) threw; the backend thread goes on
 //                          (backend  with the last good snapshot. Rate-limited per runner per run(): the 1st and
 //                          thread)   every kEventSummaryEvery-th failure, and once more at the end of run() when
@@ -148,7 +151,8 @@ enum class EstimatorEventReason : std::uint8_t {
   kUnexpectedSequence,
   kRestartRejected,
   kClockFailed,
-  kBackendFailed
+  kBackendFailed,
+  kResultTooOld
 };
 
 constexpr std::string_view to_string(EstimatorEventReason r) {
@@ -201,6 +205,8 @@ constexpr std::string_view to_string(EstimatorEventReason r) {
       return "CLOCK_FAILED";
     case EstimatorEventReason::kBackendFailed:
       return "BACKEND_FAILED";
+    case EstimatorEventReason::kResultTooOld:
+      return "RESULT_TOO_OLD";
   }
   return "";
 }

@@ -230,7 +230,21 @@ void LioFrontend::apply_scan(const BackendResult& r, StepOutputs& out,
                         : r.kind == K::kMapReady  ? LioEvent::Kind::kMapReady
                                                   : LioEvent::Kind::kScanDegenerate;
   bool applied = false;
-  if (r.kind == BackendResultKind::kScanGood) {
+  // D33/O15: the age of the result when applied, from the newest IMU sample ticked so far (see
+  // "Gap semantics" in frontend.hpp). last_imu_ is always set here: a scan is admitted only after
+  // an IMU sample.
+  const time::Duration age = last_imu_ ? last_imu_->t - r.t : time::Duration{0};
+  if (r.kind == BackendResultKind::kScanGood && age > cfg_.lifecycle.gap_degraded) {
+    // Older than gap_degraded: a rejected correction, never offered to the predictor (fail closed:
+    // /lio/state does not move on a result the lifecycle refuses); no odometry, the gap reference
+    // stays.
+    emit(event("ScanResultTooOld", now)
+             .reason(EstimatorEventReason::kResultTooOld)
+             .value("sensor_time_s", seconds(r.t))
+             .value("age_s", time::to_seconds(age))
+             .value("gap_degraded_s", time::to_seconds(cfg_.lifecycle.gap_degraded)));
+    kind = LioEvent::Kind::kScanCorrectionRejected;
+  } else if (r.kind == BackendResultKind::kScanGood) {
     // D31: a scan counts as corrected only if the output predictor applied its snapshot (matched by
     // stamp). A good result without a snapshot is a wiring error and fails closed the same way.
     const Result<void, PredictorReason> c =

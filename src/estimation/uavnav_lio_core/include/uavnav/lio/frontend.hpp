@@ -33,11 +33,19 @@
 // (time::from_stamp<SensorTag>), as in lifecycle.hpp. The TimeSnapshot `now` stamps the events of
 // that call; nothing here reads a clock.
 //
-// Gap semantics (F22, D31): the lifecycle's last-scan time advances only when a scan RESULT is
-// applied; its time is the scan end. Admitted, refused, unprocessed and discarded scans do not
-// count, and neither does a kScanGood result whose correction the output predictor rejected (fed as
-// kScanCorrectionRejected). A stalled or slow backend therefore reads as a LiDAR gap: DEGRADED,
-// then LOST, on IMU time alone.
+// Gap semantics (F22, D31, D33/O15): the lifecycle's last-scan time advances only when a scan
+// RESULT is applied; its time is the scan end. Admitted, refused, unprocessed and discarded scans
+// do not count, and neither does a kScanGood result that is a rejected correction (fed as
+// kScanCorrectionRejected, no odometry). A kScanGood result is a rejected correction when
+// (1) its age when applied is greater than lifecycle.gap_degraded (equal is accepted); it is then
+// NOT offered to the output predictor ("ScanResultTooOld", kResultTooOld); or
+// (2) the output predictor rejected its correction ("PredictorCorrectionRejected").
+// The age is newest IMU time - scan end, where the newest IMU time is the newest accepted sample
+// already TICKED: results are applied at the start of push_imu, push_scan and poll_results, so the
+// sample of the current push_imu call does not count yet. A too-old result can only arrive outside
+// TRACKING: its scan end is not before the gap reference, so the tick that made it too old already
+// fired the TRACKING -> DEGRADED gap rule. A stalled, slow or saturated backend therefore reads as
+// a LiDAR gap: DEGRADED, then LOST, on IMU time alone, and old results never confirm TRACKING.
 //
 // Never throws: inputs are checked at the boundary (EstimatorReason); an allocation failure of a
 // state output drops that output with an "AllocationFailed" event.

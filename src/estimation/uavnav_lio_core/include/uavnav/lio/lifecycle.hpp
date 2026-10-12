@@ -80,8 +80,9 @@ static_assert(ReasonEnum<LioReason>);
 
 /// One per scan result or IMU-time tick.
 ///
-/// kScanCorrectionRejected (D31, SYSTEM_DESIGN §3.5): a kScanGood scan result whose correction the output
-/// predictor rejected (e.g. older than its 300 ms buffer). Only a scan the predictor applied counts as a scan
+/// kScanCorrectionRejected (D31, D33/O15, SYSTEM_DESIGN §3.5): a kScanGood scan result whose correction the
+/// output predictor rejected (e.g. older than its 300 ms buffer), or that was older than gap_degraded when the
+/// frontend applied it (never offered to the predictor). Only a scan the predictor applied counts as a scan
 /// with a correction, so this kind is handled exactly like kScanDegenerate by the transition rules (it counts
 /// in the TRACKING degenerate run, whose transition then has reason kCorrectionRejected, counts toward
 /// "degenerate since > degeneracy_lost" in DEGRADED, breaks the confirmation runs, is ignored in LOST and
