@@ -81,7 +81,7 @@ class LioBackend {
   ///                   for a non-finite command, cmd.t before the ESKF time, or a refused seed.
   /// A full result queue drops the result with a LioQueueOverflow event (kResultQueueFull).
   ///
-  /// Preconditions on the requests, guaranteed by the frontend (LioFrontend, Task 5) and not re-checked here:
+  /// Preconditions on the requests, guaranteed by the frontend (LioFrontend) and not re-checked here:
   /// IMU copies are time-ordered, de-duplicated (strictly increasing stamps) and finite; scan points are finite
   /// and at most limits::kMaxScanPoints, end >= start, and end <= the newest IMU copy queued before the scan.
   /// Exception (fail closed, §3.5 "Full request queue"): after the frontend dropped an IMU copy on a full

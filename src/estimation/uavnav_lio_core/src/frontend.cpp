@@ -274,8 +274,10 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
     out.restart = std::unexpected(EstimatorReason::kNotFinite);
     return;
   }
-  // The snapshot is stamped at the command's IMU time, which the predictor buffer still holds:
-  // reset_to shifts the buffer there (no rewind, output_predictor.hpp).
+  // The snapshot is stamped at the command's IMU time. While the answer arrives within the predictor buffer
+  // span (300 ms of IMU time) the buffer still holds that time and reset_to shifts it there without a rewind
+  // (output_predictor.hpp). A later answer rewinds the output to the command time: see "Late restart answer"
+  // in runner.hpp.
   const ResetDelta delta = predictor_.reset_to(*r.snapshot);
   flush_spam(now);  // end of the old epoch: summaries, under the old epoch id
   const std::uint32_t old_epoch = epoch_;
