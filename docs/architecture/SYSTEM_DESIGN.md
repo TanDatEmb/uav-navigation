@@ -163,7 +163,7 @@ NavAvailability:  AVAILABLE ──LIO LOST──► LOST(since) ──LIO TRACKI
 
 ```text
 INITIALIZING ──map đủ ∧ 5 scan tốt liên tiếp──► TRACKING ◄──5 scan tốt──┐
-     ▲                                              │ suy biến 3 scan, hoặc gap > 0.25 s
+     ▲                                              │ suy biến 3 scan (kể cả CORRECTION_REJECTED), hoặc gap > 0.25 s
      │                                              ▼                    │
      │                                           DEGRADED ───────────────┘
      │ epoch mới, map rỗng, seed                    │ suy biến kéo dài > 1.0 s, gap > 0.5 s,
@@ -173,6 +173,7 @@ INITIALIZING ──map đủ ∧ 5 scan tốt liên tiếp──► TRACKING ◄
 
 - **LiDAR gap** tính theo **sensor time trên mỗi mẫu IMU** (stamp IMU − điểm cuối scan gần nhất).
 - Mọi lối vào TRACKING đều qua bước xác nhận.
+- **Hiệu chỉnh bị từ chối (D31, D33/O15):** kết quả `kScanGood` mà predictor không áp dụng, hoặc có tuổi lúc áp dụng (IMU mới nhất − scan end) lớn hơn `gap_degraded`, vào lifecycle dưới dạng input `kScanCorrectionRejected`. Input này đếm như scan suy biến (3 lần liên tiếp: TRACKING→DEGRADED, reason `CORRECTION_REJECTED`) và không đẩy mốc scan cuối. Kết quả quá tuổi không được đưa vào predictor.
 - Scan rỗng là một event, không phải exception.
 - `/lio/scan` chỉ được phát khi TRACKING.
 - Các con số trong sơ đồ là giá trị beta, thuộc tầng (b), sẽ chỉnh từ log.
@@ -189,6 +190,7 @@ Làm theo đủ cơ chế của EKF2 (F35):
 
 1. Hai mốc thời gian: ESKF ở thời điểm scan, predictor ở thời điểm IMU mới nhất.
 2. Ring buffer trạng thái output cùng trục thời gian với IMU, độ trễ tối đa 300 ms. Sai số được tính **tại timestamp của scan**: tra buffer theo thời gian, không lấy mẫu cũ nhất.
+   - **Quy tắc khớp (D33/O18):** stamp được chấp nhận khi nằm giữa hai mẫu buffer cách nhau ≤ `kPredictorDtMax` (30 ms), HOẶC trong khoảng một dt mới nhất tính từ mẫu cuối. Mẫu khớp là mẫu ≤ stamp, nên lệch tối đa giữa stamp và mẫu khớp là 30 ms. Quy tắc này tránh từ chối nhầm khi IMU có jitter.
 3. Attitude hiệu chỉnh qua delta-angle với gain `0.5·dt/delay`.
 4. Vel/pos hiệu chỉnh bằng PI (`dt/τ`, tích phân `0.1·gain²`), áp lên **toàn bộ buffer**. τ_vel = τ_pos = 0.25 s (tầng b).
 5. Kênh dọc riêng.
@@ -210,6 +212,7 @@ Làm theo đủ cơ chế của EKF2 (F35):
 - Bắt đầu epoch mới; map được reset ở `navigation`.
 - **Luôn** tăng `reset_counter` theo epoch của chính mẫu dữ liệu.
 - Phát event `LioRestart` gồm: epoch cũ, epoch mới, seed, `T`.
+- **Câu trả lời restart tới muộn (D33/O16):** nếu buffer predictor không còn khớp được thời điểm của lệnh (backend trả lời sau hơn 300 ms), frontend từ chối câu trả lời. Khi đó frontend phát `LioRestartRejected` với lý do stale, ở lại RESTARTING, và không kéo lùi output. Bên gọi restart lại với seed mới.
 
 ### §3.5 Thread (D30)
 
@@ -223,8 +226,8 @@ Phần thuần của LIO tách thành hai khối, mỗi khối do đúng một t
 **Ranh giới được ép ở compile time (D32), không bằng quét văn bản:**
 - Config tách theo khối:
   - `backend_config.hpp`: math và suy biến;
-  - `frontend_config.hpp`: lifecycle và predictor;
-  - `config.hpp`: gộp hai phần trên cùng loader, **chỉ** lớp ghép hai thread và node được include.
+  - `frontend_config.hpp`: lifecycle, predictor và ngưỡng `ImuGap` của ingest (nguồn duy nhất vẫn là key `imu_max_gap_s` trong `kLioSpecs`, D33/O17);
+  - `config.hpp`: gộp hai phần trên cùng loader. **Chỉ** các nơi sau được include: lớp ghép hai thread, driver offline `LioPipeline`, node và test (D33/O17).
 - Header và source của backend không được kéo `lifecycle.hpp` vào, kể cả gián tiếp. `lifecycle.hpp` định nghĩa một macro đánh dấu; mỗi file `.cpp` của backend kết thúc bằng `#error` nếu macro đó đã được định nghĩa. Include sai thì build fail.
 
 Hai khối trao đổi qua hàng đợi có giới hạn, chỉ chứa dữ liệu bất biến:
@@ -233,7 +236,7 @@ Hai khối trao đổi qua hàng đợi có giới hạn, chỉ chứa dữ li�
   - loại đưa vào lifecycle: `kScanGood`, `kScanDegenerate`, `kScanEmpty`, `kMapReady`, `kRestartSeeded`;
   - loại không đưa vào lifecycle (D31): `kImuInitialized` (căn predictor), `kScanNotProcessed` (đối soát), `kRestartRejected`.
 
-**Chỉ một scan được predictor áp dụng thì mới tính là scan có correction (D31).** Nếu predictor từ chối hiệu chỉnh của một kết quả `kScanGood`, ví dụ vì cũ hơn buffer 300 ms (`kOlderThanBuffer`), thì frontend:
+**Chỉ một scan được predictor áp dụng thì mới tính là scan có correction (D31).** Nếu predictor từ chối hiệu chỉnh của một kết quả `kScanGood`, ví dụ vì cũ hơn buffer 300 ms (`kOlderThanBuffer`), hoặc kết quả có tuổi lớn hơn `gap_degraded` (D33/O15), thì frontend:
 - đưa scan đó vào lifecycle như `kScanDegenerate` với reason riêng;
 - **không** đẩy mốc "scan cuối" lên.
 
@@ -244,6 +247,14 @@ Nhờ vậy backend chậm kéo dài sẽ dẫn tới DEGRADED/LOST. Nếu khôn
 Frontend đưa từng kết quả scan vào lifecycle và predictor. Vì vậy thời gian ICP chạy (20–50 ms) không làm `/lio/state` dồn cục và không làm chậm kiểm gap.
 
 Hàng đợi tràn là một event có reason, và không bao giờ chặn thread ingest.
+
+**Node `lio` (D33/O20, O21):**
+- Thread executor của node chính là thread ingest. Mọi callback nằm trong một callback group loại trừ nhau. Lời gọi chồng lấn bị từ chối kèm event.
+- Input là `/lidar/imu` và `/lidar/points`. Scan Gazebo là một thời điểm; điểm không hữu hạn bị bỏ và được đếm.
+- Mount base_link←LiDAR là bảng tầng (b) riêng của node.
+- Một scan chưa được IMU phủ thì chờ không chặn, tối đa 100 ms thời gian ROS. Hết thời gian, hoặc có scan mới hơn, thì scan bị bỏ kèm event.
+- `/lio/state` lấy một mẫu cho mỗi ô 10 ms sensor time. Covariance của nó là NaN (predictor không có covariance), và reset delta giữ theo lần reset cuối.
+- `/lio/scan` và bên gọi restart (seed `T⁻¹ × pose PX4`) hoãn sang S3/S4 (D33/O25).
 
 Thread khác:
 - **events writer.**
@@ -260,6 +271,11 @@ Thread khác:
 - `reset_counter` lấy từ epoch của chính mẫu.
 - `timestamp_sample` là thời điểm scan, đổi sang đồng hồ PX4 qua timesync.
 - Covariance và quality lấy từ LIO.
+- **Ghép input (D33/O22):** EV bị chặn khi `/lio/health` mới nhất cùng epoch không phải TRACKING và có stamp ≥ mẫu odometry. Mọi health không TRACKING đưa vào alignment `on_lio(tracking=false)`, để `T` vào FROZEN. Mẫu `vehicle_local_position` có `xy_valid` hoặc `z_valid` sai thì bị bỏ kèm event. Thời gian PX4 (µs) được đổi có kiểm phạm vi. `on_tick` chạy mỗi 100 ms.
+- **Tham số EKF2 theo profile (D20, D28, D33/O23):**
+  - cả hai profile: `EKF2_EV_DELAY=0` (vì `timestamp_sample` đã là thời điểm đo), `EKF2_DELAY_MAX=200`, `EKF2_EV_NOISE_MD=0`, `EKF2_EV_QMIN=0`;
+  - có GPS: `EKF2_EV_CTRL=7`, `EKF2_GPS_CTRL=7`, `EKF2_HGT_REF=1`;
+  - không GPS: `EKF2_EV_CTRL=15`, `EKF2_GPS_CTRL=0`, `EKF2_HGT_REF=3`.
 
 **Alignment `T_px4←lio`, 4-DoF (x, y, z, yaw)**
 
@@ -284,7 +300,7 @@ INIT ──20 cặp nhất quán liên tiếp──► VALID ──LIO LOST─�
                                └──VALID không có cặp mới > 1.0 s──► INVALID
 ```
 
-- Xuất `/alignment` gồm: `T`, trạng thái, tuổi, residual.
+- Xuất `/alignment` gồm: `T`, trạng thái, tuổi, residual. Topic được phát ở mỗi output của `on_lio`/`on_tick` và ở output `on_px4` có lý do (D33/O21).
 
 ### §4.2 `px4_mode`
 
@@ -418,6 +434,13 @@ Mỗi giá trị chỉ có **một** nguồn.
 
 `LioState`, `LioHealth`, `LioOdometry`, `Alignment`, `NavCommand` (P/V/A + yaw, frame LIO, epoch, `bundle_id`, phase, lease), `EventRecord`, `MissionDefinition`.
 
+QoS (D33/O21):
+- input sensor: `SensorDataQoS` 5;
+- `/lio/state`: best effort 10;
+- `/lio/odometry`, `/lio/health`, `/alignment`: reliable 10;
+- `/events`: reliable 1000;
+- PX4: best effort 5.
+
 Quy ước bắt buộc (D28):
 - **Miền thời gian của từng trường:**
   - `LioState.stamp`, `LioOdometry.stamp`: SensorTime.
@@ -443,7 +466,7 @@ Beta không tự khởi động lại process. Các thành phần khác phát hi
 src/external/  px4_msgs, px4_ros2_interface_lib, livox_ros_driver2
 src/vendor/    ikfom_vendor, ikd_tree_vendor, rog_map_vendor
 src/sim/       uav_simulation, uav_description
-src/core/      uavnav_core, uavnav_interfaces
+src/core/      uavnav_core, uavnav_interfaces, uavnav_ros (tiện ích vỏ ROS dùng chung, D33/O19)
 src/estimation/fast_lio_core (toán FAST-LIO tận dụng, thuần), uavnav_lio_core (thuần), uavnav_lio
 src/navigation/uavnav_world, uavnav_planning, uavnav_supervisor (thuần), uavnav_navigation
 src/px4/       uavnav_px4_bridge, uavnav_px4_mode
@@ -452,12 +475,14 @@ src/uavnav_bringup             tools/uavnav/
 
 Logic quyết định nằm trong thư viện thuần, test được không cần ROS. Package ROS chỉ là vỏ.
 
+Node `px4_bridge` là target thứ hai của package `uavnav_px4_bridge`, còn target lõi của package này không phụ thuộc ROS. `uavnav_lio` gồm một thư viện ingest thuần và node (D33/O19).
+
 ### §7.2 Lát cắt dọc
 
 | Lát | Nội dung | Kiểm tra |
 |---|---|---|
 | S0 | `uavnav_core`, `uavnav_interfaces`, khung build, gate tối giản (thay `gate.sh` và các validator của `main`) | Unit test |
-| S1 | `uavnav_lio` và `uavnav_px4_bridge`, tham số PX4 theo profile | Hover ở mode Position của PX4, EKF2 fuse EV, log `T`. Kiểm giả thuyết F34 |
+| S1 | `uavnav_lio` và `uavnav_px4_bridge`, tham số PX4 theo profile | Hover ở mode Position của PX4, EKF2 fuse EV, log `T`. Kiểm giả thuyết F34. Cách kiểm (D33/O24): stick giữa qua `/fmu/in/manual_control_input`, dự phòng Hold; F34 kiểm ở heading khởi động khác hướng đông, cả hai profile |
 | S2 | `uavnav_px4_mode`, Supervisor tối giản, quỹ đạo thẳng, yaw Y1/Y3a, reason bàn giao | Bay tới waypoint trong môi trường trống |
 | S3 | `uavnav_world`, `uavnav_planning`, commit timeline, R1–R5 | Scene có vật cản |
 | S4 | LIO LOST/REACQUIRING/khởi động lại, phanh, guard bỏ cuộc, cắt LiDAR trong sim | Fault injection |
