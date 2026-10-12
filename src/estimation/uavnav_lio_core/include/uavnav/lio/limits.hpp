@@ -88,6 +88,12 @@ static_assert(kBackendResultCapacity >= kMaxScansInFlight + 2,
 /// the backend only (§3.5: the libgomp team runs only inside the backend's correction call). 3 = fast_lio_core's
 /// default, the value main's pipeline and the S1a estimator ran with; the residuals are computed per point, so
 /// the count changes the ICP time, not its result.
+/// The ThreadSanitizer build (`make sanitize`, CMake defines UAVNAV_LIO_TSAN_BUILD) uses 1: libgomp is not
+/// TSan-instrumented, so its barriers would be reported as races (GCC PR 55561); one thread forks no team.
+#ifdef UAVNAV_LIO_TSAN_BUILD
+inline constexpr std::size_t kIcpThreads = 1;
+#else
 inline constexpr std::size_t kIcpThreads = 3;
+#endif
 
 }  // namespace uavnav::lio::limits

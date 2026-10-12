@@ -49,6 +49,9 @@
 //   "LioRestartRejected"   frontend  kRestartRejected: applies the backend's kRestartRejected result
 //   "StateTransition" / "LioRestart"   frontend   the lifecycle's reason enum (LioReason)
 //   "PredictorCorrectionRejected"      frontend   PredictorReason
+//   "LioClockFailed"       runner    kClockFailed: the backend clock (LioClock) threw; the backend thread goes on
+//                          (backend  with the last good snapshot (rate-limited per process, value count)
+//                          thread)
 // Rate-limited events are emitted on the 1st, kEventSummaryEvery-th, ... occurrence per reason and epoch,
 // and once more at the end of the epoch when occurrences happened since the last one.
 namespace uavnav::lio {
@@ -139,7 +142,8 @@ enum class EstimatorEventReason : std::uint8_t {
   kResultQueueFull,
   kStaleEpoch,
   kUnexpectedSequence,
-  kRestartRejected
+  kRestartRejected,
+  kClockFailed
 };
 
 constexpr std::string_view to_string(EstimatorEventReason r) {
@@ -188,6 +192,8 @@ constexpr std::string_view to_string(EstimatorEventReason r) {
       return "UNEXPECTED_SEQUENCE";
     case EstimatorEventReason::kRestartRejected:
       return "RESTART_REJECTED";
+    case EstimatorEventReason::kClockFailed:
+      return "CLOCK_FAILED";
   }
   return "";
 }

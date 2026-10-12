@@ -312,7 +312,11 @@ TEST(LioLimits, BackendChannelConstants) {
   EXPECT_EQ(limits::kBackendRequestCapacity, 512U);
   EXPECT_EQ(limits::kMaxScansInFlight, 2U);
   EXPECT_EQ(limits::kBackendResultCapacity, 8U);
+#ifdef UAVNAV_LIO_TSAN_BUILD
+  EXPECT_EQ(limits::kIcpThreads, 1U);  // libgomp is not TSan-instrumented (GCC PR 55561)
+#else
   EXPECT_EQ(limits::kIcpThreads, 3U);
+#endif
   // Pending results: every scan in flight, one restart answer and one IMU initialisation.
   EXPECT_GE(limits::kBackendResultCapacity, limits::kMaxScansInFlight + 2U);
 }
