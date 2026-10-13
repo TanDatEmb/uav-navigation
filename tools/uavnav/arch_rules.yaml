@@ -55,6 +55,8 @@ invariant_paths:
     - src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/ev_encoder.hpp
     - src/px4/uavnav_px4_bridge/src/ev_encoder.cpp
     - src/px4/uavnav_px4_bridge/src/px4_time.cpp
+    - src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/bridge.hpp
+    - src/px4/uavnav_px4_bridge/src/bridge.cpp
   INV-TIME-1-range-checked-stamps:
     - src/core/uavnav_core/include/uavnav/core/time.hpp
     - src/core/uavnav_ros/include/uavnav/ros/time_msg.hpp
