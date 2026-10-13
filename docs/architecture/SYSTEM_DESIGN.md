@@ -271,7 +271,7 @@ Thread khác:
 - `reset_counter` lấy từ epoch của chính mẫu.
 - `timestamp_sample` là thời điểm scan, đổi sang đồng hồ PX4 qua timesync.
 - Covariance và quality lấy từ LIO.
-- **Ghép input (D33/O22):** EV bị chặn khi `/lio/health` mới nhất cùng epoch không phải TRACKING và có stamp ≥ mẫu odometry. Mọi health không TRACKING đưa vào alignment `on_lio(tracking=false)`, để `T` vào FROZEN. Mẫu `vehicle_local_position` có `xy_valid` hoặc `z_valid` sai thì bị bỏ kèm event. Thời gian PX4 (µs) được đổi có kiểm phạm vi. `on_tick` chạy mỗi 100 ms.
+- **Ghép input (D33/O22):** EV bị chặn khi `/lio/health` mới nhất cùng epoch không phải TRACKING và có stamp ≥ mẫu odometry. Mọi health không TRACKING đưa vào alignment `on_lio(tracking=false)`, để `T` vào FROZEN. Mẫu `vehicle_local_position` có `xy_valid` hoặc `z_valid` sai thì bị bỏ kèm event. Thời gian PX4 (µs) được đổi có kiểm phạm vi. `on_tick` chạy mỗi 100 ms. Stamp sau tick mới nhất cộng 0.5 s bị từ chối kèm event `LioInputRejected`; health có stamp cũ hơn health mới nhất cùng epoch bị từ chối (`kOutOfOrder`) và không đổi cổng EV hay `T`. Odometry bị chặn không đưa vào alignment (health của nó đã được đưa vào). Odometry của epoch cũ đến sau health của epoch mới chưa được chặn: hoãn tới O25 (S3/S4), khi restart tồn tại.
 - **Tham số EKF2 theo profile (D20, D28, D33/O23):**
   - cả hai profile: `EKF2_EV_DELAY=0` (vì `timestamp_sample` đã là thời điểm đo), `EKF2_DELAY_MAX=200`, `EKF2_EV_NOISE_MD=0`, `EKF2_EV_QMIN=0`;
   - có GPS: `EKF2_EV_CTRL=7`, `EKF2_GPS_CTRL=7`, `EKF2_HGT_REF=1`;
@@ -396,6 +396,7 @@ EventRecord { t_steady_ns, t_ros_ns, component, event, state_before, state_after
 
 - Mỗi process có một ring buffer, cộng một thread writer ghi ra `/events` và file JSONL cho mỗi lần chạy.
 - Ring đầy thì đếm số bản ghi bị bỏ và phát event `EventsDropped`.
+- **Event từ chối lặp (D33, bridge):** giới hạn tần suất theo (luồng input, lý do). Lần từ chối đầu của một đợt được báo ngay, các lần sau được đếm; khi input kế tiếp của luồng đó được chấp nhận thì phát một bản tóm tắt (`summary=1`, `count`, `suppressed`) và đợt kế tiếp lại được báo từ lần đầu. `flush()` phát các bản tóm tắt còn mở khi tắt node.
 - Script `tools/uavnav` dùng event log để:
   - tính KPI;
   - đếm theo từng reason;

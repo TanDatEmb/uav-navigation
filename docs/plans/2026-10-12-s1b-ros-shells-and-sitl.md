@@ -74,7 +74,7 @@ The remaining spec-sync items are for the architect, not this plan:
 
 1. **A scan arrives before its IMU coverage and the bounded wait expires.** The scan is held without blocking and retried on each IMU sample. After 100 ms of ROS time it is dropped with `kImuCoverageTimeout`, so it never reaches the core ahead of its IMU. Pinned by `LioIngest.ScanWaitingForImuIsDroppedAfterTheBoundedWait` (Task 7).
 2. **A PX4 double reset during hover** (xy +2 and heading +1 in one sample). `T` moves by exactly the frame change G, the vehicle point stays continuous, and no later pair is rejected. Pinned by `Px4Bridge.DoubleResetDuringHoverKeepsTheVehiclePointContinuous` (Task 9).
-3. **LIO LOST while PX4 keeps flying.** No EV is sent after the first non-TRACKING health sample, and the alignment goes VALID→FROZEN, not STALE→INVALID. Pinned by `Px4Bridge.LioLostStopsEvAndFreezesAlignment` (Task 9).
+3. **LIO LOST while PX4 keeps flying.** No EV is sent for odometry stamped at or before a non-TRACKING health of the same epoch (O22(a)); after a LOST health no further EV follows because LIO publishes odometry only in TRACKING and has no LOST→TRACKING edge (LIO-3). The alignment goes VALID→FROZEN, not STALE→INVALID. Pinned by `Px4Bridge.LioLostStopsEvAndFreezesAlignment` (Task 9).
 4. **ROS callbacks on several threads never break `LioRunner`'s single-ingest contract.** Overlapping calls are refused with an event and never raced, and one callback group keeps even a multi-threaded executor serialised. Pinned by `LioIngest.ConcurrentCallsAreRefusedNotRaced` (Task 7) and `LioNode.MultiThreadedExecutorKeepsCallbacksSerialised` (Task 8).
 5. **Non-finite or garbage ROS messages are refused at the boundary with a reason and change nothing.** This covers negative stamps, `nanosec` ≥ 1e9, NaN IMU data, malformed clouds, a wrong frame, PX4 µs overflow and a NaN heading. Pinned by `LioRosConversion.RejectsGarbageMessages` (Task 8), `Px4Bridge.GarbageInputsAreRejectedWithEvents` (Task 9) and `Px4BridgeRos.RejectsGarbagePx4Messages` (Task 10).
 
@@ -620,7 +620,7 @@ class Px4Bridge {
 
 - **Rules:** O22. The `/alignment` output rule is O21.
 - **Future stamps:** a stamp after the newest tick time + `kMaxStampAhead` is refused; before the first tick nothing is refused as ahead.
-- **Events** (component `kPx4Bridge`): rate-limited: `EvGated` (`kHealthNotTracking`), `EvRejected` (`EvReason`), `AlignmentPairRejected` (`kPairRejectedJump`/`kNoPx4Sample`/`kInputRejected`, with the residuals), `Px4SampleRejected` (`BridgeReason`); one per change: `AlignmentTransition` (states and `AlignmentReason`); one per reset: `Px4ResetApplied` (the counters and deltas).
+- **Events** (component `kPx4Bridge`): rate-limited: `EvGated` (`kHealthNotTracking`), `EvRejected` (`EvReason`), `AlignmentPairRejected` (`kPairRejectedJump`/`kNoPx4Sample`/`kInputRejected`, with the residuals), `Px4SampleRejected` (`BridgeReason`), `LioInputRejected` (`kStampInFuture` or an out-of-order health); the rate limit keys on (input stream, reason): the first rejection of an episode is reported, later ones are counted, and a summary with the count is emitted when that stream's next input is accepted (so a second fault episode is never silent); one per change: `AlignmentTransition` (states and `AlignmentReason`); one per reset: `Px4ResetApplied` (the counters and deltas).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -667,6 +667,7 @@ Spec §4.1, §6.4, §6.5; O19, O21, O22.
 
 **Files:**
 - Under `src/px4/uavnav_px4_bridge/`: create `include/uavnav/px4bridge/ros_conversion.hpp`, `src/ros_conversion.cpp`, `src/px4_bridge_node.cpp`, `test/test_ros_conversion.cpp`, `test/test_px4_bridge_node.cpp`, `test/test_core_target_has_no_ros.cpp`; modify `package.xml` (`rclcpp`, `px4_msgs`, `uavnav_interfaces`, `uavnav_ros`) and `CMakeLists.txt` (target `uavnav_px4_bridge_ros`, executable `px4_bridge_node`; the core target unchanged).
+- Node rules from the T9 review: call `on_tick` once before creating the subscriptions (a future-stamped message before the first tick could hold the alignment in INIT); every bridge call comes from one mutually exclusive callback group (the core class has no overlap guard). Shutdown calls `Px4Bridge::flush(now)` before the recorder is destroyed so open rejection summaries are not lost. Deferred to O25 (S3/S4, when restart exists): odometry of an older epoch arriving after a newer-epoch health is not gated, so PX4's `reset_counter` could step backwards.
 - Modify `src/core/uavnav_interfaces/msg/Alignment.msg`, comments only: `residual_*` is measured at the vehicle; `raw − filtered` includes the lever arm; `raw_*` is NaN when there is no pair.
 
 **Interfaces:**
