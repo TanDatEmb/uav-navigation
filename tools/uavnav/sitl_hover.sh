@@ -1,25 +1,32 @@
 #!/usr/bin/env bash
-# SITL harness (S1b Task 3; Task 11 adds the hover run). SYSTEM_DESIGN §0, §6.2 (c), §7.2; D29; D33 (O19, O20,
-# O23, O24).
+# SITL harness (S1b Task 3 probe, Task 11 hover). SYSTEM_DESIGN §0, §6.2 (c), §7.2; D29; D33 (O19, O20, O23, O24).
 #
 #   tools/uavnav/sitl_hover.sh --probe --profile gps|no_gps [--hover-mode posctl|hold] [--dry-run]
-#   (make sitl-probe PROFILE=gps [HOVER_MODE=hold] [DRY_RUN=1])
+#   tools/uavnav/sitl_hover.sh --hover --profile gps|no_gps [--spawn-yaw-rad RAD] [--pattern hover]
+#                              [--hover-mode posctl|hold] [--dry-run]
+#   (make sitl-probe PROFILE=gps [HOVER_MODE=hold] [DRY_RUN=1];
+#    make sitl-hover PROFILE=gps [SPAWN_YAW_RAD=1.2] [PATTERN=hover] [HOVER_MODE=hold] [DRY_RUN=1])
 #
-# --probe starts, each in its own session and process group (setsid), with GZ_IP=127.0.0.1:
-#   MicroXRCEAgent udp4 -p 8888; tools/simulation/run_px4_mid360.sh (GZ_GUI=0; Gazebo + PX4 SITL);
-#   ros_gz_bridge parameter_bridge with uav_simulation's px4_mid360_control_bridge.yaml; uav_simulation
-#   gz_lidar_bridge; then tools/uavnav/sitl_probe.py. The run is bounded at PROBE_TIMEOUT_S (wall); every
-#   group it started is torn down on EXIT, INT and TERM (SIGINT, then SIGTERM, then SIGKILL, by process
-#   group and by session), and the teardown verifies with pgrep that none of its processes remain. It
-#   never signals a process it did not start. Then tools/uavnav/sitl_checks.py writes summary.json.
+# Both start, each in its own session and process group (setsid), with GZ_IP=127.0.0.1 and ROS_LOG_DIR in the
+# run directory: MicroXRCEAgent udp4 -p 8888; tools/simulation/run_px4_mid360.sh (GZ_GUI=0; Gazebo + PX4 SITL;
+# the spawn yaw, if any).
+#   --probe then starts ros_gz_bridge parameter_bridge with uav_simulation's px4_mid360_control_bridge.yaml,
+#     uav_simulation gz_lidar_bridge and tools/uavnav/sitl_probe.py; bounded at 240 s.
+#   --hover then starts `ros2 launch uavnav_bringup s1_estimation.launch.py` (the same two gz bridges, lio and
+#     px4_bridge, use_sim_time; the event logs in the run directory) and tools/uavnav/sitl_hover.py; bounded at
+#     300 s. PATTERN altitude_sweep is added by S1b Task 13 and refused here.
+# The run is bounded (wall, from the first process start); every group it started is torn down on EXIT, INT
+# and TERM (SIGINT, then SIGTERM, then SIGKILL, by process group and by session, in reverse start order), and
+# the teardown verifies with pgrep that none of its processes remain. It never signals a process it did not
+# start. Then tools/uavnav/sitl_checks.py writes summary.json.
 #
-# Artifacts: log/sitl/<UTC stamp>-<profile>-probe/ only (process logs, PX4 working directory, records,
-# probe_meta.json, summary.json, harness.log).
+# Artifacts: log/sitl/<UTC stamp>-<profile>-probe/ or log/sitl/<UTC stamp>-<profile>-<pattern>[-yaw<RAD>]/ only
+# (process logs, ROS logs, PX4 working directory, records, event logs, *_meta.json, summary.json, harness.log).
 # Before anything starts: tools/uavnav/sitl_guard.py (colcon build/test or another SITL process, matched on
 # argv, own ancestors excluded), UDP 8888 free, no Gazebo world clock on GZ_IP, no SITL topic on the ROS graph.
-# Exit: 0 PASS (seven checks and every probe phase); 1 FAIL (a check, a probe phase, a process or the
-# teardown); 2 refused (usage, a colcon build or test is running, another SITL is running, a prerequisite
-# is missing); 124 hard timeout; 130 interrupted.
+# Exit: 0 PASS (every check and every driver phase); 1 FAIL (a check, a phase, a process or the teardown);
+# 2 refused (usage, a colcon build or test is running, another SITL is running, a prerequisite is missing);
+# 124 hard timeout; 130 interrupted.
 # --dry-run runs every precheck (read-only) and prints the commands it would run; it starts nothing.
 set -euo pipefail
 
@@ -27,31 +34,47 @@ WS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${WS_DIR}"
 PYTHON="${PYTHON:-/usr/bin/python3}"
 PROBE_TIMEOUT_S=240        # hard bound of the probe run, from the first process start (wall seconds)
-PROBE_MARGIN_S=10          # the probe's own budget ends this long before the hard bound
+HOVER_TIMEOUT_S=300        # hard bound of the hover run (plan Task 11)
+PROBE_MARGIN_S=10          # the driver's own budget ends this long before the hard bound
 GRACE_INT_S=10             # teardown: wait after SIGINT, then SIGTERM
 GRACE_TERM_S=5             # teardown: wait after SIGTERM, then SIGKILL
 XRCE_PORT=8888
 
 usage() {
   echo "usage: $0 --probe --profile gps|no_gps [--hover-mode posctl|hold] [--dry-run]" >&2
+  echo "       $0 --hover --profile gps|no_gps [--spawn-yaw-rad RAD] [--pattern hover] [--hover-mode posctl|hold] [--dry-run]" >&2
   exit 2
 }
 
-MODE="" PROFILE="" HOVER_MODE="posctl" DRY_RUN=0
+MODE="" PROFILE="" HOVER_MODE="posctl" DRY_RUN=0 PATTERN="hover" SPAWN_YAW_RAD="${UAVNAV_SPAWN_YAW_RAD:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --probe) MODE=probe; shift ;;
+    --probe) [[ -z "${MODE}" ]] || usage; MODE=probe; shift ;;
+    --hover) [[ -z "${MODE}" ]] || usage; MODE=hover; shift ;;
     --profile) [[ $# -ge 2 ]] || usage; PROFILE="$2"; shift 2 ;;
     --hover-mode) [[ $# -ge 2 ]] || usage; HOVER_MODE="$2"; shift 2 ;;
+    --spawn-yaw-rad) [[ $# -ge 2 ]] || usage; SPAWN_YAW_RAD="$2"; shift 2 ;;
+    --pattern) [[ $# -ge 2 ]] || usage; PATTERN="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage ;;
     *) echo "sitl_hover: unknown argument: $1" >&2; usage ;;
   esac
 done
-[[ "${MODE}" == probe ]] || { echo "sitl_hover: --probe is required (Task 11 adds the hover run)" >&2; usage; }
+[[ "${MODE}" == probe || "${MODE}" == hover ]] || { echo "sitl_hover: --probe or --hover is required" >&2; usage; }
 [[ "${PROFILE}" == gps || "${PROFILE}" == no_gps ]] || { echo "sitl_hover: --profile must be gps or no_gps" >&2; usage; }
 [[ "${HOVER_MODE}" == posctl || "${HOVER_MODE}" == hold ]] || { echo "sitl_hover: --hover-mode must be posctl or hold" >&2; usage; }
+case "${PATTERN}" in
+  hover) ;;
+  altitude_sweep) echo "sitl_hover: --pattern altitude_sweep is added by S1b Task 13" >&2; exit 2 ;;
+  *) echo "sitl_hover: --pattern must be hover" >&2; usage ;;
+esac
+if [[ -n "${SPAWN_YAW_RAD}" ]] && ! "${PYTHON}" -c 'import math, sys; v = float(sys.argv[1]); sys.exit(0 if math.isfinite(v) and abs(v) <= 2 * math.pi else 1)' "${SPAWN_YAW_RAD}" 2>/dev/null; then
+  echo "sitl_hover: --spawn-yaw-rad must be a finite number of radians in [-2 pi, 2 pi]: ${SPAWN_YAW_RAD}" >&2; usage
+fi
 PROFILE_FILE="${WS_DIR}/config/px4/profiles/${PROFILE}.yaml"
+LIO_CONFIG="${WS_DIR}/config/lio/sim.yaml"
+LIO_NODE_CONFIG="${WS_DIR}/config/lio/node_sim.yaml"
+BRIDGE_CONFIG="${WS_DIR}/config/px4_bridge/sim.yaml"
 
 refuse() { echo "sitl_hover: REFUSED: $*" >&2; exit 2; }
 
@@ -97,11 +120,26 @@ BRIDGE_PREFIX="$(ros2 pkg prefix ros_gz_bridge 2>/dev/null)" || refuse "ros_gz_b
 [[ -x "${BRIDGE_PREFIX}/lib/ros_gz_bridge/parameter_bridge" ]] || refuse "ros_gz_bridge parameter_bridge is missing"
 "${PYTHON}" -c "import rclpy, numpy, px4_msgs.msg, rosgraph_msgs.msg, sensor_msgs.msg" 2>/dev/null \
   || refuse "${PYTHON} cannot import rclpy, numpy and px4_msgs (make build PKGS=px4_msgs)"
-# Nothing else may publish the topics the probe reads on this ROS_DOMAIN_ID (a bag, another sim, ...).
+if [[ "${MODE}" == hover ]]; then
+  # The estimation stack: make sitl-build.
+  for pkg in uavnav_bringup uavnav_lio uavnav_px4_bridge; do
+    prefix="$(ros2 pkg prefix "${pkg}" 2>/dev/null)" || refuse "${pkg} is not installed: make sitl-build"
+    [[ "${prefix}" == "${WS_DIR}/install/"* ]] || refuse "${pkg} resolves outside this workspace: ${prefix}"
+  done
+  [[ -f "$(ros2 pkg prefix --share uavnav_bringup)/launch/s1_estimation.launch.py" ]] \
+    || refuse "uavnav_bringup has no s1_estimation.launch.py: make sitl-build"
+  [[ -x "$(ros2 pkg prefix uavnav_lio)/lib/uavnav_lio/lio_node" ]] || refuse "lio_node is not built: make sitl-build"
+  [[ -x "$(ros2 pkg prefix uavnav_px4_bridge)/lib/uavnav_px4_bridge/px4_bridge_node" ]] \
+    || refuse "px4_bridge_node is not built: make sitl-build"
+  for f in "${LIO_CONFIG}" "${LIO_NODE_CONFIG}" "${BRIDGE_CONFIG}"; do [[ -f "${f}" ]] || refuse "missing ${f}"; done
+  "${PYTHON}" -c "import uavnav_interfaces.msg, nav_msgs.msg" 2>/dev/null \
+    || refuse "${PYTHON} cannot import uavnav_interfaces and nav_msgs (make sitl-build)"
+fi
+# Nothing else may publish the topics the run reads on this ROS_DOMAIN_ID (a bag, another sim, ...).
 if ! graph="$(timeout 20 ros2 topic list --no-daemon --spin-time 2 2>/dev/null)"; then
   refuse "ros2 topic list failed (ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0})"
 fi
-if busy="$(grep -E '^/(clock|lidar/|fmu/|sim/)' <<<"${graph}")"; then
+if busy="$(grep -E '^/(clock|lidar/|fmu/|sim/|lio/|alignment|events)' <<<"${graph}")"; then
   refuse "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0} already has SITL topics (stop their publisher first):"$'\n'"${busy}"
 fi
 export GZ_IP=127.0.0.1
@@ -114,17 +152,23 @@ else
   echo "sitl_hover: warning: gz topic -l did not answer within 3 s; relying on the process, port and ROS checks" >&2
 fi
 # PX4 binary, rootfs, Gazebo, world and model, the profile (O23 allow-list) and the spawn yaw.
+SPAWN_ENV=()
+if [[ -n "${SPAWN_YAW_RAD}" ]]; then SPAWN_ENV=(UAVNAV_SPAWN_YAW_RAD="${SPAWN_YAW_RAD}"); fi
 echo "sitl_hover: run_px4_mid360.sh --check-only"
-UAVNAV_PX4_PROFILE="${PROFILE_FILE}" PYTHON="${PYTHON}" tools/simulation/run_px4_mid360.sh --check-only \
-  | sed 's/^/  /' || refuse "run_px4_mid360.sh --check-only failed (see above)"
+env UAVNAV_PX4_PROFILE="${PROFILE_FILE}" PYTHON="${PYTHON}" "${SPAWN_ENV[@]}" \
+  tools/simulation/run_px4_mid360.sh --check-only | sed 's/^/  /' || refuse "run_px4_mid360.sh --check-only failed (see above)"
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-RUN_DIR="${WS_DIR}/log/sitl/${STAMP}-${PROFILE}-probe"
-SPAWN_ENV=()
-if [[ -n "${UAVNAV_SPAWN_YAW_RAD:-}" ]]; then SPAWN_ENV=(UAVNAV_SPAWN_YAW_RAD="${UAVNAV_SPAWN_YAW_RAD}"); fi
+if [[ "${MODE}" == probe ]]; then
+  RUN_DIR="${WS_DIR}/log/sitl/${STAMP}-${PROFILE}-probe"
+  TIMEOUT_S="${PROBE_TIMEOUT_S}"
+else
+  RUN_DIR="${WS_DIR}/log/sitl/${STAMP}-${PROFILE}-${PATTERN}${SPAWN_YAW_RAD:+-yaw${SPAWN_YAW_RAD}}"
+  TIMEOUT_S="${HOVER_TIMEOUT_S}"
+fi
+export ROS_LOG_DIR="${RUN_DIR}/ros_log"  # the ROS and launch logs stay in the run directory
 
-# name and command of each process group, in start order (the probe is started last, with its budget).
-GROUP_NAMES=(xrce_agent px4_gz control_bridge lidar_bridge)
+# name and command of each process group, in start order (the driver is started last, with its budget).
 # shellcheck disable=SC2034  # read through the CMD_<name> nameref
 {
   CMD_xrce_agent=(MicroXRCEAgent udp4 -p "${XRCE_PORT}")
@@ -132,25 +176,46 @@ GROUP_NAMES=(xrce_agent px4_gz control_bridge lidar_bridge)
               "${SPAWN_ENV[@]}" tools/simulation/run_px4_mid360.sh)
   CMD_control_bridge=(ros2 run ros_gz_bridge parameter_bridge --ros-args -p "config_file:=${CONTROL_BRIDGE_YAML}")
   CMD_lidar_bridge=(ros2 run uav_simulation gz_lidar_bridge)
+  CMD_estimation=(ros2 launch uavnav_bringup s1_estimation.launch.py "lio_config:=${LIO_CONFIG}"
+                  "lio_node_config:=${LIO_NODE_CONFIG}" "bridge_config:=${BRIDGE_CONFIG}" "events_dir:=${RUN_DIR}")
 }
-probe_cmd() {  # $1 = budget in seconds
-  PROBE_CMD=("${PYTHON}" tools/uavnav/sitl_probe.py --run-dir "${RUN_DIR}" --profile "${PROFILE}"
-             --hover-mode "${HOVER_MODE}" --budget-s "$1")
+if [[ "${MODE}" == probe ]]; then
+  GROUP_NAMES=(xrce_agent px4_gz control_bridge lidar_bridge)
+  DRIVER_NAME=probe
+else
+  GROUP_NAMES=(xrce_agent px4_gz estimation)
+  DRIVER_NAME=hover
+fi
+driver_cmd() {  # $1 = budget in seconds
+  if [[ "${MODE}" == probe ]]; then
+    DRIVER_CMD=("${PYTHON}" tools/uavnav/sitl_probe.py --run-dir "${RUN_DIR}" --profile "${PROFILE}"
+                --hover-mode "${HOVER_MODE}" --budget-s "$1")
+  else
+    DRIVER_CMD=("${PYTHON}" tools/uavnav/sitl_hover.py --run-dir "${RUN_DIR}" --profile "${PROFILE}"
+                --spawn-yaw-rad "${SPAWN_YAW_RAD:-0}" --pattern "${PATTERN}" --hover-mode "${HOVER_MODE}"
+                --budget-s "$1")
+  fi
 }
+if [[ "${MODE}" == probe ]]; then
+  VERDICT_CMD=("${PYTHON}" tools/uavnav/sitl_checks.py --probe "${RUN_DIR}")
+else
+  VERDICT_CMD=("${PYTHON}" tools/uavnav/sitl_checks.py --hover "${RUN_DIR}" --profile "${PROFILE}"
+               --spawn-yaw-rad "${SPAWN_YAW_RAD:-0}")
+fi
 
 if [[ "${DRY_RUN}" == 1 ]]; then
   echo "sitl_hover: DRY RUN (prechecks passed; nothing is started, no directory is created)"
   echo "  run dir     : ${RUN_DIR}/"
-  echo "  environment : GZ_IP=${GZ_IP} ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0} (ROS 2 Jazzy + install/setup.bash)"
+  echo "  environment : GZ_IP=${GZ_IP} ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0} ROS_LOG_DIR=${ROS_LOG_DIR} (ROS 2 Jazzy + install/setup.bash)"
   for name in "${GROUP_NAMES[@]}"; do
     declare -n cmd="CMD_${name}"
     printf '  setsid env --default-signal=INT %-14s: %s > %s/%s.log\n' "${name}" "${cmd[*]}" "${RUN_DIR}" "${name}"
     unset -n cmd
   done
-  probe_cmd "<${PROBE_TIMEOUT_S} - elapsed - ${PROBE_MARGIN_S}>"
-  printf '  setsid env --default-signal=INT %-14s: %s > %s/probe.log\n' probe "${PROBE_CMD[*]}" "${RUN_DIR}"
-  echo "  bound       : ${PROBE_TIMEOUT_S} s from the first start; teardown SIGINT -> ${GRACE_INT_S} s -> SIGTERM -> ${GRACE_TERM_S} s -> SIGKILL"
-  echo "  verdict     : ${PYTHON} tools/uavnav/sitl_checks.py --probe ${RUN_DIR} -> ${RUN_DIR}/summary.json"
+  driver_cmd "<${TIMEOUT_S} - elapsed - ${PROBE_MARGIN_S}>"
+  printf '  setsid env --default-signal=INT %-14s: %s > %s/%s.log\n' "${DRIVER_NAME}" "${DRIVER_CMD[*]}" "${RUN_DIR}" "${DRIVER_NAME}"
+  echo "  bound       : ${TIMEOUT_S} s from the first start; teardown SIGINT -> ${GRACE_INT_S} s -> SIGTERM -> ${GRACE_TERM_S} s -> SIGKILL"
+  echo "  verdict     : ${VERDICT_CMD[*]} -> ${RUN_DIR}/summary.json"
   exit 0
 fi
 
@@ -260,36 +325,36 @@ trap on_exit EXIT
 trap 'log "interrupted (SIGINT)"; exit 130' INT
 trap 'log "terminated (SIGTERM)"; exit 130' TERM
 
-log "run dir ${RUN_DIR}; profile ${PROFILE_FILE}; hover mode ${HOVER_MODE}; bound ${PROBE_TIMEOUT_S} s"
+log "${MODE} run dir ${RUN_DIR}; profile ${PROFILE_FILE}; spawn yaw ${SPAWN_YAW_RAD:-0} rad; hover mode ${HOVER_MODE}; bound ${TIMEOUT_S} s"
 T0=${SECONDS}
-DEADLINE=$((T0 + PROBE_TIMEOUT_S))
+DEADLINE=$((T0 + TIMEOUT_S))
 for name in "${GROUP_NAMES[@]}"; do
   declare -n cmd="CMD_${name}"
   start_group "${name}" "${cmd[@]}"
   unset -n cmd
 done
 budget=$((DEADLINE - SECONDS - PROBE_MARGIN_S))
-(( budget > 0 )) || { log "no time left for the probe"; exit 124; }
-probe_cmd "${budget}"
-start_group probe "${PROBE_CMD[@]}"
+(( budget > 0 )) || { log "no time left for the ${DRIVER_NAME} driver"; exit 124; }
+driver_cmd "${budget}"
+start_group "${DRIVER_NAME}" "${DRIVER_CMD[@]}"
 PROBE_PID="${STARTED_PIDS[-1]}"
 
 status=0 probe_rc=""
 while :; do
   if ! kill -0 "${PROBE_PID}" 2>/dev/null; then
     probe_rc=0; wait "${PROBE_PID}" || probe_rc=$?
-    log "probe exited with ${probe_rc} after $((SECONDS - T0)) s"
+    log "${DRIVER_NAME} exited with ${probe_rc} after $((SECONDS - T0)) s"
     break
   fi
   for (( i=0; i<${#STARTED_PIDS[@]}-1; i++ )); do
     if ! kill -0 "${STARTED_PIDS[i]}" 2>/dev/null; then
-      log "${STARTED_NAMES[i]} exited before the probe finished (see ${RUN_DIR}/${STARTED_NAMES[i]}.log)"
+      log "${STARTED_NAMES[i]} exited before the ${DRIVER_NAME} driver finished (see ${RUN_DIR}/${STARTED_NAMES[i]}.log)"
       status=1
     fi
   done
   [[ "${status}" == 0 ]] || break
   if (( SECONDS >= DEADLINE )); then
-    log "hard timeout: ${PROBE_TIMEOUT_S} s reached"
+    log "hard timeout: ${TIMEOUT_S} s reached"
     status=124
     break
   fi
@@ -300,12 +365,12 @@ trap 'log "interrupted (SIGINT)"; exit 130' INT
 trap 'log "terminated (SIGTERM)"; exit 130' TERM
 log "evaluating ${RUN_DIR}"
 verdict=0
-"${PYTHON}" tools/uavnav/sitl_checks.py --probe "${RUN_DIR}" | tee -a "${RUN_DIR}/harness.log" || verdict=$?
+"${VERDICT_CMD[@]}" | tee -a "${RUN_DIR}/harness.log" || verdict=$?
 if [[ "${TEARDOWN_OK}" == 0 ]]; then exit 1; fi
 if [[ "${status}" != 0 ]]; then exit "${status}"; fi
 if [[ "${verdict}" != 0 ]]; then exit "${verdict}"; fi
 if [[ "${probe_rc}" != 0 ]]; then
-  log "the probe exited with ${probe_rc} (a failed phase): FAIL although the checks passed"
+  log "the ${DRIVER_NAME} driver exited with ${probe_rc} (a failed phase): FAIL although the checks passed"
   exit 1
 fi
 exit 0

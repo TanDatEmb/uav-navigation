@@ -2,13 +2,13 @@ SHELL := /bin/bash
 # ROS Jazzy's rclpy/ament modules are installed for the system interpreter.
 PYTHON ?= /usr/bin/python3
 # Packages built and tested by `make build` / `make test`; override with PKGS="...".
-PKGS ?= uavnav_core uavnav_interfaces fast_lio_core uavnav_lio_core uavnav_px4_bridge
+PKGS ?= uavnav_core uavnav_interfaces uavnav_ros fast_lio_core uavnav_lio_core uavnav_lio uavnav_px4_bridge
 # Extra `colcon build` arguments, e.g. COLCON_EXTRA="--cmake-clean-cache" after a package moves.
 COLCON_EXTRA ?=
 
 ROS_ENV = source /opt/ros/jazzy/setup.bash;
 
-.PHONY: help setup build test sanitize gate clean sitl-probe
+.PHONY: help setup build test sanitize gate clean sitl-probe sitl-build sitl-hover
 
 help:
 	@echo "uav-navigation (rebuild/v2) commands"
@@ -21,6 +21,10 @@ help:
 	@echo "  make sitl-probe PROFILE=gps|no_gps [HOVER_MODE=posctl|hold] [DRY_RUN=1]"
 	@echo "                SITL probe of the S1b assumptions (tools/uavnav/sitl_hover.sh --probe), <= 240 s;"
 	@echo "                headless, refuses while colcon runs, artifacts in log/sitl/; not part of test or gate"
+	@echo "  make sitl-build  build everything the SITL hover starts (SITL_PKGS='$(SITL_PKGS)')"
+	@echo "  make sitl-hover PROFILE=gps|no_gps [SPAWN_YAW_RAD=<rad>] [PATTERN=hover] [HOVER_MODE=posctl|hold] [DRY_RUN=1]"
+	@echo "                S1 hover (tools/uavnav/sitl_hover.sh --hover): PX4 SITL + Gazebo + uavnav_bringup + the rclpy"
+	@echo "                driver, <= 300 s; verdict log/sitl/<run>/summary.json; not part of test or gate"
 	@echo "  make clean   print what would be removed (log/); deletes nothing"
 	@echo "Machine limit: builds use -j3 and 2 colcon workers (15 GB RAM)."
 
@@ -87,6 +91,20 @@ HOVER_MODE ?= posctl
 sitl-probe:
 	@test -n "$(PROFILE)" || { echo "usage: make sitl-probe PROFILE=gps|no_gps [HOVER_MODE=posctl|hold] [DRY_RUN=1]"; exit 2; }
 	@PYTHON="$(PYTHON)" tools/uavnav/sitl_hover.sh --probe --profile "$(PROFILE)" --hover-mode "$(HOVER_MODE)" $(if $(filter 1,$(DRY_RUN)),--dry-run)
+
+# SITL hover (S1b Task 11; SYSTEM_DESIGN §7.2; D33 O19, O24): the probe's harness plus
+# `ros2 launch uavnav_bringup s1_estimation.launch.py` (gz bridges, lio, px4_bridge) and tools/uavnav/sitl_hover.py,
+# bounded at 300 s and always torn down; verdict log/sitl/<UTC stamp>-<profile>-<pattern>[-yaw<rad>]/summary.json.
+# PATTERN altitude_sweep is added by S1b Task 13. Needs `make sitl-build`. Never part of test/gate.
+SITL_PKGS := uavnav_bringup uav_simulation uav_description uavnav_lio uavnav_px4_bridge
+SPAWN_YAW_RAD ?=
+PATTERN ?= hover
+sitl-build:
+	@$(MAKE) --no-print-directory build PKGS="$(SITL_PKGS)"
+
+sitl-hover:
+	@test -n "$(PROFILE)" || { echo "usage: make sitl-hover PROFILE=gps|no_gps [SPAWN_YAW_RAD=<rad>] [PATTERN=hover] [HOVER_MODE=posctl|hold] [DRY_RUN=1]"; exit 2; }
+	@PYTHON="$(PYTHON)" tools/uavnav/sitl_hover.sh --hover --profile "$(PROFILE)" --pattern "$(PATTERN)" --hover-mode "$(HOVER_MODE)" $(if $(SPAWN_YAW_RAD),--spawn-yaw-rad "$(SPAWN_YAW_RAD)") $(if $(filter 1,$(DRY_RUN)),--dry-run)
 
 # build/ and install/ are a shared incremental build (CLAUDE.local.md); never removed here.
 clean:

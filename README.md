@@ -40,10 +40,12 @@ make sanitize # TSan build and tests of uavnav_core and uavnav_lio_core (setarch
 make gate    # tools/uavnav/gate.sh all: static, python, ros; ends GATE_RESULT=PASS|FAIL
 make clean   # prints what to remove (log/); deletes nothing
 make sitl-probe PROFILE=gps  # SITL probe of the S1b assumptions, headless, <= 240 s; not part of test or gate
+make sitl-build              # builds everything the SITL hover starts (uavnav_bringup, the sim, lio, px4_bridge)
+make sitl-hover PROFILE=gps  # the S1 hover: PX4 SITL + LIO + PX4 bridge, headless, <= 300 s; not part of test or gate
 ```
 
-`PKGS` defaults to `uavnav_core uavnav_interfaces fast_lio_core uavnav_lio_core
-uavnav_px4_bridge`; override it
+`PKGS` defaults to `uavnav_core uavnav_interfaces uavnav_ros fast_lio_core
+uavnav_lio_core uavnav_lio uavnav_px4_bridge`; override it
 with `make build PKGS="..."`. `COLCON_EXTRA` passes extra `colcon build`
 arguments, e.g. `COLCON_EXTRA="--cmake-clean-cache"` after a package moves.
 `tools/uavnav/gate.sh static|python|ros|all` runs a
@@ -63,6 +65,24 @@ time vs `/clock`, PX4 time vs `/clock`) and every probe phase ok. It needs
 `make build PKGS="uav_simulation uav_description px4_msgs"` first. The PX4
 localization profiles are `config/px4/profiles/{gps,no_gps}.yaml`, validated by
 `tools/uavnav/px4_profile.py`. The simulation packages live in `src/sim/`.
+
+`make sitl-hover PROFILE=gps|no_gps` (optional `SPAWN_YAW_RAD=<rad>`,
+`HOVER_MODE=hold`, `DRY_RUN=1`; `PATTERN=altitude_sweep` comes with S1b Task 13)
+runs `tools/uavnav/sitl_hover.sh --hover`: the same PX4 SITL, Gazebo and
+MicroXRCEAgent, plus `ros2 launch uavnav_bringup s1_estimation.launch.py` (the gz
+bridges, `lio` and `px4_bridge`, all on `/clock` time) and the rclpy driver
+`tools/uavnav/sitl_hover.py`. The driver waits for LIO TRACKING, `/alignment`
+VALID, EKF2 fusing EV and `xy_valid`, then arms in Position mode, climbs to
+2.5 m, hovers for 60 s of `/clock` time and lands. The run is bounded at 300 s,
+always torn down, and refused under the same conditions as the probe. Run
+`make sitl-build` first. The verdict is
+`log/sitl/<UTC stamp>-<profile>-hover[-yaw<rad>]/summary.json`
+(`sitl_checks.evaluate_hover`): EKF2 EV fusion, LIO TRACKING and its
+DEGRADED→TRACKING rate, alignment state, rate and jump rejections, drift
+against Gazebo ground truth, the `/lio/state` rate, EV age, PX4 time, the event
+counts of both nodes, and the F34 values (reported). The node event logs are
+`events_lio.jsonl` and `events_px4_bridge.jsonl` in the run directory
+(`python3 -m tools.uavnav.events <file> --timeline`).
 
 ## Documentation
 

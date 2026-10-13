@@ -2,11 +2,19 @@
 
 evaluate_probe(run_dir) judges the Task 3 probe of the SITL assumptions (D33 O20/O24, D29) and
 writes run_dir/summary.json with seven checks: <mode>_accepted, cloud_layout, cloud_non_finite_ratio,
-imu_rate, scan_stamp_vs_imu, sensor_time_identity, px4_time_identity. Every check fails when its
-data is missing, empty or malformed (fail closed, SYSTEM_DESIGN §0): a check never passes on absent
-evidence. The result is PASS only when every check passes and every probe phase was ok (phases_ok).
+imu_rate, scan_stamp_vs_imu, sensor_time_identity, px4_time_identity.
 
-Records (written by tools/uavnav/sitl_probe.py; one JSON object per line):
+evaluate_hover(run_dir, profile, spawn_yaw_rad) judges the S1 hover (Task 11; SYSTEM_DESIGN §7.2, D20, D29,
+D33 O15/O21/O24) over the hover window (60 s of /clock time) and the whole run, and writes summary.json with
+fourteen checks: <mode>_accepted, ekf2_ev_pos, ekf2_ev_yaw, lio_tracking, lio_flap_rate, alignment_valid,
+alignment_rate, alignment_jump_rejections, drift, lio_state_rate, ev_age, px4_time_identity, events and
+f34_values (reported only: F34 is judged in Task 12).
+
+Every check fails when its data is missing, empty or malformed (fail closed, SYSTEM_DESIGN §0): a check
+never passes on absent evidence. The result is PASS only when every check passes and every phase of the
+driver was ok (phases_ok).
+
+Probe records (written by tools/uavnav/sitl_probe.py; one JSON object per line):
 
     probe_meta.json               profile, hover_mode, target_height_m, ground_z_m,
                                   hover_window {start_ns, end_ns} (ROS /clock ns) or null, phases
@@ -16,20 +24,45 @@ Records (written by tools/uavnav/sitl_probe.py; one JSON object per line):
     lidar_imu.jsonl               arrival_ns, stamp_ns
     clock.jsonl                   clock_ns
     vehicle_local_position.jsonl  arrival_ns, timestamp_us, timestamp_sample_us, xy_valid, z_valid,
-                                  x, y, z, vz
+                                  x, y, z, vz (the hover adds heading)
     vehicle_status.jsonl          arrival_ns, timestamp_us, nav_state, arming_state
 
-arrival_ns is the newest /clock value the probe had received when the message arrived.
+Hover records (written by tools/uavnav/sitl_hover.py, plus the two event logs of the nodes):
+
+    hover_meta.json               as probe_meta.json, plus spawn_yaw_rad, pattern, interrupted
+    lio_state.jsonl               arrival_ns, stamp_ns, epoch, lio_state, x, y, z, qw, qx, qy, qz,
+                                  vx, vy, vz (velocity in base_link, O21)
+    lio_health.jsonl              arrival_ns, stamp_ns, state, epoch, reason_name, correction_age_s,
+                                  output_error_{attitude_rad, velocity_mps, position_m}
+    lio_odometry.jsonl            arrival_ns, stamp_ns, epoch, reset_counter, quality, x, y, z
+    alignment.jsonl               arrival_ns, stamp_ns, state, x_m, y_m, z_m, yaw_rad, age_s,
+                                  residual_position_m, residual_yaw_rad
+    vehicle_visual_odometry.jsonl arrival_ns, timestamp_us, timestamp_sample_us (the EV the bridge sent)
+    estimator_status_flags.jsonl  arrival_ns, timestamp_us, cs_ev_pos, cs_ev_yaw, cs_ev_hgt, cs_ev_vel,
+                                  cs_gnss_pos
+    ground_truth.jsonl            arrival_ns, stamp_ns, x, y, z (Gazebo world, ENU)
+    events_lio.jsonl, events_px4_bridge.jsonl   the JSONL event logs (tools/uavnav/events.py)
+
+arrival_ns is the newest /clock value the recorder had received when the message arrived; event times
+are the records' t_ros_ns (ROS time = /clock with use_sim_time, D29).
 
 CLI:
 
-    python3 tools/uavnav/sitl_checks.py --probe RUN_DIR   -> prints summary.json; exit 0 PASS, 1 FAIL
+    python3 tools/uavnav/sitl_checks.py --probe RUN_DIR
+    python3 tools/uavnav/sitl_checks.py --hover RUN_DIR --profile gps|no_gps --spawn-yaw-rad RAD
+        -> prints the checks, writes RUN_DIR/summary.json; exit 0 PASS, 1 FAIL, 2 usage
 """
 import argparse
+import bisect
 import json
 import math
 import pathlib
 import sys
+
+try:
+    from tools.uavnav import events as event_log
+except ImportError:  # run as a script: tools/uavnav is sys.path[0]
+    import events as event_log  # type: ignore[no-redef]
 
 # sensor_msgs/PointField and px4_msgs/VehicleStatus constants.
 FLOAT32 = 7
@@ -97,8 +130,9 @@ def percentile(values: list, q: float) -> float:
 class _Loader:
     """Reads each record file once; a failed read is remembered and re-raised for every check using it."""
 
-    def __init__(self, run_dir: pathlib.Path):
+    def __init__(self, run_dir: pathlib.Path, meta_name: str = "probe_meta.json"):
         self.run_dir = run_dir
+        self.meta_name = meta_name
         self._cache = {}
 
     def jsonl(self, name: str) -> list:
@@ -114,12 +148,12 @@ class _Loader:
 
     def meta(self) -> dict:
         if "meta" not in self._cache:
-            path = self.run_dir / "probe_meta.json"
+            path = self.run_dir / self.meta_name
             try:
                 data = json.loads(path.read_text(encoding="utf-8"), parse_constant=_reject_constant)
-                self._cache["meta"] = data if isinstance(data, dict) else MissingData("probe_meta.json: not an object")
+                self._cache["meta"] = data if isinstance(data, dict) else MissingData(f"{self.meta_name}: not an object")
             except (OSError, ValueError) as exc:
-                self._cache["meta"] = MissingData(f"probe_meta.json: {exc}")
+                self._cache["meta"] = MissingData(f"{self.meta_name}: {exc}")
         value = self._cache["meta"]
         if isinstance(value, MissingData):
             raise value
@@ -129,7 +163,7 @@ class _Loader:
 def _hover_mode(meta: dict) -> str:
     mode = meta.get("hover_mode", "posctl")
     if mode not in NAV_STATE:
-        raise MissingData(f"probe_meta.json: unknown hover_mode {mode!r}")
+        raise MissingData(f"run meta: unknown hover_mode {mode!r}")
     return mode
 
 
@@ -143,8 +177,8 @@ def _check_mode_accepted(data: _Loader) -> dict:
     end = _field(window, "end_ns", int, "hover_window")
     if end <= start:
         raise MissingData(f"empty hover window {start}..{end}")
-    target = _field(meta, "target_height_m", float, "probe_meta.json")
-    ground_z = _field(meta, "ground_z_m", float, "probe_meta.json")
+    target = _field(meta, "target_height_m", float, data.meta_name)
+    ground_z = _field(meta, "ground_z_m", float, data.meta_name)
     status = [r for r in data.jsonl("vehicle_status.jsonl")
               if start <= _field(r, "arrival_ns", int, "vehicle_status.jsonl") <= end]
     position = [r for r in data.jsonl("vehicle_local_position.jsonl")
@@ -339,20 +373,413 @@ def evaluate_probe(run_dir) -> dict:
         "sensor_time_identity": _run(_check_sensor_time_identity, data),
         "px4_time_identity": _run(_check_px4_time_identity, data),
     }
+    return _write_summary(run_dir, {"kind": "probe", "run_dir": str(run_dir), "profile": meta.get("profile"),
+                                    "hover_mode": mode}, meta, checks)
+
+
+# --- the S1 hover (Task 11) -------------------------------------------------------------------------------------
+
+LIO_TRACKING, ALIGNMENT_VALID = 1, 1             # LioHealth.TRACKING, Alignment.VALID
+EV_POS_MIN_FRACTION = 0.95                       # cs_ev_pos in >= 95 % of the window's samples
+EV_YAW_NO_GPS_MIN_FRACTION = 0.95                # no_gps: cs_ev_yaw in >= 95 % (D20); gps: never
+LIO_MAX_TRACKING_ENTRIES = 2                     # TRACKING entered at most twice in the run
+LIO_MAX_FLAPS_PER_60S = 1.0                      # DEGRADED -> TRACKING per 60 s of the window (owner 2026-10-13, O15)
+ALIGNMENT_MIN_RATE_HZ = 9.0                      # /alignment >= 9 Hz
+ALIGNMENT_MAX_JUMP_FRACTION = 0.01               # PAIR_REJECTED_JUMP <= 1 % of the pairs (LIO odometry)
+DRIFT_MAX_M = 0.3                                # PX4 horizontal drift vs ground truth over the window
+TRUTH_MATCH_MAX_NS = 50_000_000                  # a PX4 sample pairs with ground truth stamped within 50 ms
+STATE_RATE_HZ, STATE_RATE_TOL_HZ = 100.0, 5.0    # /lio/state 100 +- 5 Hz (O21)
+STATE_INTERARRIVAL_P99_MAX_MS = 20.0             # P7: the publisher is not starved
+EV_AGE_P99_MAX_MS = 150.0                        # ROS now - timestamp_sample < EKF2_DELAY_MAX (200 ms)
+MAX_SCAN_DROP_FRACTION = 0.01                    # LioScanDropped <= 1 % of the scans received
+IMU_NOMINAL_HZ = 200.0                           # the Gazebo IMU (probe: 200.01 Hz), the reference of the scan rate
+ZERO_TOLERANCE_EVENTS = ("LioQueueOverflow", "LioBackendFailed", "ImuRateTooHigh", "EventsDropped")
+
+
+def _wrap(angle: float) -> float:
+    return math.remainder(angle, 2.0 * math.pi)
+
+
+def _rotate(q, v):
+    """Rotate v by the unit quaternion q = (w, x, y, z)."""
+    w, x, y, z = q
+    tx, ty, tz = 2.0 * (y * v[2] - z * v[1]), 2.0 * (z * v[0] - x * v[2]), 2.0 * (x * v[1] - y * v[0])
+    return (v[0] + w * tx + (y * tz - z * ty), v[1] + w * ty + (z * tx - x * tz), v[2] + w * tz + (x * ty - y * tx))
+
+
+def _window(data: _Loader):
+    window = data.meta().get("hover_window")
+    if not isinstance(window, dict):
+        raise MissingData("no hover window: the driver never reached the hover phase")
+    start = _field(window, "start_ns", int, "hover_window")
+    end = _field(window, "end_ns", int, "hover_window")
+    if end <= start:
+        raise MissingData(f"empty hover window {start}..{end}")
+    return start, end
+
+
+def _windowed(data: _Loader, name: str, key: str = "arrival_ns") -> list:
+    """The records of name whose key (ROS ns) lies in the hover window; none is missing data."""
+    start, end = _window(data)
+    records = [r for r in data.jsonl(name) if start <= _field(r, key, int, name) <= end]
+    if not records:
+        raise MissingData(f"no {name} record in the hover window")
+    return records
+
+
+def _events(data: _Loader, name: str) -> list:
+    """A node's event log; a missing file, a torn line or a log without records is missing data."""
+    key = "events:" + name
+    if key not in data._cache:
+        path = data.run_dir / name
+        skipped = []
+        try:
+            records = event_log.load(path, skip_malformed=True, skipped=skipped)
+            if skipped:
+                data._cache[key] = MissingData(f"{name}: {len(skipped)} malformed line(s), first {skipped[0]}")
+            elif not records:
+                data._cache[key] = MissingData(f"no records in {name}")
+            else:
+                for r in records:
+                    _field(r, "t_ros_ns", int, name)
+                data._cache[key] = records
+        except OSError as exc:
+            data._cache[key] = MissingData(f"missing {name}: {exc.strerror}")
+        except MissingData as exc:
+            data._cache[key] = exc
+    value = data._cache[key]
+    if isinstance(value, MissingData):
+        raise value
+    return value
+
+
+def _named(records: list, event: str, reason=None) -> list:
+    return [r for r in records if r["event"] == event and (reason is None or r["reason"] == reason)]
+
+
+def _event_total(records: list) -> int:
+    """Occurrences behind rate-limited records. Every emitter carries a running count that only grows within
+    its slot until it restarts at 1: lio, per reason and epoch (the 1st, every kEventSummaryEvery-th and the
+    end-of-epoch record); px4_bridge, per episode (the first record has count 1, a summary record carries the
+    episode total); node-level count_total, never restarted. So the total is the sum, over the runs of growing
+    counts of each slot, of the last (largest) count. A record without a count is one occurrence."""
+    totals, open_max = 0, {}
+    for r in records:
+        values = r["values"]
+        count = values.get("count", values.get("count_total"))
+        if not isinstance(count, (int, float)) or isinstance(count, bool) or not math.isfinite(count):
+            totals += 1
+            continue
+        slot = (r["component"], r["event"], r["reason"], r.get("lio_epoch"), values.get("input"), values.get("stream"))
+        current = open_max.get(slot, 0)
+        if current and count <= current:  # the count restarted: a new episode
+            totals += current
+        open_max[slot] = int(count)
+    return totals + sum(open_max.values())
+
+
+def _summary_values(records: list, event: str, source: str) -> dict:
+    found = _named(records, event)
+    if not found:
+        raise MissingData(f"no {event} in {source} (the process did not shut down cleanly)")
+    return found[-1]["values"]
+
+
+def _in_window(data: _Loader, records: list) -> list:
+    start, end = _window(data)
+    return [r for r in records if start <= r["t_ros_ns"] <= end]
+
+
+def _fraction(records: list, key: str, source: str) -> float:
+    return sum(1 for r in records if _field(r, key, bool, source)) / len(records)
+
+
+def _check_ekf2_ev_pos(data: _Loader) -> dict:
+    flags = _windowed(data, "estimator_status_flags.jsonl")
+    fraction = _fraction(flags, "cs_ev_pos", "estimator_status_flags.jsonl")
+    return {"pass": fraction >= EV_POS_MIN_FRACTION,
+            "value": {"fraction": fraction, "samples": len(flags),
+                      "cs_ev_hgt_fraction": _fraction(flags, "cs_ev_hgt", "estimator_status_flags.jsonl")},
+            "detail": f"cs_ev_pos in >= {EV_POS_MIN_FRACTION:.0%} of the window's estimator_status_flags"}
+
+
+def _check_ekf2_ev_yaw(data: _Loader, profile: str) -> dict:
+    flags = _windowed(data, "estimator_status_flags.jsonl")
+    fraction = _fraction(flags, "cs_ev_yaw", "estimator_status_flags.jsonl")
+    passed = fraction == 0.0 if profile == "gps" else fraction >= EV_YAW_NO_GPS_MIN_FRACTION
+    return {"pass": passed, "value": {"profile": profile, "fraction": fraction, "samples": len(flags)},
+            "detail": "D20: cs_ev_yaw false throughout (gps) or true in >= "
+                      f"{EV_YAW_NO_GPS_MIN_FRACTION:.0%} of the window (no_gps)"}
+
+
+def _transitions(data: _Loader) -> list:
+    return _named(_events(data, "events_lio.jsonl"), "StateTransition")
+
+
+def _check_lio_tracking(data: _Loader) -> dict:
+    health = _windowed(data, "lio_health.jsonl")
+    states = sorted({_field(r, "state", int, "lio_health.jsonl") for r in health})
+    transitions = _transitions(data)
+    in_window = _in_window(data, transitions)
+    lost = sum(1 for r in transitions if r["state_after"] == "LOST")
+    lost_health = sum(1 for r in data.jsonl("lio_health.jsonl") if r.get("state") == 3)
+    entries = sum(1 for r in transitions if r["state_after"] == "TRACKING")
+    passed = (states == [LIO_TRACKING] and not in_window and lost == 0 and lost_health == 0
+              and entries <= LIO_MAX_TRACKING_ENTRIES)
+    return {"pass": passed,
+            "value": {"window_health_states": states, "window_health_samples": len(health),
+                      "window_transitions": [f"{r['state_before']}->{r['state_after']} {r['reason']}"
+                                             for r in in_window],
+                      "lost_entries": lost, "lost_health_samples": lost_health, "tracking_entries": entries},
+            "detail": "TRACKING for the whole window (health and transitions); no LOST in the run; at most "
+                      f"{LIO_MAX_TRACKING_ENTRIES} TRACKING entries in the run"}
+
+
+def _check_lio_flap_rate(data: _Loader) -> dict:
+    start, end = _window(data)
+    transitions = _transitions(data)
+    flaps = [r for r in transitions if r["state_before"] == "DEGRADED" and r["state_after"] == "TRACKING"]
+    in_window = len(_in_window(data, flaps))
+    per_60s = in_window * 60.0 / ((end - start) / 1e9)
+    too_old = _named(_events(data, "events_lio.jsonl"), "ScanResultTooOld")
+    ages = [_field(r["values"], "age_s", float, "ScanResultTooOld") for r in too_old]
+    applied = None
+    try:  # the age at application of the results that reached /lio/odometry (TRACKING only)
+        odometry_ages = [(_field(r, "arrival_ns", int, "lio_odometry.jsonl")
+                          - _field(r, "stamp_ns", int, "lio_odometry.jsonl")) / 1e9
+                         for r in _windowed(data, "lio_odometry.jsonl")]
+        applied = {"samples": len(odometry_ages), "p50_s": percentile(odometry_ages, 50),
+                   "p99_s": percentile(odometry_ages, 99), "max_s": max(odometry_ages)}
+    except MissingData:
+        pass  # reported as null; the verdict is the transition rate
+    return {"pass": per_60s <= LIO_MAX_FLAPS_PER_60S,
+            "value": {"degraded_to_tracking_in_window": in_window, "per_60s": per_60s,
+                      "degraded_to_tracking_in_run": len(flaps),
+                      "degraded_entries_in_run": sum(1 for r in transitions if r["state_after"] == "DEGRADED"),
+                      "scan_result_too_old": {"count": len(ages),
+                                              "age_p50_s": percentile(ages, 50) if ages else None,
+                                              "age_p99_s": percentile(ages, 99) if ages else None},
+                      "applied_result_age": applied},
+            "detail": f"<= {LIO_MAX_FLAPS_PER_60S:g} DEGRADED->TRACKING per 60 s of the window (O15 band, owner "
+                      "2026-10-13); a larger rate stops for the owner. Ages: ScanResultTooOld.age_s (run) and "
+                      "/lio/odometry arrival - stamp (window)"}
+
+
+def _check_alignment_valid(data: _Loader) -> dict:
+    records = _windowed(data, "alignment.jsonl")
+    states = sorted({_field(r, "state", int, "alignment.jsonl") for r in records})
+    bridge = _events(data, "events_px4_bridge.jsonl")
+    stale = [r for r in bridge if r["reason"] == "STALE"]
+    changes = _in_window(data, _named(bridge, "AlignmentTransition"))
+    resets = _named(bridge, "Px4ResetApplied")
+    start, end = _window(data)
+    bad_resets = [r for r in resets
+                  if (start <= r["t_ros_ns"] <= end or r["state_before"] == "VALID") and r["state_after"] != "VALID"]
+    passed = states == [ALIGNMENT_VALID] and not stale and not changes and not bad_resets
+    return {"pass": passed,
+            "value": {"window_states": states, "samples": len(records), "stale_events": len(stale),
+                      "window_transitions": [f"{r['state_before']}->{r['state_after']} {r['reason']}"
+                                             for r in changes],
+                      "px4_resets": len(resets), "resets_not_valid_after": len(bad_resets)},
+            "detail": "VALID throughout the window; no STALE in the run; VALID after each Px4ResetApplied"}
+
+
+def _check_alignment_rate(data: _Loader) -> dict:
+    start, end = _window(data)
+    records = _windowed(data, "alignment.jsonl")
+    rate = len(records) / ((end - start) / 1e9)
+    return {"pass": rate >= ALIGNMENT_MIN_RATE_HZ, "value": {"rate_hz": rate, "samples": len(records)},
+            "detail": f"/alignment >= {ALIGNMENT_MIN_RATE_HZ} Hz over the window"}
+
+
+def _check_alignment_jumps(data: _Loader) -> dict:
+    pairs = len(_windowed(data, "lio_odometry.jsonl"))
+    rejected = _in_window(data, _named(_events(data, "events_px4_bridge.jsonl"), "AlignmentPairRejected",
+                                       "PAIR_REJECTED_JUMP"))
+    jumps = _event_total(rejected)
+    return {"pass": jumps <= ALIGNMENT_MAX_JUMP_FRACTION * pairs,
+            "value": {"jump_rejected": jumps, "pairs": pairs, "fraction": jumps / pairs},
+            "detail": f"PAIR_REJECTED_JUMP <= {ALIGNMENT_MAX_JUMP_FRACTION:.0%} of the pairs (/lio/odometry in "
+                      "the window; rate-limited records summed per episode)"}
+
+
+def _check_drift(data: _Loader) -> dict:
+    px4 = _windowed(data, "vehicle_local_position.jsonl")
+    truth = sorted(((_field(r, "stamp_ns", int, "ground_truth.jsonl"),
+                     _field(r, "y", float, "ground_truth.jsonl"),    # ENU y = north = NED x
+                     _field(r, "x", float, "ground_truth.jsonl"))    # ENU x = east = NED y
+                    for r in data.jsonl("ground_truth.jsonl")))
+    stamps = [t for t, _, _ in truth]
+    pairs = []
+    for r in px4:
+        if _field(r, "xy_valid", bool, "vehicle_local_position.jsonl") is not True:
+            continue
+        t = _field(r, "timestamp_sample_us", int, "vehicle_local_position.jsonl") * 1000
+        i = bisect.bisect_left(stamps, t)
+        near = min((j for j in (i - 1, i) if 0 <= j < len(stamps)), key=lambda j: abs(stamps[j] - t), default=None)
+        if near is None or abs(stamps[near] - t) > TRUTH_MATCH_MAX_NS:
+            continue
+        pairs.append((_field(r, "x", float, "vehicle_local_position.jsonl"),
+                      _field(r, "y", float, "vehicle_local_position.jsonl"), truth[near][1], truth[near][2]))
+    if len(pairs) < len(px4) / 2:
+        raise MissingData(f"only {len(pairs)} of {len(px4)} PX4 samples have ground truth within 50 ms")
+    x0, y0, n0, e0 = pairs[0]
+    drift = [math.hypot((x - x0) - (n - n0), (y - y0) - (e - e0)) for x, y, n, e in pairs]
+    return {"pass": max(drift) <= DRIFT_MAX_M,
+            "value": {"max_m": max(drift), "final_m": drift[-1], "samples": len(pairs)},
+            "detail": f"|PX4 xy displacement - ground truth displacement (ENU->NED)| <= {DRIFT_MAX_M} m from the "
+                      "window start"}
+
+
+def _check_lio_state_rate(data: _Loader) -> dict:
+    start, end = _window(data)
+    states = _windowed(data, "lio_state.jsonl")
+    source = "lio_state.jsonl"
+    arrivals = [_field(r, "arrival_ns", int, source) for r in states]
+    gaps = [(b - a) / 1e6 for a, b in zip(arrivals, arrivals[1:])]
+    if not gaps:
+        raise MissingData("fewer than 2 /lio/state samples in the window")
+    rate = len(states) / ((end - start) / 1e9)
+    steps = []
+    for a, b in zip(states, states[1:]):
+        if a.get("epoch") != b.get("epoch"):
+            continue
+        dt = (_field(b, "stamp_ns", int, source) - _field(a, "stamp_ns", int, source)) / 1e9
+        va = _rotate([_field(a, k, float, source) for k in ("qw", "qx", "qy", "qz")],
+                     [_field(a, k, float, source) for k in ("vx", "vy", "vz")])
+        vb = _rotate([_field(b, k, float, source) for k in ("qw", "qx", "qy", "qz")],
+                     [_field(b, k, float, source) for k in ("vx", "vy", "vz")])
+        steps.append(math.dist([_field(b, k, float, source) - _field(a, k, float, source) for k in "xyz"],
+                               [0.5 * (va[i] + vb[i]) * dt for i in range(3)]))
+    p99 = percentile(gaps, 99)
+    return {"pass": abs(rate - STATE_RATE_HZ) <= STATE_RATE_TOL_HZ and p99 <= STATE_INTERARRIVAL_P99_MAX_MS,
+            "value": {"rate_hz": rate, "samples": len(states), "interarrival_p50_ms": percentile(gaps, 50),
+                      "interarrival_p99_ms": p99, "interarrival_max_ms": max(gaps),
+                      "f23_step_max_m": max(steps) if steps else None,
+                      "f23_step_p99_m": percentile(steps, 99) if steps else None},
+            "detail": f"{STATE_RATE_HZ} +- {STATE_RATE_TOL_HZ} Hz and inter-arrival p99 <= "
+                      f"{STATE_INTERARRIVAL_P99_MAX_MS} ms (P7, /clock time); F23 step max |dp - v dt| reported"}
+
+
+def _check_ev_age(data: _Loader) -> dict:
+    source = "vehicle_visual_odometry.jsonl"
+    ages = [(_field(r, "arrival_ns", int, source) - _field(r, "timestamp_sample_us", int, source) * 1000) / 1e6
+            for r in _windowed(data, source)]
+    p99 = percentile(ages, 99)
+    return {"pass": p99 <= EV_AGE_P99_MAX_MS,
+            "value": {"p50_ms": percentile(ages, 50), "p99_ms": p99, "max_ms": max(ages), "samples": len(ages)},
+            "detail": f"ROS now - EV timestamp_sample: p99 <= {EV_AGE_P99_MAX_MS} ms (< EKF2_DELAY_MAX)"}
+
+
+def _check_hover_px4_time(data: _Loader) -> dict:
+    source = "vehicle_local_position.jsonl"
+    offsets = [abs(_field(r, "timestamp_us", int, source) * 1000 - _field(r, "arrival_ns", int, source)) / 1e6
+               for r in _windowed(data, source)]
+    p99 = percentile(offsets, 99)
+    return {"pass": p99 <= PX4_TIME_P99_MAX_MS,
+            "value": {"p50_ms": percentile(offsets, 50), "p99_ms": p99, "max_ms": max(offsets),
+                      "samples": len(offsets)},
+            "detail": f"p99 of |vehicle_local_position.timestamp - ROS now| <= {PX4_TIME_P99_MAX_MS} ms (D29)"}
+
+
+def _check_events(data: _Loader) -> dict:
+    lio = _events(data, "events_lio.jsonl")
+    bridge = _events(data, "events_px4_bridge.jsonl")
+    zero = {name: len(_named(lio, name)) + len(_named(bridge, name)) for name in ZERO_TOLERANCE_EVENTS}
+    node = _summary_values(lio, "LioNodeSummary", "events_lio.jsonl")
+    bridge_node = _summary_values(bridge, "BridgeNodeSummary", "events_px4_bridge.jsonl")
+    keys = ("imu_received", "scans_received", "scans_converted", "points_in", "points_non_finite",
+            "rejected_wrong_frame", "rejected_malformed_cloud", "rejected_not_finite", "rejected_bad_stamp",
+            "rejected_no_ros_time", "ingest_refused", "publish_failed")
+    summary = {k: int(_field(node, k, float, "LioNodeSummary")) for k in keys}
+    scans = summary["scans_received"]
+    if scans <= 0 or summary["imu_received"] <= 0:
+        raise MissingData("LioNodeSummary: no scan or no IMU sample received")
+    dropped = len(_named(lio, "LioScanDropped"))
+    timed = [r["t_ros_ns"] for r in lio if r["t_ros_ns"] > 0]
+    span_s = (max(timed) - min(timed)) / 1e9 if len(timed) > 1 else None
+    not_finite = int(_field(bridge_node, "rejected_local_position", float, "BridgeNodeSummary"))
+    passed = (all(n == 0 for n in zero.values()) and summary["rejected_wrong_frame"] == 0
+              and summary["rejected_malformed_cloud"] == 0 and dropped <= MAX_SCAN_DROP_FRACTION * scans)
+    return {"pass": passed,
+            "value": {"zero_tolerance": zero, "lio_scan_dropped": dropped, "scan_drop_fraction": dropped / scans,
+                      "imu_gap": _event_total(_named(lio, "ImuGap")),
+                      "px4_sample_not_finite": not_finite,
+                      "px4_sample_not_finite_events": _event_total(
+                          _named(bridge, "Px4SampleRejected", "NOT_FINITE")),
+                      "scan_rate_hz_vs_imu": IMU_NOMINAL_HZ * scans / summary["imu_received"],
+                      "scan_rate_hz_over_log_span": scans / span_s if span_s else None,
+                      "points_per_scan": summary["points_in"] / max(1, summary["scans_converted"]),
+                      "non_finite_point_ratio": summary["points_non_finite"] / max(1, summary["points_in"]),
+                      "lio_node_summary": summary,
+                      "bridge_node_summary": {k: v for k, v in bridge_node.items()}},
+            "detail": f"whole run: zero {', '.join(ZERO_TOLERANCE_EVENTS)}; LioScanDropped <= "
+                      f"{MAX_SCAN_DROP_FRACTION:.0%} of the scans received; LioNodeSummary rejected_wrong_frame "
+                      "and rejected_malformed_cloud 0. Reported: ImuGap count, Px4SampleRejected NOT_FINITE "
+                      "(expected 0; BridgeNodeSummary rejected_local_position), the scan rate at the lio node "
+                      f"(scans x {IMU_NOMINAL_HZ:g} Hz / IMU samples received, and over the log span)"}
+
+
+def _check_f34_values(data: _Loader, spawn_yaw_rad: float) -> dict:
+    yaws = [_field(r, "yaw_rad", float, "alignment.jsonl") for r in _windowed(data, "alignment.jsonl")]
+    deltas = [_wrap(y - yaws[0]) for y in yaws]
+    mean = _wrap(yaws[0] + sum(deltas) / len(deltas))
+    expected = _wrap(math.pi / 2.0 - spawn_yaw_rad)
+    return {"pass": True,
+            "value": {"yaw_t_spread_rad": max(deltas) - min(deltas), "yaw_t_mean_rad": mean,
+                      "expected_yaw_t_rad": expected, "yaw_t_offset_rad": _wrap(mean - expected),
+                      "spawn_yaw_rad": spawn_yaw_rad, "samples": len(yaws)},
+            "detail": "reported, judged in Task 12 (F34): yaw_T max - min over the window and yaw_T - "
+                      "(pi/2 - spawn yaw); fails only when the data is missing"}
+
+
+def evaluate_hover(run_dir, profile: str, spawn_yaw_rad: float) -> dict:
+    """Judge an S1 hover run and write run_dir/summary.json. Returns the summary.
+
+    Raises ValueError when profile or spawn_yaw_rad differ from what the run recorded in hover_meta.json."""
+    if profile not in ("gps", "no_gps") or not math.isfinite(spawn_yaw_rad):
+        raise ValueError(f"profile must be gps or no_gps and the spawn yaw finite: {profile!r} {spawn_yaw_rad!r}")
+    run_dir = pathlib.Path(run_dir)
+    data = _Loader(run_dir, "hover_meta.json")
+    try:
+        meta = data.meta()
+        mode = _hover_mode(meta)
+    except MissingData:
+        meta, mode = {}, "posctl"
+    if "profile" in meta and meta["profile"] != profile:
+        raise ValueError(f"the run recorded profile {meta['profile']!r}, not {profile!r}")
+    recorded_yaw = meta.get("spawn_yaw_rad")
+    if isinstance(recorded_yaw, (int, float)) and abs(recorded_yaw - spawn_yaw_rad) > 1e-9:
+        raise ValueError(f"the run recorded spawn yaw {recorded_yaw!r} rad, not {spawn_yaw_rad!r}")
+    checks = {
+        f"{mode}_accepted": _run(_check_mode_accepted, data),
+        "ekf2_ev_pos": _run(_check_ekf2_ev_pos, data),
+        "ekf2_ev_yaw": _run(lambda d: _check_ekf2_ev_yaw(d, profile), data),
+        "lio_tracking": _run(_check_lio_tracking, data),
+        "lio_flap_rate": _run(_check_lio_flap_rate, data),
+        "alignment_valid": _run(_check_alignment_valid, data),
+        "alignment_rate": _run(_check_alignment_rate, data),
+        "alignment_jump_rejections": _run(_check_alignment_jumps, data),
+        "drift": _run(_check_drift, data),
+        "lio_state_rate": _run(_check_lio_state_rate, data),
+        "ev_age": _run(_check_ev_age, data),
+        "px4_time_identity": _run(_check_hover_px4_time, data),
+        "events": _run(_check_events, data),
+        "f34_values": _run(lambda d: _check_f34_values(d, spawn_yaw_rad), data),
+    }
+    return _write_summary(run_dir, {
+        "kind": "hover", "run_dir": str(run_dir), "profile": profile, "spawn_yaw_rad": spawn_yaw_rad,
+        "pattern": meta.get("pattern"), "hover_mode": mode}, meta, checks)
+
+
+def _write_summary(run_dir: pathlib.Path, head: dict, meta: dict, checks: dict) -> dict:
     phases = meta.get("phases")
     phases_ok = (isinstance(phases, list) and bool(phases)
                  and all(isinstance(ph, dict) and ph.get("ok") is True for ph in phases)
                  and meta.get("interrupted") is not True)
-    summary = {
-        "kind": "probe",
-        "run_dir": str(run_dir),
-        "profile": meta.get("profile"),
-        "hover_mode": mode,
-        "phases": phases,
-        "phases_ok": phases_ok,
-        "result": "PASS" if phases_ok and all(c["pass"] for c in checks.values()) else "FAIL",
-        "checks": checks,
-    }
+    summary = dict(head, phases=phases, phases_ok=phases_ok,
+                   result="PASS" if phases_ok and all(c["pass"] for c in checks.values()) else "FAIL",
+                   checks=checks)
     tmp = run_dir / "summary.json.tmp"
     tmp.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tmp.replace(run_dir / "summary.json")
@@ -361,18 +788,33 @@ def evaluate_probe(run_dir) -> dict:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Judge a SITL run directory and write summary.json.")
-    parser.add_argument("--probe", required=True, type=pathlib.Path, metavar="RUN_DIR",
-                        help="probe run directory (log/sitl/<stamp>-<profile>-probe)")
+    kind = parser.add_mutually_exclusive_group(required=True)
+    kind.add_argument("--probe", type=pathlib.Path, metavar="RUN_DIR",
+                      help="probe run directory (log/sitl/<stamp>-<profile>-probe)")
+    kind.add_argument("--hover", type=pathlib.Path, metavar="RUN_DIR",
+                      help="hover run directory (log/sitl/<stamp>-<profile>-hover); needs --profile")
+    parser.add_argument("--profile", choices=("gps", "no_gps"), help="hover: the PX4 profile of the run")
+    parser.add_argument("--spawn-yaw-rad", type=float, default=0.0, help="hover: the spawn yaw of the run (ENU)")
     args = parser.parse_args(argv)
-    if not args.probe.is_dir():
-        print(f"sitl_checks: not a directory: {args.probe}", file=sys.stderr)
+    run_dir = args.probe or args.hover
+    if not run_dir.is_dir():
+        print(f"sitl_checks: not a directory: {run_dir}", file=sys.stderr)
         return 2
-    summary = evaluate_probe(args.probe)
+    if args.probe:
+        summary = evaluate_probe(run_dir)
+    else:
+        if args.profile is None:
+            parser.error("--hover needs --profile")
+        try:
+            summary = evaluate_hover(run_dir, args.profile, args.spawn_yaw_rad)
+        except ValueError as exc:
+            print(f"sitl_checks: {exc}", file=sys.stderr)
+            return 2
     for name, check in summary["checks"].items():
         print(f"{'PASS' if check['pass'] else 'FAIL'}  {name}: {json.dumps(check['value'])}")
     print(f"{'PASS' if summary['phases_ok'] else 'FAIL'}  phases_ok: "
           f"{json.dumps([(ph.get('name'), ph.get('ok')) for ph in summary['phases'] or [] if isinstance(ph, dict)])}")
-    print(f"SITL_PROBE_RESULT={summary['result']} ({args.probe / 'summary.json'})")
+    print(f"SITL_{summary['kind'].upper()}_RESULT={summary['result']} ({run_dir / 'summary.json'})")
     return 0 if summary["result"] == "PASS" else 1
 
 

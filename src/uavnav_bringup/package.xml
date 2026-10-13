@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd"
+  schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>uavnav_bringup</name>
+  <version>0.1.0</version>
+  <description>Launch files of the uav-navigation processes (D33/O19). s1_estimation.launch.py starts the gz bridges, lio and px4_bridge for the S1 SITL hover.</description>
+  <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>uav_simulation</exec_depend>
+  <exec_depend>uavnav_lio</exec_depend>
+  <exec_depend>uavnav_px4_bridge</exec_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

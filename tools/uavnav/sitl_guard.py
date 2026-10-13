@@ -19,8 +19,8 @@ import sys
 
 _PYTHON = re.compile(r"^python[0-9.]*$")
 _RUBY = re.compile(r"^ruby[0-9.]*$")
-_SITL_BINARIES = {"px4", "MicroXRCEAgent", "parameter_bridge", "gz_lidar_bridge"}
-_SITL_SCRIPTS = {"sitl_probe.py"}
+_SITL_BINARIES = {"px4", "MicroXRCEAgent", "parameter_bridge", "gz_lidar_bridge", "lio_node", "px4_bridge_node"}
+_SITL_SCRIPTS = {"sitl_probe.py", "sitl_hover.py"}
 
 
 def _base(arg: str) -> str:

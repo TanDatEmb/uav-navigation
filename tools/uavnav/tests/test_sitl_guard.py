@@ -39,7 +39,10 @@ class SitlGuardTest(unittest.TestCase):
                      ["gz", "sim", "-r", "-s", "w.sdf"],
                      ["ruby", "/usr/bin/gz", "sim", "-r", "-s", "w.sdf"],
                      ["ruby3.2", "/usr/bin/gz", "sim", "-g"],
-                     ["/usr/bin/python3", "tools/uavnav/sitl_probe.py", "--run-dir", "d"]):
+                     ["/usr/bin/python3", "tools/uavnav/sitl_probe.py", "--run-dir", "d"],
+                     ["/usr/bin/python3", "/ws/tools/uavnav/sitl_hover.py", "--run-dir", "d"],
+                     ["/ws/install/uavnav_lio/lib/uavnav_lio/lio_node", "--ros-args", "-r", "__node:=lio"],
+                     ["/ws/install/uavnav_px4_bridge/lib/uavnav_px4_bridge/px4_bridge_node", "--ros-args"]):
             self.assertEqual(sitl_guard.classify(argv), "sitl", argv)
 
     def test_colcon_build_and_test_match(self):
