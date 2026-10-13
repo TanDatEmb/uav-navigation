@@ -126,18 +126,19 @@ def lio_state_at(t, states):
 def make_hover_run(run_dir, profile="gps", spawn_yaw_rad=0.0, lio_transitions=(), ev_pos_gap=None, ev_yaw=None,
                    px4_offset_ms=1, scan_too_old_ages_s=(), lio_events=(), bridge_events=(), lio_summary=None,
                    bridge_summary=None, alignment_states=(), phase_ok=True, px4_north_m=0.0, truth_north_m=0.0,
-                   state_period_ms=10, alignment_period_ms=100, ev_age_ms=40):
+                   state_period_ms=10, alignment_period_ms=100, ev_age_ms=40, yaw_t_rad=None):
     """Write a synthetic hover run.
 
     lio_transitions: extra [(t_ns, before, after)] LIO lifecycle changes after TRACKING at 22 s (health and the
     StateTransition events follow them; odometry is published only in TRACKING). ev_pos_gap: (start_ns, end_ns)
     with cs_ev_pos false. ev_yaw: cs_ev_yaw value (default: false for gps, true for no_gps).
     alignment_states: extra [(t_ns, state_code)] alignment state changes after VALID at 25 s.
-    px4_north_m, truth_north_m: northward displacement over the hover window of PX4 and of the ground truth."""
+    px4_north_m, truth_north_m: northward displacement over the hover window of PX4 and of the ground truth.
+    yaw_t_rad: the yaw of T in /alignment (default: the D35 value, pi/2 - spawn yaw for gps, 0 for no_gps)."""
     run_dir = pathlib.Path(run_dir)
     transitions = [(22 * S, "INITIALIZING", "TRACKING")] + sorted(lio_transitions)
     states = [(t, after) for t, _, after in transitions]
-    yaw_t = math.pi / 2 - spawn_yaw_rad
+    yaw_t = yaw_t_rad if yaw_t_rad is not None else (math.pi / 2 - spawn_yaw_rad if profile == "gps" else 0.0)
     lio_state, health, odometry, alignment, ev = [], [], [], [], []
     for t in range(20 * S, 118 * S, state_period_ms * MS):
         lio_state.append({"arrival_ns": t + 2 * MS, "stamp_ns": t, "epoch": 1, "lio_state": 1,
@@ -424,7 +425,7 @@ class SitlChecksTest(unittest.TestCase):
         # EV yaw: never fused in the gps profile, fused in the no_gps profile (D20).
         self.assertEqual(self.failing(self.hover(ev_yaw=True)), {"ekf2_ev_yaw"})
         self.assertEqual(self.failing(self.hover(profile="no_gps")), set())
-        self.assertEqual(self.failing(self.hover(profile="no_gps", ev_yaw=False)), {"ekf2_ev_yaw"})
+        self.assertEqual(self.failing(self.hover(profile="no_gps", ev_yaw=False)), {"ekf2_ev_yaw", "f34_values"})
 
     def flaps(self, count, start_s=60, every_s=15):
         transitions = []
@@ -704,18 +705,88 @@ class SitlChecksTest(unittest.TestCase):
         self.assertAlmostEqual(value["yaw_t_mean_rad"], math.pi / 2 - 1.2, places=9)
         self.assertAlmostEqual(value["expected_yaw_t_rad"], math.pi / 2 - 1.2, places=9)
         self.assertAlmostEqual(value["yaw_t_offset_rad"], 0.0, places=9)
-        # An offset is reported, not judged here (F34 is judged in Task 12).
-        records = [json.loads(line) for line in
-                   (self.run_dir / "alignment.jsonl").read_text(encoding="utf-8").splitlines()]
-        for r in records:
-            r["yaw_rad"] += 0.1
-        write_jsonl(self.run_dir / "alignment.jsonl", records)
-        summary = sitl_checks.evaluate_hover(self.run_dir, "gps", 1.2)
-        self.assertEqual(self.failing(summary), set())
-        self.assertAlmostEqual(summary["checks"]["f34_values"]["value"]["yaw_t_offset_rad"], 0.1, places=9)
         # The spawn yaw the run was started with must match the one judged.
         with self.assertRaises(ValueError):
             sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)
+
+    def shift_yaw_t(self, delta_rad, only_after_s=None):
+        records = [json.loads(line) for line in
+                   (self.run_dir / "alignment.jsonl").read_text(encoding="utf-8").splitlines()]
+        for r in records:
+            if only_after_s is None or r["stamp_ns"] >= only_after_s * S:
+                r["yaw_rad"] += delta_rad
+        write_jsonl(self.run_dir / "alignment.jsonl", records)
+
+    def test_f34_gps_judges_the_offset_from_pi_over_2_minus_spawn_yaw(self):
+        # D35: gps |yaw_T - (pi/2 - spawn yaw)| <= 3 degrees. The measured -1.7 degrees passes.
+        self.assertEqual(self.failing(self.hover(spawn_yaw_rad=1.2, yaw_t_rad=math.pi / 2 - 1.2 - math.radians(1.7))),
+                         set())
+        summary = self.hover(spawn_yaw_rad=1.2, yaw_t_rad=math.pi / 2 - 1.2 + math.radians(2.9))
+        self.assertEqual(self.failing(summary), set())
+        # 0.1 rad (5.7 degrees) off: fails, and the values are still reported.
+        make_hover_run(self.run_dir, spawn_yaw_rad=1.2)
+        self.shift_yaw_t(0.1)
+        summary = sitl_checks.evaluate_hover(self.run_dir, "gps", 1.2)
+        self.assertEqual(self.failing(summary), {"f34_values"})
+        self.assertEqual(summary["result"], "FAIL")
+        self.assertAlmostEqual(summary["checks"]["f34_values"]["value"]["yaw_t_offset_rad"], 0.1, places=9)
+        # The old no_gps shape (yaw_T 0 where gps expects pi/2) fails the gps profile.
+        self.assertEqual(self.failing(self.hover(yaw_t_rad=0.0)), {"f34_values"})
+        # A sign regression of the offset fails too.
+        self.assertEqual(self.failing(self.hover(spawn_yaw_rad=1.2, yaw_t_rad=-(math.pi / 2 - 1.2) - 0.2)),
+                         {"f34_values"})
+
+    def test_f34_no_gps_judges_yaw_t_near_zero_with_ev_yaw_fused(self):
+        summary = self.hover(profile="no_gps", spawn_yaw_rad=1.2)
+        self.assertEqual(self.failing(summary), set())
+        value = summary["checks"]["f34_values"]["value"]
+        self.assertAlmostEqual(value["yaw_t_mean_rad"], 0.0, places=9)
+        self.assertAlmostEqual(value["ev_yaw_fraction"], 1.0, places=9)
+        self.assertEqual(self.failing(self.hover(profile="no_gps", yaw_t_rad=math.radians(2.9))), set())
+        # The old rule's shape: |yaw_T| = 21 degrees (pi/2 - 1.2 rad) fails the no_gps profile.
+        summary = self.hover(profile="no_gps", spawn_yaw_rad=1.2, yaw_t_rad=math.pi / 2 - 1.2)
+        self.assertEqual(self.failing(summary), {"f34_values"})
+        self.assertGreater(abs(math.degrees(summary["checks"]["f34_values"]["value"]["yaw_t_mean_rad"])), 20.0)
+        self.assertEqual(self.failing(self.hover(profile="no_gps", yaw_t_rad=-math.radians(3.5))), {"f34_values"})
+        # yaw_T near zero without EV yaw fused is not the D35 case: both checks fail.
+        self.assertEqual(self.failing(self.hover(profile="no_gps", ev_yaw=False)),
+                         {"ekf2_ev_yaw", "f34_values"})
+
+    def test_f34_fails_when_yaw_t_moves_over_the_window(self):
+        # Spread <= 1 degree in every profile, whatever the mean: a 2 degree step inside the window fails.
+        for profile, spawn in (("gps", 0.0), ("no_gps", 0.0)):
+            make_hover_run(self.run_dir, profile=profile, spawn_yaw_rad=spawn)
+            self.shift_yaw_t(math.radians(2.0), only_after_s=70)
+            summary = sitl_checks.evaluate_hover(self.run_dir, profile, spawn)
+            self.assertEqual(self.failing(summary), {"f34_values"}, profile)
+            self.assertAlmostEqual(math.degrees(summary["checks"]["f34_values"]["value"]["yaw_t_spread_rad"]),
+                                   2.0, places=6)
+        # A 0.9 degree step stays within the spread limit.
+        make_hover_run(self.run_dir)
+        self.shift_yaw_t(math.radians(0.9), only_after_s=70)
+        self.assertEqual(self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)), set())
+
+    def test_f34_fails_closed_on_missing_data(self):
+        make_hover_run(self.run_dir, profile="no_gps")
+        (self.run_dir / "alignment.jsonl").unlink()
+        summary = sitl_checks.evaluate_hover(self.run_dir, "no_gps", 0.0)
+        self.assertIn("f34_values", self.failing(summary))
+        self.assertIsNone(summary["checks"]["f34_values"]["value"])
+        # no_gps also needs the EV yaw flags; gps does not read them.
+        make_hover_run(self.run_dir, profile="no_gps")
+        (self.run_dir / "estimator_status_flags.jsonl").unlink()
+        self.assertTrue({"ekf2_ev_yaw", "f34_values"} <= self.failing(
+            sitl_checks.evaluate_hover(self.run_dir, "no_gps", 0.0)))
+        make_hover_run(self.run_dir)
+        (self.run_dir / "estimator_status_flags.jsonl").unlink()
+        self.assertNotIn("f34_values", self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)))
+        # A non-finite yaw is malformed data, not a pass.
+        make_hover_run(self.run_dir)
+        records = [json.loads(line) for line in
+                   (self.run_dir / "alignment.jsonl").read_text(encoding="utf-8").splitlines()]
+        next(r for r in records if r["stamp_ns"] >= 70 * S)["yaw_rad"] = "nan"
+        write_jsonl(self.run_dir / "alignment.jsonl", records)
+        self.assertIn("f34_values", self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)))
 
 
 # --- the altitude sweep (Task 13) -------------------------------------------------------------------------------

@@ -8,7 +8,8 @@ evaluate_hover(run_dir, profile, spawn_yaw_rad) judges the S1 hover (Task 11; SY
 D33 O15/O21/O24) over the hover window (60 s of /clock time) and the whole run, and writes summary.json with
 fourteen checks: <mode>_accepted, ekf2_ev_pos, ekf2_ev_yaw, lio_tracking, lio_flap_rate, alignment_valid,
 alignment_rate, alignment_jump_rejections, drift, lio_state_rate, ev_age, px4_time_identity, events and
-f34_values (reported only: F34 is judged in Task 12).
+f34_values (D35: yaw_T steady within 1 degree; gps |yaw_T - (pi/2 - spawn yaw)| <= 3 degrees, no_gps
+|yaw_T| <= 3 degrees with EV yaw fused).
 
 evaluate_sweep(run_dir, profile, spawn_yaw_rad) judges the data of the altitude sweep (Task 13; gps only) and
 writes summary.json with three data checks: sweep_steps, calibration_inputs and events. The hover criteria are
@@ -397,6 +398,8 @@ XY_VALID_MIN_FRACTION = 0.99                     # vehicle_local_position xy_val
 TRUTH_MATCH_MIN_FRACTION = 0.95                  # >= 95 % of the PX4 samples paired with ground truth (drift)
 EV_POS_MIN_FRACTION = 0.95                       # cs_ev_pos in >= 95 % of the window's samples
 EV_YAW_NO_GPS_MIN_FRACTION = 0.95                # no_gps: cs_ev_yaw in >= 95 % (D20); gps: never
+F34_YAW_T_SPREAD_MAX_RAD = math.radians(1.0)     # D35: yaw_T max - min over the window <= 1 degree
+F34_YAW_T_FRAME_TOLERANCE_RAD = math.radians(3.0)  # D35: gps |yaw_T - (pi/2 - spawn yaw)|, no_gps |yaw_T| <= 3 degrees
 LIO_MAX_TRACKING_ENTRIES = 2                     # TRACKING entered at most twice in the run
 LIO_MAX_FLAPS_PER_60S = 1.0                      # DEGRADED -> TRACKING per 60 s of the window (owner 2026-10-13, O15)
 ALIGNMENT_MIN_RATE_HZ = 9.0                      # /alignment >= 9 Hz
@@ -749,17 +752,35 @@ def _check_events(data: _Loader) -> dict:
                       f"(scans x {IMU_NOMINAL_HZ:g} Hz / IMU samples received, and over the log span)"}
 
 
-def _check_f34_values(data: _Loader, spawn_yaw_rad: float) -> dict:
+def _check_f34_values(data: _Loader, spawn_yaw_rad: float, profile: str) -> dict:
+    """F34 verdict (D35): yaw_T is steady over the window and has the frame the profile implies.
+
+    gps: |yaw_T - (pi/2 - spawn yaw)| <= 3 degrees. no_gps: |yaw_T| <= 3 degrees (EKF2 takes its heading from EV
+    yaw, so the PX4 local frame is LIO's start frame) and EV yaw fused in >= 95 % of the window. Both: the spread
+    of yaw_T over the window <= 1 degree. Missing or non-finite data fails (MissingData)."""
     yaws = [_field(r, "yaw_rad", float, "alignment.jsonl") for r in _windowed(data, "alignment.jsonl")]
+    if not all(math.isfinite(y) for y in yaws):
+        raise MissingData("alignment.jsonl: yaw_rad is not finite")
     deltas = [_wrap(y - yaws[0]) for y in yaws]
     mean = _wrap(yaws[0] + sum(deltas) / len(deltas))
+    spread = max(deltas) - min(deltas)
     expected = _wrap(math.pi / 2.0 - spawn_yaw_rad)
-    return {"pass": True,
-            "value": {"yaw_t_spread_rad": max(deltas) - min(deltas), "yaw_t_mean_rad": mean,
-                      "expected_yaw_t_rad": expected, "yaw_t_offset_rad": _wrap(mean - expected),
-                      "spawn_yaw_rad": spawn_yaw_rad, "samples": len(yaws)},
-            "detail": "reported, judged in Task 12 (F34): yaw_T max - min over the window and yaw_T - "
-                      "(pi/2 - spawn yaw); fails only when the data is missing"}
+    offset = _wrap(mean - expected)
+    value = {"yaw_t_spread_rad": spread, "yaw_t_mean_rad": mean, "expected_yaw_t_rad": expected,
+             "yaw_t_offset_rad": offset, "spawn_yaw_rad": spawn_yaw_rad, "profile": profile,
+             "samples": len(yaws)}
+    steady = spread <= F34_YAW_T_SPREAD_MAX_RAD
+    if profile == "gps":
+        frame = abs(offset) <= F34_YAW_T_FRAME_TOLERANCE_RAD
+        detail_frame = "|yaw_T - (pi/2 - spawn yaw)| <= 3 degrees"
+    else:
+        flags = _windowed(data, "estimator_status_flags.jsonl")
+        ev_yaw_fraction = _fraction(flags, "cs_ev_yaw", "estimator_status_flags.jsonl")
+        value["ev_yaw_fraction"] = ev_yaw_fraction
+        frame = (abs(mean) <= F34_YAW_T_FRAME_TOLERANCE_RAD and ev_yaw_fraction >= EV_YAW_NO_GPS_MIN_FRACTION)
+        detail_frame = f"|yaw_T| <= 3 degrees with EV yaw fused in >= {EV_YAW_NO_GPS_MIN_FRACTION:.0%} of the window"
+    return {"pass": steady and frame, "value": value,
+            "detail": f"D35 ({profile}): yaw_T max - min over the window <= 1 degree and {detail_frame}"}
 
 
 def evaluate_hover(run_dir, profile: str, spawn_yaw_rad: float) -> dict:
@@ -793,7 +814,7 @@ def evaluate_hover(run_dir, profile: str, spawn_yaw_rad: float) -> dict:
         "ev_age": _run(_check_ev_age, data),
         "px4_time_identity": _run(_check_hover_px4_time, data),
         "events": _run(_check_events, data),
-        "f34_values": _run(lambda d: _check_f34_values(d, spawn_yaw_rad), data),
+        "f34_values": _run(lambda d: _check_f34_values(d, spawn_yaw_rad, profile), data),
     }
     return _write_summary(run_dir, {
         "kind": "hover", "run_dir": str(run_dir), "profile": profile, "spawn_yaw_rad": spawn_yaw_rad,
