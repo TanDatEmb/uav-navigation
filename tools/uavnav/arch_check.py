@@ -28,6 +28,7 @@ DEP_TAGS = ("depend", "build_depend", "exec_depend", "test_depend", "buildtool_d
 INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([\w/.+-]+)[>"]')
 REF = re.compile(r"\b(D|O|AR)(\d+)\b")
 SECTION = re.compile(r"§(\d+(?:\.\d+)?)")
+RUN_ID = re.compile(r"^run:\d{8}T\d{6}Z-[\w.+-]+$")
 ISO_DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 
 
@@ -116,6 +117,7 @@ def check_traceability(root: pathlib.Path) -> list[Finding]:
     open_dv = {k for k, v in deviation_register(root).items()
                if _cell(v, "Trạng thái").split(" ")[0].strip("*`") == "OPEN"}
     index = archlib.EvidenceIndex(root)
+    analysis_text = "\n".join(f.read_text(encoding="utf-8") for f in sorted((root / "docs/analysis").glob("*.md")))
     for table in archlib.parse_tables(text):
         if table.col("Trạng thái") is None or table.col("Bằng chứng") is None or table.header[0] in ("ID", "Trạng thái"):
             continue
@@ -143,7 +145,12 @@ def check_traceability(root: pathlib.Path) -> list[Finding]:
             shas, tests, runs, accepts, dvs = [], [], [], [], []
             for span in spans:
                 if span.startswith("run:"):
-                    runs.append(span)
+                    if not RUN_ID.match(span):
+                        findings.append(Finding("ERROR", where, f"{span} is not run:<YYYYMMDDTHHMMSSZ>-<name>"))
+                    elif span[4:] not in analysis_text:
+                        findings.append(Finding("ERROR", where, f"{span} is not recorded in docs/analysis/*.md (add it to the run register)"))
+                    else:
+                        runs.append(span)
                 elif span.startswith("accept:"):
                     accepts.append(span[len("accept:"):])
                 elif re.fullmatch(r"DV\d+", span):
@@ -161,13 +168,13 @@ def check_traceability(root: pathlib.Path) -> list[Finding]:
                 elif archlib.PATH_LIKE.match(span):
                     if not index.path_exists(span):
                         findings.append(Finding("ERROR", where, f"evidence path {span} does not exist"))
-                    elif span == "tools/uavnav/gate.sh":
+                    elif span == "tools/uavnav/gate.sh" and "Hạ tầng" in table.heading:
                         tests.append(span)
             if status == "IMPLEMENTED" and not shas:
                 findings.append(Finding("ERROR", where, "IMPLEMENTED needs at least one existing commit as evidence"))
             if status == "COMPONENT_VERIFIED" and not tests:
                 findings.append(Finding("ERROR", where,
-                                        "COMPONENT_VERIFIED needs an existing test id (or `tools/uavnav/gate.sh`) as evidence"))
+                                        "COMPONENT_VERIFIED needs an existing test id as evidence (`tools/uavnav/gate.sh` counts only in the infrastructure table)"))
             if status in ("INTEGRATED", "QUALIFIED"):
                 if not shas or not runs:
                     findings.append(Finding("ERROR", where,
@@ -262,11 +269,23 @@ def check_dependencies(root: pathlib.Path, rules: dict) -> list[Finding]:
     return findings
 
 
+def check_invariants(root: pathlib.Path, rules: dict) -> list[Finding]:
+    """Invariant ids in arch_rules.yaml and in CHANGE_CONTROL.md must be the same set."""
+    text = (root / "docs/CHANGE_CONTROL.md").read_text(encoding="utf-8") if (root / "docs/CHANGE_CONTROL.md").exists() else ""
+    in_doc = set(re.findall(r"^\| ((?:LIO|PX4|TIME)-\d+) \|", text, re.M))
+    in_yaml = {m.group(1) for k in rules["invariant_paths"] if (m := re.match(r"INV-((?:LIO|PX4|TIME)-\d+)-", k))}
+    out = [Finding("ERROR", "docs/CHANGE_CONTROL.md", f"invariant {i} has no entry in arch_rules.yaml invariant_paths")
+           for i in sorted(in_doc - in_yaml)]
+    out += [Finding("ERROR", "tools/uavnav/arch_rules.yaml", f"invariant {i} is not in the CHANGE_CONTROL.md table")
+            for i in sorted(in_yaml - in_doc)]
+    return out
+
+
 def run_checks(root: pathlib.Path, rules: dict, today: datetime.date | None = None,
                strict_dates: bool = False) -> list[Finding]:
     today = today or datetime.date.today()
     return (check_traceability(root) + check_deviations(root, today, strict_dates)
-            + check_dependencies(root, rules))
+            + check_dependencies(root, rules) + check_invariants(root, rules))
 
 
 def main(argv: list[str] | None = None) -> int:

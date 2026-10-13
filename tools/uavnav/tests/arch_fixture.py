@@ -1,6 +1,7 @@
 """Throw-away Git repositories for the architecture-governance tests. No network, no ROS."""
 import copy
 import os
+import re
 import pathlib
 import subprocess
 import tempfile
@@ -20,8 +21,8 @@ DECISIONS = """# Decisions
 
 ## 5. Architecture Review (AR)
 
-| ID | Ngày | Hệ con | Tín hiệu | Phân tích | Window end | Kết quả |
-|---|---|---|---|---|---|---|
+| ID | Ngày | Hệ con | Tín hiệu | Phân tích | Window end | Owner xác nhận | Kết quả |
+|---|---|---|---|---|---|---|---|
 """
 
 TRACE_HEAD = """# Trace
@@ -53,6 +54,9 @@ class Repo:
         self.write("docs/architecture/SYSTEM_DESIGN.md", DESIGN)
         self.write("docs/architecture/DECISIONS.md", DECISIONS)
         self.write("docs/TRACEABILITY.md", TRACE_HEAD + DV_HEAD)
+        self.write("docs/analysis/runs.md", "Runs: 20261013T152418Z-gps-hover 20261013T154709Z-gps-hover\n")
+        ids = [m.group(1) for k in self.rules["invariant_paths"] if (m := re.match(r"INV-((?:LIO|PX4|TIME)-\d+)-", k))]
+        self.write("docs/CHANGE_CONTROL.md", "".join(f"| {i} | invariant |\n" for i in ids))
         self.write("src/estimation/uavnav_lio_core/src/other.cpp", "int a = 0;\n")
         self.write("src/estimation/uavnav_lio_core/include/uavnav/lio/state.hpp", "struct S {\n};\n")
         self.base = self.commit("chore: baseline")
@@ -82,6 +86,6 @@ class Repo:
     def set_trace(self, rows, dvs=""):
         self.write("docs/TRACEABILITY.md", TRACE_HEAD + rows + DV_HEAD + dvs)
 
-    def add_ar(self, ident, subsystem, window_end, result):
+    def add_ar(self, ident, subsystem, window_end, result, confirmed="có"):
         path = self.root / "docs/architecture/DECISIONS.md"
-        path.write_text(path.read_text() + f"| {ident} | 2026-01-01 | {subsystem} | sig | analysis | `{window_end}` | {result} |\n")
+        path.write_text(path.read_text() + f"| {ident} | 2026-01-01 | {subsystem} | sig | analysis | `{window_end}` | {confirmed} | {result} |\n")

@@ -49,12 +49,32 @@ class TraceabilityTest(unittest.TestCase):
         self.assertTrue(any("QUALIFIED needs `accept:" in e for e in found), found)
 
     def test_integrated_needs_a_run_and_qualified_needs_an_agreed_decision(self):
-        self.repo.set_trace(self.row("INTEGRATED", f"`{self.sha[:8]}`, `run:20261013-gps-hover`"))
+        self.repo.set_trace(self.row("INTEGRATED", f"`{self.sha[:8]}`, `run:20261013T152418Z-gps-hover`"))
         self.assertEqual(errors(self.repo), [])
-        self.repo.set_trace(self.row("QUALIFIED", f"`{self.sha[:8]}`, `run:x`, `accept:D2`"))
+        self.repo.set_trace(self.row("QUALIFIED", f"`{self.sha[:8]}`, `run:20261013T152418Z-gps-hover`, `accept:D2`"))
         self.assertTrue(any("QUALIFIED needs `accept:" in e for e in errors(self.repo)))
-        self.repo.set_trace(self.row("QUALIFIED", f"`{self.sha[:8]}`, `run:x`, `accept:D1`"))
+        self.repo.set_trace(self.row("QUALIFIED", f"`{self.sha[:8]}`, `run:20261013T152418Z-gps-hover`, `accept:D1`"))
         self.assertEqual(errors(self.repo), [])
+
+    def test_run_ids_must_be_well_formed_and_registered_in_an_analysis_report(self):
+        self.repo.set_trace(self.row("INTEGRATED", f"`{self.sha[:8]}`, `run:20261013-gps-hover`"))
+        self.assertTrue(any("is not run:<" in e for e in errors(self.repo)))
+        self.repo.set_trace(self.row("INTEGRATED", f"`{self.sha[:8]}`, `run:20261014T010101Z-gps-hover`"))
+        self.assertTrue(any("not recorded in docs/analysis" in e for e in errors(self.repo)))
+
+    def test_gate_script_counts_as_test_evidence_only_in_the_infrastructure_table(self):
+        self.repo.write("tools/uavnav/gate.sh", "#!/bin/sh\n")
+        self.repo.commit("chore: gate script")
+        self.repo.set_trace(self.row("COMPONENT_VERIFIED", "`tools/uavnav/gate.sh`"))
+        self.assertTrue(any("COMPONENT_VERIFIED needs" in e for e in errors(self.repo)))
+        self.assertFalse(any("does not exist" in e for e in errors(self.repo)))
+
+    def test_invariant_ids_must_match_between_the_document_and_the_rules(self):
+        (self.repo.root / "docs/CHANGE_CONTROL.md").write_text("| LIO-1 | only one |\n")
+        found = errors(self.repo)
+        self.assertTrue(any("is not in the CHANGE_CONTROL.md table" in e for e in found))
+        self.repo.write("docs/CHANGE_CONTROL.md", "| LIO-99 | stray |\n")
+        self.assertTrue(any("LIO-99 has no entry" in e for e in errors(self.repo)))
 
     def test_dangling_commit_and_unknown_decision_are_errors(self):
         self.repo.set_trace(self.row("IMPLEMENTED", "`deadbeef`"))

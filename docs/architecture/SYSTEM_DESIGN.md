@@ -181,7 +181,7 @@ INITIALIZING ──map đủ ∧ 5 scan tốt liên tiếp──► TRACKING ◄
 ### §3.2 Phát hiện suy biến
 
 - Mỗi scan, tính ma trận 6×6 `HᵀR⁻¹H` và tách thành khối **tịnh tiến** và khối **xoay**. Trị riêng nhỏ nhất của mỗi khối so với ngưỡng (tầng b), có hysteresis.
-- Giá trị ngưỡng là giá trị beta đã đo trong SITL (S1b, D36); trị riêng của mọi scan vẫn được log để chẩn đoán.
+- Giá trị ngưỡng là giá trị beta tính theo phân tích (S1a, `config.hpp`). Chuyến quét SITL của S1b không hiệu chỉnh được (D36); trị riêng của mọi scan vẫn được log để chẩn đoán.
 - **Ngưỡng và hành vi (D36):** suy biến khi bay trong map trống hay thiếu hình học là bình thường, không cố khắc phục: LIO đi DEGRADED rồi LOST, EV dừng, `T` FROZEN (§4.1) và xử lý theo D4/D11. Ngưỡng giữ giá trị beta (biên đo được khoảng 2.5× tịnh tiến, 2× xoay so với các lần hover; chuyến quét S1b LOST ở ≈ 4.76 m khi sàn rời tầm nhìn). Không hiệu chỉnh thêm.
 - Mọi scan đều ghi log các trị riêng này.
 

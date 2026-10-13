@@ -48,18 +48,29 @@ invariant_paths:
     - src/estimation/uavnav_lio_core/src/runner.cpp
     - src/estimation/uavnav_lio_core/include/uavnav/lio/runner.hpp
     - src/estimation/uavnav_lio_core/include/uavnav/lio/channels.hpp
+  INV-LIO-4-tracking-needs-confirmation-and-applied-corrections:
+    - src/estimation/uavnav_lio_core/include/uavnav/lio/lifecycle.hpp
+    - src/estimation/uavnav_lio_core/src/lifecycle.cpp
+    - src/estimation/uavnav_lio_core/src/frontend.cpp
+    - src/estimation/uavnav_lio_core/src/output_predictor.cpp
   INV-PX4-1-alignment-fail-closed:
     - src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/alignment.hpp
     - src/px4/uavnav_px4_bridge/src/alignment.cpp
-  INV-PX4-2-ev-frame-and-epoch:
+  INV-PX4-2-ev-only-from-tracking-in-frd-with-sample-epoch:
     - src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/ev_encoder.hpp
     - src/px4/uavnav_px4_bridge/src/ev_encoder.cpp
     - src/px4/uavnav_px4_bridge/src/px4_time.cpp
     - src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/bridge.hpp
     - src/px4/uavnav_px4_bridge/src/bridge.cpp
+    - src/px4/uavnav_px4_bridge/include/uavnav/px4bridge_node/px4_bridge_node.hpp
+    - src/px4/uavnav_px4_bridge/src/px4_bridge_node.cpp
+    - src/px4/uavnav_px4_bridge/src/ros_conversion.cpp
+    - src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/ros_conversion.hpp
   INV-TIME-1-range-checked-stamps:
     - src/core/uavnav_core/include/uavnav/core/time.hpp
     - src/core/uavnav_ros/include/uavnav/ros/time_msg.hpp
+    - src/estimation/uavnav_lio/src/ingest.cpp
+    - src/estimation/uavnav_lio/src/ros_conversion.cpp
 
 # Enum names matching this regex are state models: a commit that adds an enumerator is a new state
 # and needs Arch-Level >= 2 (SYSTEM_DESIGN §2.2: "adding a state requires a design review").
@@ -126,4 +137,6 @@ stress:
   workaround_markers: 2        # S2: added lines with workaround/hack/temporary/for-now markers
   co_change_commits: 6         # S6: commits touching the same pair of packages (non-doc)
   status_regressions: 1        # S8: TRACEABILITY rows that went to a lower status
+# The governance tools quote the marker words in their own source and messages; they are not product code.
+workaround_exclude_globs: [tools/uavnav/arch_*, tools/uavnav/archlib.py, tools/uavnav/check_change.py]
 workaround_regex: '(?i)\b(workaround|hack|temporary|temporarily|for now|FIXME|XXX|kludge)\b'

@@ -61,6 +61,15 @@ class HealthTest(unittest.TestCase):
         self.repo.commit("feat(lio): new component")
         self.assertEqual(triggers(self.repo, "S1 new bool"), [])
 
+    def test_workaround_markers_count_in_product_code_but_not_in_the_governance_tools(self):
+        for i in range(3):
+            self.repo.write(f"tools/uavnav/arch_x{i}.py", "# workaround workaround\n")
+        self.repo.commit("feat(tooling): tool strings")
+        self.assertEqual(triggers(self.repo, "S2"), [])
+        self.repo.write("src/estimation/uavnav_lio_core/src/w.cpp", "// workaround for now\n// hack\n")
+        self.repo.commit("fix(lio): w")
+        self.assertEqual(len(triggers(self.repo, "S2")), 1)
+
     def test_repeated_fixes_to_one_file_trigger(self):
         for i in range(5):
             self.repo.write(CPP, f"int a = {i + 10};\n")

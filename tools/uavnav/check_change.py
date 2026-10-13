@@ -61,7 +61,7 @@ def parse_trailers(message: str) -> dict[str, str]:
     return {key: value for key, value in TRAILER.findall(message)}
 
 
-def check_commit(root, rules, commit, decisions, range_files) -> list[Finding]:
+def check_commit(root, rules, commit, decisions, range_files, reviews=None) -> list[Finding]:
     findings: list[Finding] = []
     short = commit[:8]
     subject = archlib.git(root, "log", "-1", "--format=%s", commit).strip()
@@ -117,6 +117,11 @@ def check_commit(root, rules, commit, decisions, range_files) -> list[Finding]:
             if result not in allowed:
                 findings.append(Finding("ERROR", where,
                                         f"{review} result is {result}; Level {level} needs {' or '.join(allowed)}"))
+        confirmed = {r["id"]: r["owner_confirmed"] for r in (reviews or [])}
+        if level == 3 and review in confirmed and not confirmed[review]:
+            findings.append(Finding("ERROR", where, f"Arch-Level 3 needs {review} confirmed by the owner (column 'Owner xác nhận')"))
+        if level == 2 and review in confirmed and not confirmed[review]:
+            findings.append(Finding("WARN", where, f"{review} is not yet confirmed by the owner"))
         if level == 3 and decisions.get(trailers.get("Decision", ""), "") != "AGREED":
             findings.append(Finding("ERROR", where, "Arch-Level 3 needs `Decision: D<n>` with status AGREED"))
     return findings
@@ -124,13 +129,14 @@ def check_commit(root, rules, commit, decisions, range_files) -> list[Finding]:
 
 def check_range(root: pathlib.Path, rules: dict, base: str, head: str = "HEAD") -> list[Finding]:
     decisions = archlib.decision_status(root)
+    reviews = archlib.architecture_reviews(root)
     commits = archlib.git(root, "rev-list", "--reverse", "--no-merges", f"{base}..{head}").split()
     range_files: set[str] = set()
     for commit in commits:
         range_files.update(archlib.git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", commit).splitlines())
     findings: list[Finding] = []
     for commit in commits:
-        findings += check_commit(root, rules, commit, decisions, range_files)
+        findings += check_commit(root, rules, commit, decisions, range_files, reviews)
     return findings
 
 

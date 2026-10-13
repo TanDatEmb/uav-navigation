@@ -125,6 +125,22 @@ def decision_status(root: pathlib.Path) -> dict[str, str]:
     return result
 
 
+def architecture_reviews(root: pathlib.Path) -> list[dict]:
+    """AR rows of DECISIONS.md: id, subsystem, window_end, result, owner_confirmed."""
+    text = (root / "docs/architecture/DECISIONS.md").read_text(encoding="utf-8")
+    out = []
+    for table in parse_tables(text):
+        if table.header and table.header[0] == "ID" and table.col("Window end") is not None:
+            sub, win, res, own = table.col("Hệ con"), table.col("Window end"), table.col("Kết quả"), table.col("Owner xác nhận")
+            for _, cells in table.rows:
+                if re.fullmatch(r"AR\d+", cells[0]):
+                    spans = code_spans(cells[win])
+                    out.append({"id": cells[0], "subsystem": cells[sub].strip(), "window_end": spans[0] if spans else "",
+                                "result": cells[res].split(" ")[0].strip("*`"),
+                                "owner_confirmed": own is not None and cells[own].strip().lower().startswith("có")})
+    return out
+
+
 # ---------------------------------------------------------------- evidence resolution
 
 TEST_ID = re.compile(r"^[A-Z]\w*\.(?:[A-Z]\w*|test_\w+)$")

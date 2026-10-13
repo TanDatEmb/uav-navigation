@@ -37,20 +37,6 @@ FIX_SUBJECT = re.compile(r"^(fix|refactor)(\(|!|:)")
 LEGACY_RANK = {"todo": 0, "doing": 1, "done": 2, "deferred": 0}
 
 
-def architecture_reviews(root: pathlib.Path) -> list[dict]:
-    text = (root / "docs/architecture/DECISIONS.md").read_text(encoding="utf-8")
-    out = []
-    for table in archlib.parse_tables(text):
-        if table.header and table.header[0] == "ID" and table.col("Window end") is not None:
-            sub, win, res = table.col("Hệ con"), table.col("Window end"), table.col("Kết quả")
-            for _, cells in table.rows:
-                if re.fullmatch(r"AR\d+", cells[0]):
-                    spans = archlib.code_spans(cells[win])
-                    out.append({"id": cells[0], "subsystem": cells[sub].strip(), "window_end": spans[0] if spans else "",
-                                "result": cells[res].split(" ")[0].strip("*`")})
-    return out
-
-
 def default_base(root: pathlib.Path) -> str:
     result = archlib.git(root, "merge-base", "main", "HEAD", check=False).strip()
     if result:
@@ -66,7 +52,8 @@ def analyse(root: pathlib.Path, rules: dict, base: str, today: datetime.date | N
     today = today or datetime.date.today()
     thresholds = rules["stress"]
     workaround = re.compile(rules["workaround_regex"])
-    reviews = architecture_reviews(root)
+    skip_workaround = rules.get("workaround_exclude_globs", [])
+    reviews = archlib.architecture_reviews(root)
     all_commits = commits_in(root, base)
 
     index = archlib.EvidenceIndex(root)
@@ -130,7 +117,8 @@ def analyse(root: pathlib.Path, rules: dict, base: str, today: datetime.date | N
                             st["bools"].add(f"{f}:{m.group(1)}")
                 if modified and archlib.matches(f, rules["churn_paths"]):
                     st["contract_files"][f] += 1
-                st["workarounds"] += sum(1 for line in by_file.get(f, []) if workaround.search(line))
+                if not archlib.matches(f, skip_workaround):
+                    st["workarounds"] += sum(1 for line in by_file.get(f, []) if workaround.search(line))
             st["states"] += check_change.added_states(
                 root, commit, [f for f in mine if status[f] == "M" and f in in_tree], rules["state_enum_regex"])
             contract_here = [f for f in mine if status[f] == "M" and archlib.matches(f, rules["churn_paths"])]
@@ -216,7 +204,7 @@ def status_regressions(root: pathlib.Path, base: str, only: set[str]) -> list[st
 def render(result: dict) -> str:
     lines = [f"# Architecture health report", "",
              f"Window: {result['commits']} commits after `{result['base'][:8]}`. "
-             f"Reviews on record: {', '.join(r['id'] + ' (' + r['subsystem'] + ', ' + r['result'] + ')' for r in result['reviews']) or 'none'}.",
+             f"Reviews on record: {', '.join(r['id'] + ' (' + r['subsystem'] + ', ' + r['result'] + (', owner confirmed' if r['owner_confirmed'] else ', NOT yet confirmed by the owner') + ')' for r in result['reviews']) or 'none'}.",
              "", "| Subsystem | Indicator | Value | Review at | Signal |", "|---|---|---|---|---|"]
     for sub, name, value, limit, hit, detail in result["rows"]:
         lines.append(f"| {sub} | {name} | {value} | {limit} | {'**REVIEW**' if hit else 'ok'} |")

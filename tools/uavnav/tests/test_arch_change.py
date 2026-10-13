@@ -120,6 +120,13 @@ class ChangeDeclarationTest(unittest.TestCase):
         self.repo.commit("feat(lio): move ownership", "Arch-Level: 3\nDocs-Impact: pending:x\nReview: AR3\nDecision: D1")
         self.assertEqual(sum("AR3" in e or "Decision" in e for e in run(self.repo)[0]), 1)  # only the D2 commit
 
+    def test_level_three_needs_the_owner_to_have_confirmed_the_review(self):
+        self.repo.add_ar("AR5", "lio", self.repo.head(), "APPROVED", confirmed="chưa")
+        self.repo.commit("docs: AR5 written by the executor")
+        self.repo.write(LIFECYCLE, "int x = 77;\n")
+        self.repo.commit("feat(lio): move ownership", "Arch-Level: 3\nDocs-Impact: pending:x\nReview: AR5\nDecision: D1")
+        self.assertTrue(any("confirmed by the owner" in e for e in run(self.repo)[0]))
+
     def test_pr_body_must_repeat_the_declaration_at_least_as_high_as_commits(self):
         rules = self.repo.rules
         self.assertTrue(check_change.check_body(rules, "no lines here", []))

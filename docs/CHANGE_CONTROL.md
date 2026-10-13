@@ -72,13 +72,14 @@ Rút ra từ spec và từ các lỗi đã kiểm chứng (F\*), không áp đ�
 | SYS-1 | Fail-closed: thiếu hoặc mơ hồ về thời gian, frame, identity, epoch, world, certificate thì từ chối | §0, AGENTS §3 | test từng quyết định; review |
 | SYS-2 | Mọi bàn giao cho PX4 và mọi huỷ đều có `Reason` trong event log; không bypass ẩn | §0, D11 | test; review |
 | SYS-3 | Một quyết định, một event có component, trạng thái trước và sau, reason, giá trị | §6.1, AGENTS §2.3 | test; `arch_check` cấm in thẳng ra stdout |
-| SYS-4 | Không publish và không gọi callback khi giữ khoá; mọi worker có đường fail-closed | §6.4, AGENTS §2.6 | TSan (`make sanitize`); review |
-| SYS-5 | Thư viện quyết định thuần, không phụ thuộc ROS; ROS chỉ ở lớp vỏ | §7.1 | `arch_check` (include và `package.xml`) |
+| SYS-4 | Không publish và không gọi callback khi giữ khoá; mọi worker có đường fail-closed | §6.4, AGENTS §2.6 | review; TSan (`make sanitize`) chỉ bắt được data race trên các test của lớp có thread (`LioRunner`, ingest), không chứng minh quy tắc này |
+| SYS-5 | Thư viện quyết định thuần, không phụ thuộc ROS; ROS chỉ ở lớp vỏ | §7.1 | `arch_check`: include và `package.xml` của các file ngoài danh sách `ros_allowed` trong `arch_rules.yaml` (danh sách này cho phép cả header của lớp vỏ như `lio_node/*`, nên trong đó chỉ review mới giữ được ranh giới) |
 | SYS-6 | Mỗi giá trị cấu hình một nguồn; ngoài phạm vi thì từ chối khởi động | §6.2, AGENTS §2.4 | `test_config`, test config từng package |
 | TIME-1 | Bốn miền thời gian là bốn kiểu; stamp ngoài được kiểm phạm vi; int64 ns | §6.3, D28 | `test_time`, `Px4Time.*`, `to_msg` tests |
-| LIO-1 | `LioLifecycle` là nơi ghi duy nhất của trạng thái LIO; backend không ghi lifecycle và không publish | §3.5, D30, D32 | compile-time (`#error` trong backend), `LioLifecycleTable.*` |
-| LIO-2 | Hai thread, mỗi khối một thread sở hữu; hàng đợi giới hạn, dữ liệu bất biến, tràn thì có event và không chặn ingest | §3.5, D31 | `LioRunner.*`, TSan |
-| LIO-3 | Mọi lối vào TRACKING qua xác nhận; không có cạnh LOST → TRACKING; chỉ correction được predictor áp dụng và không quá tuổi mới tính | §3.1, F27, D31, D33 | `LioLifecycleTable.NoEdgeFromLostToTracking`, `LioFrontend.Result*` |
+| LIO-1 | `LioLifecycle` là nơi ghi duy nhất của trạng thái LIO | §3.5, D30 | `LioLifecycleTable.*`; file mang invariant: `lifecycle.*`, `frontend.cpp` |
+| LIO-2 | Backend không với tới lifecycle và không publish | §3.5, D32 | compile-time (`#error` ở cuối `.cpp` của backend, macro đánh dấu của `lifecycle.hpp`) |
+| LIO-3 | Hai thread, mỗi khối một thread sở hữu; hàng đợi giới hạn, dữ liệu bất biến, tràn thì có event và không chặn ingest | §3.5, D31 | `LioRunner.*`, TSan |
+| LIO-4 | Mọi lối vào TRACKING qua xác nhận; không có cạnh LOST → TRACKING; chỉ correction được predictor áp dụng và không quá tuổi mới tính là scan có correction | §3.1, F27, D31, D33 | `LioLifecycleTable.NoEdgeFromLostToTracking`, `LioFrontend.Result*` |
 | PX4-1 | `T` đo tại vị trí xe; mọi cạnh đổi trạng thái của `T` nằm trong bảng cạnh của spec; đầu vào xấu thì từ chối | §4.1, D30 | `Alignment.TransitionTableIsTheSpecDiagram`, `AlignmentFuzz.*` |
 | PX4-2 | EV chỉ từ odometry TRACKING, nhãn FRD, `reset_counter` theo epoch của mẫu; reset của PX4 áp tất định | §4.1, F13, F14, F34 | `EvEncoder.*`, `Alignment.*Reset*` |
 | SUP-1 | (kế hoạch, S2) Supervisor là nơi ghi duy nhất của điều khiển bay; thêm trạng thái phải qua review thiết kế | §2.2 | review; `check_change` bắt enumerator mới |
@@ -129,7 +130,7 @@ Việc độc lập không bị ảnh hưởng thì **không dừng**. Điều n
 3. So sánh phương án: giữ nguyên và thêm invariant/test; bỏ trạng thái dư bằng trạng thái dẫn xuất; chia lại sở hữu;
    FSM; FSM phân cấp; tách chiều trực giao; thiết kế lại. FSM không mặc định tốt hơn `bool`; nhiều cờ không mặc định là sai.
 4. Ghi một dòng AR\* vào bảng ở [DECISIONS.md](architecture/DECISIONS.md) §5: hệ con, tín hiệu, phân tích, `Window end` (commit
-   cuối của lịch sử đã xét), kết quả.
+   cuối của lịch sử đã xét), `Owner xác nhận` (`có`/`chưa`), kết quả. Một AR do phiên thực thi lập luôn ghi `chưa` cho tới khi owner xác nhận; `check_change.py` chặn Arch-Level 3 nếu AR chưa được owner xác nhận, và `arch_health.py` ghi rõ AR nào chưa được xác nhận.
 
 **Kết quả:** `KEEP` (giữ, bằng chứng chưa đủ để đổi), `LIMITED_REFACTOR`, `REDESIGN_PROPOSED` (đề xuất, chờ owner),
 `APPROVED` (owner đã duyệt thay đổi), `REJECTED`. Chỉ owner chuyển `REDESIGN_PROPOSED` thành `APPROVED`.
