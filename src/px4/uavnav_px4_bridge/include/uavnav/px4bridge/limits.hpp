@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "uavnav/core/time.hpp"
+#include "uavnav/px4bridge/px4_time.hpp"
 
 // Tier-(a) constants owned by uavnav_px4_bridge (SYSTEM_DESIGN §6.2). Changing one is a design-review
 // change; each states how its value was derived.
@@ -53,5 +54,31 @@ inline constexpr double kMaxPositionAbsM = 1e6;
 
 /// Largest alignment_consistent_pairs (its spec max): the INIT accumulation is a fixed array of this size.
 inline constexpr std::uint32_t kMaxConsistentPairs = 200;
+
+// --- Px4Bridge input shell (SYSTEM_DESIGN §4.1, D29, D33/O22) ----------------------------------------------
+
+/// Period of Px4Bridge::on_tick (O22, the node's ROS-clock timer). It drives the alignment timeouts without
+/// LIO input, so a timeout is seen at most one period late: 0.1 s against valid_stale >= 0.2 s and
+/// frozen_max >= 1 s (their spec minimums, checked in bridge.cpp).
+inline constexpr time::Duration kTickPeriod = time::milliseconds(100);
+
+/// An input stamp later than the newest tick time + this is refused (BridgeReason::kStampInFuture). In SITL every
+/// stamp (LIO sensor time, PX4 time) is the simulation /clock (D29), and a message is stamped before it is
+/// received; the newest tick lags ROS now by at most one kTickPeriod plus executor latency, so a correct stamp is
+/// at most about 0.1 s ahead of it. 0.5 s (the lio node's O20 bound) leaves four tick periods of margin and still
+/// refuses garbage before it reaches the alignment, where an accepted future stamp would make every later true
+/// sample out of order. Before the first tick there is no reference and nothing is refused as ahead.
+inline constexpr time::Duration kMaxStampAhead = time::milliseconds(500);
+static_assert(kMaxStampAhead > kTickPeriod + kTickPeriod);
+
+/// SensorTime -> PX4 time of the EV encoder. The beta is SITL only (SYSTEM_DESIGN §0, D29): the sensor clock is
+/// the simulation /clock, which is PX4's, so the conversion is the identity. kRealtime is refused by to_px4.
+inline constexpr ClockMode kClockMode = ClockMode::kSimulationIdentity;
+
+/// Per-input rejection events of Px4Bridge (EvGated, EvRejected, AlignmentPairRejected, Px4SampleRejected,
+/// LioInputRejected) are emitted on the 1st occurrence per event and reason and then on every kEventSummaryEvery-th
+/// (the lio frontend's rule and value, uavnav/lio/limits.hpp), so a 50 Hz PX4 fault or a 10 Hz gated EV stream
+/// reports once and then every 20 s / 100 s instead of flooding the event ring.
+inline constexpr std::uint64_t kEventSummaryEvery = 1000;
 
 }  // namespace uavnav::px4bridge::limits

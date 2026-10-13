@@ -11,8 +11,6 @@ namespace {
 
 constexpr std::uint8_t kMaxQuality = 100;
 constexpr double kFloatMax = static_cast<double>(std::numeric_limits<float>::max());
-/// |norm - 1| above this means the quaternion is not a rotation (zero, runaway or garbage).
-constexpr double kQuaternionNormTolerance = 1e-3;
 
 /// True when the double is finite and fits a float32 without overflow (the cast is then defined).
 bool fits_float(double x) { return std::isfinite(x) && std::fabs(x) <= kFloatMax; }

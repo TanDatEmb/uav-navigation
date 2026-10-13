@@ -22,6 +22,10 @@ namespace uavnav::px4bridge {
 inline constexpr std::uint8_t kPoseFrameFrd = 2;      ///< VehicleOdometry.POSE_FRAME_FRD
 inline constexpr std::uint8_t kVelocityFrameFrd = 2;  ///< VehicleOdometry.VELOCITY_FRAME_FRD
 
+/// |norm - 1| above this means the quaternion is not a rotation (zero, runaway or garbage): the encoder's
+/// kBadQuaternion and Px4Bridge's "no usable yaw for the alignment" use the same rule.
+inline constexpr double kQuaternionNormTolerance = 1e-3;
+
 /// Maps 1:1 onto px4_msgs::msg::VehicleOdometry (the node copies it in S1b).
 struct EvSample {
   std::uint64_t timestamp_sample_us;  ///< [us] PX4 time of the measurement
