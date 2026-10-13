@@ -52,8 +52,13 @@ inline FrontendConfig frontend_config(const LioConfig& c) {
 /// measurement noise sigma is about n / sigma^2:
 ///   translation 1.1e5 ~= 100 points at sigma = 0.03 m along the weakest direction: 100 / 0.03^2 = 1.11e5.
 ///   rotation    2.8e6 ~= the same 100 points at a 5 m lever arm: 100 * 5^2 / 0.03^2 = 2.78e6.
-/// These are beta starting values; S1b recalibrates both from SITL logs. The default YAML
-/// (config/lio/sim.yaml) repeats the values and points back here ("see config.hpp").
+/// These are beta starting values. The S1b SITL altitude sweep (docs/analysis/2026-10-s1b-degeneracy-calibration.md)
+/// could not support a recalibration: in every 1 s window before the first LOST the drift stayed <= 0.05 m, so the
+/// data has no degenerate region to place a threshold (the scans below the pair are not applied, D31, and LOST
+/// follows within 1 s). Measured there: hover at 2.3 m translation p5 4.9e5, rotation p5 2.5e7; walls only (4.75 m,
+/// floor out of range) translation ~9e2, rotation ~1.1e5; the synthetic floor-only scan translation 1.7e3. The
+/// report names the flight that would give support. The default YAML (config/lio/sim.yaml) repeats the values and
+/// points back here ("see config.hpp").
 ///
 /// Math keys (EstimatorMathConfig): beta values from the survey of `main` (config/runtime/sim.yaml); bounds are about
 /// 1/4x to 4x the beta value, except: the IMU -> LiDAR extrinsic components use the physical bound +-0.5 m
