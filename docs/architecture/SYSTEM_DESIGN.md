@@ -484,7 +484,7 @@ Node `px4_bridge` là target thứ hai của package `uavnav_px4_bridge`, còn t
 | Lát | Nội dung | Kiểm tra |
 |---|---|---|
 | S0 | `uavnav_core`, `uavnav_interfaces`, khung build, gate tối giản (thay `gate.sh` và các validator của `main`) | Unit test |
-| S1 | `uavnav_lio` và `uavnav_px4_bridge`, tham số PX4 theo profile | Hover ở mode Position của PX4, EKF2 fuse EV, log `T`. Kiểm giả thuyết F34. Cách kiểm (D33/O24): stick giữa qua `/fmu/in/manual_control_input`, dự phòng Hold; F34 kiểm ở heading khởi động khác hướng đông, cả hai profile |
+| S1 | `uavnav_lio` và `uavnav_px4_bridge`, tham số PX4 theo profile | Hover ở mode Position của PX4, EKF2 fuse EV, log `T`. Kiểm giả thuyết F34. Cách kiểm (D33/O24): stick giữa qua `/fmu/in/manual_control_input`, dự phòng Hold; F34 kiểm ở heading khởi động khác hướng đông, cả hai profile. Kết quả (O26): có GPS thì `yaw_T` ≈ π/2 − yaw spawn (lệch ≤ 3°); không GPS thì EKF2 lấy heading từ EV yaw nên `yaw_T` ≈ 0 và frame PX4 trùng frame bắt đầu của LIO |
 | S2 | `uavnav_px4_mode`, Supervisor tối giản, quỹ đạo thẳng, yaw Y1/Y3a, reason bàn giao | Bay tới waypoint trong môi trường trống |
 | S3 | `uavnav_world`, `uavnav_planning`, commit timeline, R1–R5 | Scene có vật cản |
 | S4 | LIO LOST/REACQUIRING/khởi động lại, phanh, guard bỏ cuộc, cắt LiDAR trong sim | Fault injection |

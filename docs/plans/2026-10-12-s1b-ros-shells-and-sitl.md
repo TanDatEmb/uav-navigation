@@ -784,7 +784,8 @@ Spec §4.1, §7.2 ("Kiểm giả thuyết F34"); F33, F34, D20; O24.
 
 **Decision rule.** F34 is closed by the FRD design when all four runs pass Task 11 **and** `T` absorbs the heading offset over the window:
 - max − min of `yaw_T` ≤ 1°;
-- for the yawed runs, |`yaw_T` − (π/2 − spawn yaw)| ≤ 3°. π/2 − spawn yaw is the NED heading at LIO start for an ENU spawn yaw.
+- gps profile, yawed runs: |`yaw_T` − (π/2 − spawn yaw)| ≤ 3°. π/2 − spawn yaw is the NED heading at LIO start for an ENU spawn yaw.
+- no_gps profile (O26, applied provisionally): EKF2 takes its heading from EV yaw, so |`yaw_T`| ≤ 3° with EV yaw fused in ≥ 95% of the window.
 
 Otherwise F34 stays open: the report names the failing check, and it becomes an owner item.
 
