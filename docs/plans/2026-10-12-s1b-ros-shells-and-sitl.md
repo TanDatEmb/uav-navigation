@@ -737,7 +737,7 @@ Spec §7.2 (S1 check), §6.1, D14; D33 (O19, O24). It needs the owner's machine 
   | EKF2 | `cs_ev_pos` in ≥ 95% of samples; `cs_ev_yaw` false throughout (gps) or true in ≥ 95% (no_gps, D20) |
   | LIO | TRACKING for 100% of the window; no LOST and at most 2 TRACKING entries in the run |
   | LIO flapping (owner 2026-10-13: accept the O15 flapping band, check the rate in SITL) | the number of DEGRADED→TRACKING transitions (from `StateTransition` events) is reported with the p50/p99 of the result age (`ScanResultTooOld.age_s` and the age of applied results); pass when ≤ 1 per 60 s of the window. A larger rate fails and stops for the owner (options: reset the DEGRADED confirmation run on a tick with gap > `gap_degraded`, or tie `gap_degraded` to the measured latency) |
-  | Alignment | VALID throughout; `/alignment` ≥ 9 Hz; `PAIR_REJECTED_JUMP` ≤ 1% of pairs; no `STALE`; VALID after each `Px4ResetApplied` |
+  | Alignment | VALID throughout; `/alignment` ≥ 9 Hz; `PAIR_REJECTED_JUMP` ≤ 1% of pairs; no `STALE`; once the alignment has been VALID in the run, VALID after each `Px4ResetApplied` (a reset while still INIT is reported, not judged) |
   | Drift | PX4 horizontal drift against ground truth (ENU→NED, from the window start) ≤ 0.3 m |
   | `/lio/state` | 100 ± 5 Hz; inter-arrival p99 ≤ 20 ms (P7: not starved); the F23 step max \|Δp − v·Δt\| is reported |
   | EV age | ROS now − `timestamp_sample`, p99 ≤ 150 ms (< `EKF2_DELAY_MAX`) |
