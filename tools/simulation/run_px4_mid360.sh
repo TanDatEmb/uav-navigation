@@ -10,7 +10,8 @@
 #                         set_pose service before PX4 attaches (F34 check, D33/O24)
 #   GZ_GUI=0              headless Gazebo server (the SITL harness always sets it)
 #   SESSION_DIR           run directory; Gazebo log in $SESSION_DIR/logs, PX4 working directory
-#                         (fresh parameters, PX4 logs) in $SESSION_DIR/px4
+#                         (fresh parameters, PX4 logs) in $SESSION_DIR/px4 (default SESSION_DIR:
+#                         log/px4_mid360/<UTC stamp>); a working directory that already holds parameters refuses start
 # Started and torn down by tools/uavnav/sitl_hover.sh, which owns the process groups.
 set -euo pipefail
 
@@ -171,7 +172,9 @@ export GZ_IP="${GZ_IP:-127.0.0.1}"
 unset GZ_CONFIG_PATH
 sanitize_path_for_gzsim
 
-GZ_LOG_DIR="${SESSION_DIR:-${WS_DIR}/log/px4_mid360}/logs"
+# The run's directory, or a new UTC-stamped one when started by hand: logs and the PX4 working directory.
+RUN_BASE="${SESSION_DIR:-${WS_DIR}/log/px4_mid360/$(date -u +%Y%m%dT%H%M%SZ)}"
+GZ_LOG_DIR="${RUN_BASE}/logs"
 mkdir -p "${GZ_LOG_DIR}"
 GZ_LOG="${GZ_LOG_DIR}/gazebo.log"
 
@@ -213,9 +216,11 @@ fi
 
 if [[ -n "${SPAWN_POSE_REQ:-}" ]]; then
   echo "Spawn yaw      : ${UAVNAV_SPAWN_YAW_RAD} rad (ENU) via /world/${WORLD_NAME}/set_pose"
-  if ! gz_run service -s "/world/${WORLD_NAME}/set_pose" --reqtype gz.msgs.Pose \
-      --reptype gz.msgs.Boolean --timeout 5000 --req "${SPAWN_POSE_REQ}" | grep -q "data: true"; then
-    echo "ERROR: set_pose of ${MODEL_NAME} failed (${SPAWN_POSE_REQ})" >&2
+  # Capture, then match: `| grep -q` could SIGPIPE gz and fail the pipeline under pipefail.
+  SET_POSE_REPLY="$(gz_run service -s "/world/${WORLD_NAME}/set_pose" --reqtype gz.msgs.Pose \
+      --reptype gz.msgs.Boolean --timeout 5000 --req "${SPAWN_POSE_REQ}" 2>&1)" || true
+  if [[ "${SET_POSE_REPLY}" != *"data: true"* ]]; then
+    echo "ERROR: set_pose of ${MODEL_NAME} failed (${SPAWN_POSE_REQ}): ${SET_POSE_REPLY}" >&2
     exit 1
   fi
 fi
@@ -250,7 +255,11 @@ export PX4_PARAM_COM_RC_IN_MODE=1    # MAVLink-only manual control: the ROS stic
 if [[ -v PX4_SIM_MODEL ]]; then unset PX4_SIM_MODEL; fi
 if [[ -v PX4_GZ_MODEL ]]; then unset PX4_GZ_MODEL; fi
 
-PX4_WORK_DIR="${SESSION_DIR:-${WS_DIR}/log/px4_mid360}/px4"
+PX4_WORK_DIR="${RUN_BASE}/px4"   # always new: PX4 starts with default parameters
+if [[ -e "${PX4_WORK_DIR}/parameters.bson" ]]; then
+  echo "ERROR: ${PX4_WORK_DIR} already holds PX4 parameters; use a new SESSION_DIR" >&2
+  exit 2
+fi
 mkdir -p "${PX4_WORK_DIR}"
 
 echo

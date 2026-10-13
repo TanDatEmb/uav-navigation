@@ -15,8 +15,11 @@
 #
 # Artifacts: log/sitl/<UTC stamp>-<profile>-probe/ only (process logs, PX4 working directory, records,
 # probe_meta.json, summary.json, harness.log).
-# Exit: 0 PASS; 1 FAIL (a check, a process or the teardown); 2 refused (usage, a colcon build or test is
-# running, another SITL is running, a prerequisite is missing); 124 hard timeout; 130 interrupted.
+# Before anything starts: tools/uavnav/sitl_guard.py (colcon build/test or another SITL process, matched on
+# argv, own ancestors excluded), UDP 8888 free, no Gazebo world clock on GZ_IP, no SITL topic on the ROS graph.
+# Exit: 0 PASS (seven checks and every probe phase); 1 FAIL (a check, a probe phase, a process or the
+# teardown); 2 refused (usage, a colcon build or test is running, another SITL is running, a prerequisite
+# is missing); 124 hard timeout; 130 interrupted.
 # --dry-run runs every precheck (read-only) and prints the commands it would run; it starts nothing.
 set -euo pipefail
 
@@ -55,17 +58,21 @@ refuse() { echo "sitl_hover: REFUSED: $*" >&2; exit 2; }
 ###############################################################################
 # Prechecks (read-only; also in --dry-run)
 ###############################################################################
-# Never while a build or test runs (CLAUDE.local.md machine limits).
-if colcon_procs="$(pgrep -af "colcon (build|test)")"; then
-  refuse "a colcon build or test is running:"$'\n'"${colcon_procs}"
-fi
-# One SITL at a time: anything that would share Gazebo transport, the XRCE port or the topics.
-others=""
-for pattern in "px4_sitl_default/bin/px4" "gz sim" "MicroXRCEAgent" "parameter_bridge" "gz_lidar_bridge" \
-               "sitl_probe.py"; do
-  if found="$(pgrep -af -- "${pattern}")"; then others+="${found}"$'\n'; fi
-done
-[[ -z "${others}" ]] || refuse "another SITL process is running (stop it first; this script never kills it):"$'\n'"${others}"
+# Never while a build or test runs (CLAUDE.local.md machine limits), and one SITL at a time. sitl_guard.py
+# matches on each process argv (argv[0], or the script of an interpreter), not on a substring of a command
+# line, and excludes this script's own ancestor chain (the shell, make, ...).
+guard_rc=0
+guard_out="$("${PYTHON}" "${WS_DIR}/tools/uavnav/sitl_guard.py")" || guard_rc=$?
+case "${guard_rc}" in
+  0) ;;
+  3)
+    if colcon_procs="$(grep '^colcon ' <<<"${guard_out}")"; then
+      refuse "a colcon build or test is running (pid argv):"$'\n'"$(cut -d' ' -f2- <<<"${colcon_procs}")"
+    fi
+    refuse "another SITL process is running (stop it first; this script never kills it) (pid argv):"$'\n'"$(cut -d' ' -f2- <<<"${guard_out}")"
+    ;;
+  *) refuse "tools/uavnav/sitl_guard.py failed (exit ${guard_rc})" ;;
+esac
 if command -v ss >/dev/null 2>&1 && ss -Hlun "sport = :${XRCE_PORT}" | grep -q .; then
   refuse "UDP port ${XRCE_PORT} (MicroXRCEAgent) is already in use: $(ss -Hlunp "sport = :${XRCE_PORT}")"
 fi
@@ -98,6 +105,14 @@ if busy="$(grep -E '^/(clock|lidar/|fmu/|sim/)' <<<"${graph}")"; then
   refuse "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0} already has SITL topics (stop their publisher first):"$'\n'"${busy}"
 fi
 export GZ_IP=127.0.0.1
+# Another Gazebo on this transport (whatever its process looks like) shows up as a world clock topic.
+if gz_topics="$(timeout 3 gz topic -l 2>/dev/null)"; then  # gz of the ROS env, its GZ_CONFIG_PATH kept
+  if worlds="$(grep -E '^/world/[^/]+/clock$' <<<"${gz_topics}")"; then
+    refuse "another Gazebo is running (GZ_IP=${GZ_IP}):"$'\n'"${worlds}"
+  fi
+else
+  echo "sitl_hover: warning: gz topic -l did not answer within 3 s; relying on the process, port and ROS checks" >&2
+fi
 # PX4 binary, rootfs, Gazebo, world and model, the profile (O23 allow-list) and the spawn yaw.
 echo "sitl_hover: run_px4_mid360.sh --check-only"
 UAVNAV_PX4_PROFILE="${PROFILE_FILE}" PYTHON="${PYTHON}" tools/simulation/run_px4_mid360.sh --check-only \
@@ -156,11 +171,18 @@ start_group() {  # $1 = name, rest = command; the child becomes leader of its ow
   setsid env --default-signal=INT "$@" >"${RUN_DIR}/${name}.log" 2>&1 </dev/null &
   local pid=$!
   STARTED_NAMES+=("${name}") STARTED_PIDS+=("${pid}")
-  sleep 0.2
-  local sid
-  sid="$(ps -o sid= -p "${pid}" 2>/dev/null | tr -d ' ')" || true
+  # Until setsid has run, the child is still in this script's session: poll up to 2 s for sid == pid.
+  local sid="" tries
+  for (( tries=0; tries<20; tries++ )); do
+    sid="$(ps -o sid= -p "${pid}" 2>/dev/null | tr -d ' ')" || true
+    if [[ -z "${sid}" || "${sid}" == "${pid}" ]]; then break; fi  # gone (the main loop reports it) or leader
+    sleep 0.1
+  done
   if [[ -n "${sid}" && "${sid}" != "${pid}" ]]; then
-    log "${name} (pid ${pid}) is not a session leader (sid ${sid}); refusing to continue"
+    log "${name} (pid ${pid}) did not become a session leader within 2 s (sid ${sid}); killing it and stopping"
+    kill -TERM "${pid}" 2>/dev/null || true
+    sleep 1
+    kill -KILL "${pid}" 2>/dev/null || true
     exit 1
   fi
   log "started ${name}: pid=pgid=sid=${pid}: $*"
@@ -206,7 +228,9 @@ teardown() {
       done
       if [[ "${pending}" == 0 ]] || wait_groups_gone "${grace}"; then break; fi
     done
-    for pid in "${STARTED_PIDS[@]}"; do wait "${pid}" 2>/dev/null || true; done  # reap our direct children
+    for pid in "${STARTED_PIDS[@]}"; do  # reap our direct children; never block on one that still runs
+      if ! group_alive "${pid}"; then wait "${pid}" 2>/dev/null || true; fi
+    done
     sleep 0.5  # orphaned zombies are reaped by init
     local leftover=""
     for (( i=0; i<${#STARTED_PIDS[@]}; i++ )); do
@@ -250,7 +274,7 @@ probe_cmd "${budget}"
 start_group probe "${PROBE_CMD[@]}"
 PROBE_PID="${STARTED_PIDS[-1]}"
 
-status=0
+status=0 probe_rc=""
 while :; do
   if ! kill -0 "${PROBE_PID}" 2>/dev/null; then
     probe_rc=0; wait "${PROBE_PID}" || probe_rc=$?
@@ -279,4 +303,9 @@ verdict=0
 "${PYTHON}" tools/uavnav/sitl_checks.py --probe "${RUN_DIR}" | tee -a "${RUN_DIR}/harness.log" || verdict=$?
 if [[ "${TEARDOWN_OK}" == 0 ]]; then exit 1; fi
 if [[ "${status}" != 0 ]]; then exit "${status}"; fi
-exit "${verdict}"
+if [[ "${verdict}" != 0 ]]; then exit "${verdict}"; fi
+if [[ "${probe_rc}" != 0 ]]; then
+  log "the probe exited with ${probe_rc} (a failed phase): FAIL although the checks passed"
+  exit 1
+fi
+exit 0

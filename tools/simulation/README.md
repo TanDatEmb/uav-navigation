@@ -16,9 +16,11 @@ Environment:
 - `UAVNAV_SPAWN_YAW_RAD` (optional): ENU spawn yaw of `x500_mid360`, applied
   with the world's `set_pose` service before PX4 attaches (F34 check, D33/O24).
 - `GZ_GUI=0`: headless Gazebo server (the harness always sets it).
-- `SESSION_DIR`: the run directory. The Gazebo log goes to
+- `SESSION_DIR`: the run directory (default when started by hand: a new
+  `log/px4_mid360/<UTC stamp>/`). The Gazebo log goes to
   `$SESSION_DIR/logs/gazebo.log`; PX4 runs in `$SESSION_DIR/px4`, a fresh
-  working directory, so no parameter of an earlier run is carried over.
+  working directory, so no parameter of an earlier run is carried over (a
+  directory that already holds `parameters.bson` refuses start).
 
 `run_px4_mid360.sh --check-only` validates the PX4 binary and rootfs, Gazebo,
 the world and model files, the profile and the spawn yaw, prints them, and

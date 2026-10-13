@@ -12,7 +12,8 @@ nor the PX4 bridge is needed) and records what the checks in sitl_checks.py judg
    and sets Hold with DO_SET_MODE 1/4/3.
 3. climb to 2.5 m above the ground z (posctl: throttle stick; takeoff phase for hold).
 4. hover for 20 s of /clock time with centred sticks (the evaluation window).
-5. land (NAV_LAND) and wait for the auto-disarm.
+5. land (NAV_LAND once, again only if PX4 is not in AUTO_LAND) and wait for the auto-disarm.
+   On an interruption or an exception while armed, one best-effort NAV_LAND is sent before exit.
 
 Records (JSONL, one file per topic, in --run-dir; formats in sitl_checks.py): /lidar/points
 (fields, point_step, frame, non-finite counts, stamp, newest IMU stamp at arrival), /lidar/imu,
@@ -237,6 +238,7 @@ class Flight:
         self.ground_z = None
         self.hover_window = None
         self.start_clock = None
+        self.arm_sent = False
 
     def log(self, text):
         print(f"[sitl_probe] {text}", flush=True)
@@ -309,6 +311,7 @@ class Flight:
         return ok, f"nav_state {seen}, wanted {wanted}"
 
     def arm(self):
+        self.arm_sent = True
         ok = self.wait(self.armed, ARM_S,
                        action=lambda: self.node.command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0),
                        every_s=2.0)
@@ -355,12 +358,18 @@ class Flight:
         sim_s = (end - start) / 1e9
         return ok and self.armed() and sim_s >= HOVER_SIM_S, f"{sim_s:.2f} s of /clock time"
 
-    def land(self):
+    def send_land(self):
         nan = float("nan")
+        self.node.command(VehicleCommand.VEHICLE_CMD_NAV_LAND, 0.0, 0.0, 0.0, nan, nan, nan, nan)
+
+    def land(self):
         self.node.set_throttle(0.0)
-        ok = self.wait(lambda: not self.armed(), LAND_S, reserve_s=0.0,
-                       action=lambda: self.node.command(VehicleCommand.VEHICLE_CMD_NAV_LAND, 0.0, 0.0, 0.0, nan,
-                                                        nan, nan, nan), every_s=3.0)
+        landing = VehicleStatus.NAVIGATION_STATE_AUTO_LAND
+
+        def resend_unless_landing():  # NAV_LAND once; again only if PX4 is not in AUTO_LAND 3 s later
+            if not self.nav_state_is(landing):
+                self.send_land()
+        ok = self.wait(lambda: not self.armed(), LAND_S, reserve_s=0.0, action=resend_unless_landing, every_s=3.0)
         return ok, "disarmed" if ok else f"still armed after {LAND_S} s"
 
     def record_tail(self):
@@ -381,6 +390,9 @@ class Flight:
                 ok = self.phase("arm", self.arm) and self.phase("climb", self.climb_hold)
             flown = self.armed()
             ok = ok and self.phase("hover", self.hover)
+        if self.arm_sent and not flown and not self.armed():
+            # An arm command was sent: the vehicle may arm just after the phase gave up. Look once more.
+            self.wait(self.armed, 2.0, reserve_s=0.0)
         if flown or self.armed():
             ok = self.phase("land", self.land) and ok
         self.record_tail()
@@ -412,6 +424,9 @@ def main(argv=None) -> int:
         ok = flight.run()
     finally:
         node.set_throttle(0.0)
+        if flight.armed():  # interrupted or failed in the air: best-effort land before PX4 is torn down
+            flight.send_land()
+            time.sleep(0.2)
         executor.shutdown(timeout_sec=2.0)
         spinner.join(timeout=5.0)
         node.close()

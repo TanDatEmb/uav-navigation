@@ -56,8 +56,10 @@ runs `tools/uavnav/sitl_hover.sh --probe`: PX4 v1.17 SITL with Gazebo Harmonic
 (`tools/simulation/run_px4_mid360.sh`, PX4 in `~/Dev/Autopilot`), MicroXRCEAgent
 on UDP 8888, the gz bridges and an rclpy probe, each in its own process group,
 bounded at 240 s and always torn down. It refuses to start while a `colcon`
-build or test or another SITL runs. The verdict is
-`log/sitl/<UTC stamp>-<profile>-probe/summary.json`. It needs
+build or test or another SITL runs (`tools/uavnav/sitl_guard.py`). The verdict is
+`log/sitl/<UTC stamp>-<profile>-probe/summary.json`: seven checks (mode
+accepted, cloud layout, non-finite ratio, IMU rate, scan stamp vs IMU, sensor
+time vs `/clock`, PX4 time vs `/clock`) and every probe phase ok. It needs
 `make build PKGS="uav_simulation uav_description px4_msgs"` first. The PX4
 localization profiles are `config/px4/profiles/{gps,no_gps}.yaml`, validated by
 `tools/uavnav/px4_profile.py`. The simulation packages live in `src/sim/`.

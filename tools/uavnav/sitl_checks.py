@@ -1,8 +1,10 @@
 """Verdicts of SITL runs from the records a run leaves in its directory. Standard library only.
 
 evaluate_probe(run_dir) judges the Task 3 probe of the SITL assumptions (D33 O20/O24, D29) and
-writes run_dir/summary.json. Every check fails when its data is missing, empty or malformed
-(fail closed, SYSTEM_DESIGN §0): a check never passes on absent evidence.
+writes run_dir/summary.json with seven checks: <mode>_accepted, cloud_layout, cloud_non_finite_ratio,
+imu_rate, scan_stamp_vs_imu, sensor_time_identity, px4_time_identity. Every check fails when its
+data is missing, empty or malformed (fail closed, SYSTEM_DESIGN §0): a check never passes on absent
+evidence. The result is PASS only when every check passes and every probe phase was ok (phases_ok).
 
 Records (written by tools/uavnav/sitl_probe.py; one JSON object per line):
 
@@ -37,7 +39,10 @@ ARMING_STATE_ARMED = 2
 CLOUD_FRAME = "livox_frame"             # O20 / model.sdf gz_frame_id
 HOVER_HEIGHT_TOL_M = 0.5                # posctl_accepted: hover within 0.5 m of the climb height
 IMU_RATE_HZ, IMU_RATE_TOL_HZ = 200.0, 10.0
-SCAN_AHEAD_OF_IMU_P99_MAX_MS = 50.0     # p99 of (scan stamp - newest IMU stamp at arrival)
+SCAN_AHEAD_OF_IMU_P99_MAX_MS = 50.0     # p99 of (scan stamp - newest IMU stamp at arrival) <= +50 ms
+SCAN_BEHIND_IMU_P1_MIN_MS = -200.0      # and p1 >= -200 ms: a stale, zeroed or old-epoch scan stamp fails
+SENSOR_CLOCK_P99_MAX_MS = 100.0         # p99 of |sensor stamp - /clock at arrival|, IMU and scan separately
+SENSOR_AHEAD_MAX_MS = 500.0             # O20: a stamp more than 0.5 s ahead of ROS now is refused
 PX4_TIME_P99_MAX_MS = 20.0              # p99 of |vehicle_local_position.timestamp - /clock| (D29)
 
 
@@ -194,10 +199,22 @@ def _check_cloud_layout(data: _Loader) -> dict:
                      for f in r["fields"] if isinstance(f, dict)]
     per_point_time = sorted({f.get("name") for r in clouds for f in r["fields"] if isinstance(f, dict)}
                             & {"t", "time", "timestamp", "offset_time"})
+    hover_clouds = hover_rate = None
+    try:
+        window = data.meta().get("hover_window")
+        if isinstance(window, dict):
+            start = _field(window, "start_ns", int, "hover_window")
+            end = _field(window, "end_ns", int, "hover_window")
+            if end > start:
+                hover_clouds = sum(1 for r in clouds if start <= _field(r, "arrival_ns", int, "lidar_points.jsonl") <= end)
+                hover_rate = hover_clouds / ((end - start) / 1e9)
+    except MissingData:
+        pass  # reported as null; the received rate is information, not a layout criterion
     return {"pass": not bad,
             "value": {"clouds": len(clouds), "bad_clouds": len(bad), "first_bad_index": bad[0] if bad else None,
                       "fields": names, "point_step": clouds[0].get("point_step"), "frames": sorted(frames),
-                      "per_point_time_fields": per_point_time},
+                      "per_point_time_fields": per_point_time,
+                      "hover_window_clouds": hover_clouds, "hover_window_rate_hz": hover_rate},
             "detail": f"x, y, z FLOAT32 (count 1) and frame {CLOUD_FRAME!r} in every cloud"}
 
 
@@ -205,19 +222,24 @@ def _check_cloud_non_finite(data: _Loader) -> dict:
     clouds = _clouds(data)
     total = nan = inf = 0
     ratios = []
+    finite_per_cloud = []
     for r in clouds:
         n = _field(r, "n_points", int, "lidar_points.jsonl")
         n_nan = _field(r, "n_nan", int, "lidar_points.jsonl")
         n_inf = _field(r, "n_inf", int, "lidar_points.jsonl")
         total, nan, inf = total + n, nan + n_nan, inf + n_inf
+        finite_per_cloud.append(n - n_nan - n_inf)
         if n > 0:
             ratios.append((n_nan + n_inf) / n)
     if total == 0:
         raise MissingData("every cloud is empty")
-    return {"pass": True,
+    empty = sum(1 for k in finite_per_cloud if k <= 0)
+    return {"pass": empty == 0,
             "value": {"ratio": (nan + inf) / total, "points": total, "nan": nan, "inf": inf,
-                      "min_ratio": min(ratios), "max_ratio": max(ratios), "clouds": len(clouds)},
-            "detail": "reported only (O20: non-finite points are dropped and counted)"}
+                      "min_ratio": min(ratios), "max_ratio": max(ratios), "clouds": len(clouds),
+                      "min_finite_points": min(finite_per_cloud), "clouds_without_finite_points": empty},
+            "detail": "ratio reported (O20: non-finite points are dropped and counted); fails when any cloud "
+                      "has no finite point"}
 
 
 def _check_imu_rate(data: _Loader) -> dict:
@@ -248,11 +270,36 @@ def _check_scan_stamp_vs_imu(data: _Loader) -> dict:
         deltas.append((stamp - newest) / 1e6)
     if not deltas:
         raise MissingData("no cloud arrived after an IMU sample")
-    p99 = percentile(deltas, 99)
-    return {"pass": p99 <= SCAN_AHEAD_OF_IMU_P99_MAX_MS,
-            "value": {"p50_ms": percentile(deltas, 50), "p99_ms": p99, "min_ms": min(deltas),
+    p99, p1 = percentile(deltas, 99), percentile(deltas, 1)
+    return {"pass": p99 <= SCAN_AHEAD_OF_IMU_P99_MAX_MS and p1 >= SCAN_BEHIND_IMU_P1_MIN_MS,
+            "value": {"p1_ms": p1, "p50_ms": percentile(deltas, 50), "p99_ms": p99, "min_ms": min(deltas),
                       "max_ms": max(deltas), "clouds": len(deltas), "clouds_before_first_imu": before_first_imu},
-            "detail": f"p99 of (scan stamp - newest IMU stamp at arrival) <= {SCAN_AHEAD_OF_IMU_P99_MAX_MS} ms"}
+            "detail": f"(scan stamp - newest IMU stamp at arrival): p99 <= {SCAN_AHEAD_OF_IMU_P99_MAX_MS} ms and "
+                      f"p1 >= {SCAN_BEHIND_IMU_P1_MIN_MS} ms"}
+
+
+def _sensor_offsets(records: list, source: str) -> dict:
+    """stamp - /clock at arrival [ms] of one sensor stream: p99 of the magnitude and the largest lead."""
+    offsets = [(_field(r, "stamp_ns", int, source) - _field(r, "arrival_ns", int, source)) / 1e6 for r in records]
+    magnitudes = [abs(o) for o in offsets]
+    return {"samples": len(offsets), "p50_abs_ms": percentile(magnitudes, 50), "p99_abs_ms": percentile(magnitudes, 99),
+            "min_ms": min(offsets), "max_ms": max(offsets)}
+
+
+def _check_sensor_time_identity(data: _Loader) -> dict:
+    clock = [_field(r, "clock_ns", int, "clock.jsonl") for r in data.jsonl("clock.jsonl")]
+    backwards = sum(1 for a, b in zip(clock, clock[1:]) if b < a)
+    imu = _sensor_offsets(data.jsonl("lidar_imu.jsonl"), "lidar_imu.jsonl")
+    scan = _sensor_offsets(_clouds(data), "lidar_points.jsonl")
+    passed = (backwards == 0
+              and all(s["p99_abs_ms"] <= SENSOR_CLOCK_P99_MAX_MS for s in (imu, scan))
+              and all(s["max_ms"] <= SENSOR_AHEAD_MAX_MS for s in (imu, scan)))
+    return {"pass": passed,
+            "value": {"imu": imu, "scan": scan, "clock_samples": len(clock), "clock_backwards": backwards,
+                      "p99_abs_max_ms": SENSOR_CLOCK_P99_MAX_MS, "ahead_max_ms": SENSOR_AHEAD_MAX_MS},
+            "detail": f"D29: sensor stamp vs /clock at arrival, IMU and scan separately: p99 |stamp - clock| <= "
+                      f"{SENSOR_CLOCK_P99_MAX_MS} ms, stamp - clock never above +{SENSOR_AHEAD_MAX_MS} ms (O20), "
+                      f"/clock never goes backwards"}
 
 
 def _check_px4_time_identity(data: _Loader) -> dict:
@@ -289,15 +336,21 @@ def evaluate_probe(run_dir) -> dict:
         "cloud_non_finite_ratio": _run(_check_cloud_non_finite, data),
         "imu_rate": _run(_check_imu_rate, data),
         "scan_stamp_vs_imu": _run(_check_scan_stamp_vs_imu, data),
+        "sensor_time_identity": _run(_check_sensor_time_identity, data),
         "px4_time_identity": _run(_check_px4_time_identity, data),
     }
+    phases = meta.get("phases")
+    phases_ok = (isinstance(phases, list) and bool(phases)
+                 and all(isinstance(ph, dict) and ph.get("ok") is True for ph in phases)
+                 and meta.get("interrupted") is not True)
     summary = {
         "kind": "probe",
         "run_dir": str(run_dir),
         "profile": meta.get("profile"),
         "hover_mode": mode,
-        "phases": meta.get("phases"),
-        "result": "PASS" if all(c["pass"] for c in checks.values()) else "FAIL",
+        "phases": phases,
+        "phases_ok": phases_ok,
+        "result": "PASS" if phases_ok and all(c["pass"] for c in checks.values()) else "FAIL",
         "checks": checks,
     }
     tmp = run_dir / "summary.json.tmp"
@@ -317,6 +370,8 @@ def main(argv=None) -> int:
     summary = evaluate_probe(args.probe)
     for name, check in summary["checks"].items():
         print(f"{'PASS' if check['pass'] else 'FAIL'}  {name}: {json.dumps(check['value'])}")
+    print(f"{'PASS' if summary['phases_ok'] else 'FAIL'}  phases_ok: "
+          f"{json.dumps([(ph.get('name'), ph.get('ok')) for ph in summary['phases'] or [] if isinstance(ph, dict)])}")
     print(f"SITL_PROBE_RESULT={summary['result']} ({args.probe / 'summary.json'})")
     return 0 if summary["result"] == "PASS" else 1
 

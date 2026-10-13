@@ -32,8 +32,10 @@ virtual environment for normal verification.
   MicroXRCEAgent (UDP 8888) + gz bridges + `tools/uavnav/sitl_probe.py`, each in
   its own process group, bounded at 240 s, always torn down (Ctrl-C is safe;
   never `kill -9` the script). It exits 2 while a `colcon` build or test or
-  another SITL runs, so never start it during a build. The verdict is
-  `log/sitl/<UTC stamp>-<profile>-probe/summary.json` (`sitl_checks.py`). It is
+  another SITL runs (`sitl_guard.py`, matched on argv), so never start it
+  during a build. The verdict is
+  `log/sitl/<UTC stamp>-<profile>-probe/summary.json` (`sitl_checks.py`: seven
+  checks plus every probe phase ok). It is
   owner machine time and never part of `make test` or `make gate`; `DRY_RUN=1`
   runs only the prechecks and prints the commands.
 - PX4 profiles (`config/px4/profiles/*.yaml`) are validated by
