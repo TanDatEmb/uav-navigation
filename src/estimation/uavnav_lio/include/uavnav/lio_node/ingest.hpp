@@ -70,7 +70,10 @@
 //                         its own `now`; no epoch (the runner is not read).
 //   "LioInputRejected"    IngestReason::kStampInFuture (rate-limited as above; values stream 0 IMU / 1 scan,
 //                         sensor_time_s, ros_time_s, count). The core emits the same event name with its
-//                         EstimatorReason for its own refusals.
+//                         EstimatorReason for its own refusals, and the node (lio_node.hpp) with a
+//                         ConversionError or NodeReason::kNoRosTime for messages refused at the boundary.
+//   "LioPublishFailed", "LioNodeFailed", "LioNodeSummary": the node's own (NodeReason; lio_node.hpp). The node's
+//                         LioNodeSummary precedes IngestSummary, the last record of a shut-down process.
 //   "LioScanDropped"      IngestReason::kImuCoverageTimeout or kSuperseded (values scan_end_s, waited_s).
 //   "IngestSummary"       IngestReason::kAccepted, once, at stop(): IngestStats, the frontend's scan/IMU-copy
 //                         counters and both runner queue stats (pushed, popped, rejected). This is the SITL

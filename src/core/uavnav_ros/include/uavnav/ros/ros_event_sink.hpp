@@ -40,7 +40,8 @@ static_assert(ReasonEnum<RosSinkError>);
 /// - Failure: an exception from conversion or publish (allocation failure, ...) is caught and returned as
 ///   SinkError::kIo; nothing escapes (AGENTS §2.6). So is a write after the node's rclcpp context was shut
 ///   down: rclcpp ignores such a publish silently, which would lose the batch without a trace, so write()
-///   checks the context first. The recorder counts either as one sink failure.
+///   checks the context first. The recorder counts either as one sink failure. The check is not atomic with
+///   the publish: a context shut down between is_valid() and publish() still loses that batch silently (TOCTOU).
 /// - Lifetime: the sink keeps the publisher and the node's context alive, not the node. Destroy the
 ///   EventRecorder (and with it the sink; its destructor drains the ring into write()) BEFORE the node and
 ///   before rclcpp::shutdown(), or the last batch is reported as failed.

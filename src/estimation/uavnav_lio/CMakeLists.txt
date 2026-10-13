@@ -14,7 +14,10 @@ find_package(Eigen3 REQUIRED)
 # uavnav_lio_core are instrumented by their own entries in the `make sanitize` loop. With "thread",
 # UAVNAV_LIO_TSAN_BUILD is defined here too: uavnav/lio/limits.hpp (kIcpThreads) is included by this package's
 # translation units, and its value must be the same in every translation unit of one program as in
-# uavnav_lio_core's (ODR). Targets that need ROS are not built under UAVNAV_SANITIZE (Task 8).
+# uavnav_lio_core's (ODR). Targets that need ROS (uavnav_lio_ros, lio_node and their tests) are not built under
+# UAVNAV_SANITIZE: rclcpp and the DDS middleware are not instrumented, so a TSan run of them would only report the
+# middleware; the ingest library and its tests are the sanitizer targets. Not even the ROS packages are looked up
+# then, so `make sanitize` (colcon --packages-select uavnav_core uavnav_lio_core uavnav_lio) needs none of them.
 set(UAVNAV_SANITIZE "" CACHE STRING "Sanitizer for uavnav_lio_ingest and its tests: empty, thread or address")
 if(NOT UAVNAV_SANITIZE STREQUAL "" AND NOT UAVNAV_SANITIZE STREQUAL "thread" AND NOT UAVNAV_SANITIZE STREQUAL "address")
   message(FATAL_ERROR "UAVNAV_SANITIZE='${UAVNAV_SANITIZE}' is invalid: use empty, 'thread' or 'address'")
@@ -54,6 +57,33 @@ install(TARGETS uavnav_lio_ingest EXPORT export_uavnav_lio
 ament_export_targets(export_uavnav_lio HAS_LIBRARY_TARGET)
 ament_export_dependencies(uavnav_core uavnav_lio_core Eigen3)
 
+# --- uavnav_lio_ros + lio_node: the ROS node (S1b Task 8; SYSTEM_DESIGN §3.5, D33/O19-O21) --------------------
+# Message conversion at the boundary and the LioNode class (a static library, linked by the executable and the
+# tests; not exported), and the `lio_node` executable in lib/uavnav_lio. Skipped under UAVNAV_SANITIZE (above).
+set(UAVNAV_LIO_ROS_ENABLED OFF)
+if(UAVNAV_SANITIZE STREQUAL "")
+  set(UAVNAV_LIO_ROS_ENABLED ON)
+  find_package(rclcpp REQUIRED)
+  find_package(sensor_msgs REQUIRED)
+  find_package(uavnav_interfaces REQUIRED)
+  find_package(uavnav_ros REQUIRED)
+  add_library(uavnav_lio_ros STATIC src/ros_conversion.cpp src/lio_node.cpp)
+  target_compile_options(uavnav_lio_ros PRIVATE ${UAVNAV_LIO_STRICT_WARNINGS})
+  set_target_properties(uavnav_lio_ros PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  # The C++ typesupport target of a message package carries its headers and the library publishers need.
+  target_link_libraries(uavnav_lio_ros PUBLIC
+    uavnav_lio_ingest
+    uavnav_ros::uavnav_ros
+    rclcpp::rclcpp
+    sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
+    uavnav_interfaces::uavnav_interfaces__rosidl_typesupport_cpp)
+
+  add_executable(lio_node src/lio_node_main.cpp)
+  target_compile_options(lio_node PRIVATE ${UAVNAV_LIO_STRICT_WARNINGS})
+  target_link_libraries(lio_node PRIVATE uavnav_lio_ros)
+  install(TARGETS lio_node DESTINATION lib/${PROJECT_NAME})
+endif()
+
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   # The tracked default parameter files, found from this package's source dir (portable, no install step).
@@ -67,6 +97,21 @@ if(BUILD_TESTING)
     target_compile_definitions(${test_name} PRIVATE UAVNAV_LIO_DEFAULT_YAML="${UAVNAV_LIO_DEFAULT_YAML}"
       UAVNAV_LIO_NODE_YAML="${UAVNAV_LIO_NODE_YAML}")
   endforeach()
+  if(UAVNAV_LIO_ROS_ENABLED)
+    # Pure message conversion: no rclcpp context, gtest's own main.
+    ament_add_gtest(test_ros_conversion test/test_ros_conversion.cpp TIMEOUT 120)
+    target_link_libraries(test_ros_conversion uavnav_lio_ros)
+    target_compile_options(test_ros_conversion PRIVATE ${UAVNAV_LIO_STRICT_WARNINGS})
+    # In process ROS: the shared main of the uavnav_ros scheme (per-process DDS domain, localhost) and the same
+    # RESOURCE_LOCK name, so ctest never runs two in-process ROS tests at once.
+    ament_add_gtest(test_lio_node test/test_lio_node.cpp TIMEOUT 300 SKIP_LINKING_MAIN_LIBRARIES)
+    target_sources(test_lio_node PRIVATE test/ros_test_main.cpp)
+    target_link_libraries(test_lio_node uavnav_lio_ros)
+    target_compile_options(test_lio_node PRIVATE ${UAVNAV_LIO_STRICT_WARNINGS})
+    target_compile_definitions(test_lio_node PRIVATE UAVNAV_LIO_DEFAULT_YAML="${UAVNAV_LIO_DEFAULT_YAML}"
+      UAVNAV_LIO_NODE_YAML="${UAVNAV_LIO_NODE_YAML}")
+    set_tests_properties(test_lio_node PROPERTIES RESOURCE_LOCK ros_dds)
+  endif()
 endif()
 
 ament_package()
