@@ -1,5 +1,7 @@
 # Hiệu chỉnh ngưỡng suy biến LIO từ chuyến quét độ cao trong SITL (S1b Task 13, 2026-10-13)
 
+> **Cập nhật 2026-10-14 (D36):** owner chốt rằng suy biến khi bay trong map trống là bình thường và không cố khắc phục. Ngưỡng giữ giá trị beta, ba phương án hiệu chỉnh ở mục 7 không còn là việc phải làm; công cụ và pattern `altitude_sweep` được giữ làm chẩn đoán.
+
 Báo cáo này ghi chuyến quét độ cao SITL dùng để đặt ngưỡng suy biến của LIO (spec §3.2: "lấy từ log trị riêng trên
 scene mở và scene suy biến (bay cao) trong SITL"; D20, D28, F36, O6). Artifact nằm local ở
 `log/sitl/20261013T162711Z-gps-altitude_sweep/` (không commit): `summary.json`, `calibration.json`, bản ghi JSONL,

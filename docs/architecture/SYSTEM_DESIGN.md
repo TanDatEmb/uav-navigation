@@ -181,8 +181,8 @@ INITIALIZING ──map đủ ∧ 5 scan tốt liên tiếp──► TRACKING ◄
 ### §3.2 Phát hiện suy biến
 
 - Mỗi scan, tính ma trận 6×6 `HᵀR⁻¹H` và tách thành khối **tịnh tiến** và khối **xoay**. Trị riêng nhỏ nhất của mỗi khối so với ngưỡng (tầng b), có hysteresis.
-- Giá trị khởi đầu của ngưỡng là một việc của lát S1: lấy từ log trị riêng trên scene mở và scene suy biến (bay cao) trong SITL.
-- **Kết quả S1b (O27):** chuyến quét độ cao không đủ để hiệu chỉnh vì LIO LOST ngay sau khi suy biến bắt đầu (≈ 4.76 m) và S1b chưa có restart. Ngưỡng giữ giá trị beta (biên khoảng 2.5× tịnh tiến, 2× xoay so với các lần hover); hiệu chỉnh chuyển sang S2 khi có chuyển động thật.
+- Giá trị ngưỡng là giá trị beta đã đo trong SITL (S1b, D36); trị riêng của mọi scan vẫn được log để chẩn đoán.
+- **Ngưỡng và hành vi (D36):** suy biến khi bay trong map trống hay thiếu hình học là bình thường, không cố khắc phục: LIO đi DEGRADED rồi LOST, EV dừng, `T` FROZEN (§4.1) và xử lý theo D4/D11. Ngưỡng giữ giá trị beta (biên đo được khoảng 2.5× tịnh tiến, 2× xoay so với các lần hover; chuyến quét S1b LOST ở ≈ 4.76 m khi sàn rời tầm nhìn). Không hiệu chỉnh thêm.
 - Mọi scan đều ghi log các trị riêng này.
 
 ### §3.3 Output predictor `/lio/state` 100 Hz
@@ -485,7 +485,7 @@ Node `px4_bridge` là target thứ hai của package `uavnav_px4_bridge`, còn t
 | Lát | Nội dung | Kiểm tra |
 |---|---|---|
 | S0 | `uavnav_core`, `uavnav_interfaces`, khung build, gate tối giản (thay `gate.sh` và các validator của `main`) | Unit test |
-| S1 | `uavnav_lio` và `uavnav_px4_bridge`, tham số PX4 theo profile | Hover ở mode Position của PX4, EKF2 fuse EV, log `T`. Kiểm giả thuyết F34. Cách kiểm (D33/O24): stick giữa qua `/fmu/in/manual_control_input`, dự phòng Hold; F34 kiểm ở heading khởi động khác hướng đông, cả hai profile. Kết quả (O26): có GPS thì `yaw_T` ≈ π/2 − yaw spawn (lệch ≤ 3°); không GPS thì EKF2 lấy heading từ EV yaw nên `yaw_T` ≈ 0 và frame PX4 trùng frame bắt đầu của LIO |
+| S1 | `uavnav_lio` và `uavnav_px4_bridge`, tham số PX4 theo profile | Hover ở mode Position của PX4, EKF2 fuse EV, log `T`. Kiểm giả thuyết F34. Cách kiểm (D33/O24): stick giữa qua `/fmu/in/manual_control_input`, dự phòng Hold; F34 kiểm ở heading khởi động khác hướng đông, cả hai profile. Kết quả (D35): có GPS thì `yaw_T` ≈ π/2 − yaw spawn (lệch ≤ 3°); không GPS thì EKF2 lấy heading từ EV yaw nên `yaw_T` ≈ 0 và frame PX4 trùng frame bắt đầu của LIO |
 | S2 | `uavnav_px4_mode`, Supervisor tối giản, quỹ đạo thẳng, yaw Y1/Y3a, reason bàn giao | Bay tới waypoint trong môi trường trống |
 | S3 | `uavnav_world`, `uavnav_planning`, commit timeline, R1–R5 | Scene có vật cản |
 | S4 | LIO LOST/REACQUIRING/khởi động lại, phanh, guard bỏ cuộc, cắt LiDAR trong sim | Fault injection |
@@ -524,5 +524,4 @@ Bảng tiêu chí đầy đủ để đánh giá sau beta là O4 trong DECISIONS
 | Respawn process | §6.6 |
 | Relocalize vào map cũ | D20 |
 | Đo lại lựa chọn EV 10 Hz và τ | O2 |
-| Ngưỡng suy biến | O6 |
 | Lọc `T` | D21 |

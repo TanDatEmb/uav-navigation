@@ -785,7 +785,7 @@ Spec §4.1, §7.2 ("Kiểm giả thuyết F34"); F33, F34, D20; O24.
 **Decision rule.** F34 is closed by the FRD design when all four runs pass Task 11 **and** `T` absorbs the heading offset over the window:
 - max − min of `yaw_T` ≤ 1°;
 - gps profile, yawed runs: |`yaw_T` − (π/2 − spawn yaw)| ≤ 3°. π/2 − spawn yaw is the NED heading at LIO start for an ENU spawn yaw.
-- no_gps profile (O26, applied provisionally): EKF2 takes its heading from EV yaw, so |`yaw_T`| ≤ 3° with EV yaw fused in ≥ 95% of the window.
+- no_gps profile (D35): EKF2 takes its heading from EV yaw, so |`yaw_T`| ≤ 3° with EV yaw fused in ≥ 95% of the window.
 
 Otherwise F34 stays open: the report names the failing check, and it becomes an owner item.
 
@@ -960,3 +960,21 @@ Already closed:
   - Each SITL run takes about 5 min, about 50 min in total: the Task 3 probe (plus at most one re-run), the Task 11 hover (plus at most one re-run), four hovers in Task 12, one sweep and one re-check in Task 13, and one hover in Task 14.
   - These runs need the owner's machine time on an idle machine. Agents prepare the commands and evaluate the artifacts.
 - **TSan:** Task 7 adds `uavnav_lio` (the ingest library and its tests only) to `make sanitize`; `setarch -R` stays.
+
+## Carry-over to S2
+
+Each item names where it lives and who closes it. 
+
+| # | Item | Where | Closes in |
+|---|---|---|---|
+| 1 | τ re-evaluation (O13) from the output tracking error in `/lio/health`; the F23 step with real motion | every S1b hover records it (`log/sitl/*/records`); TRACEABILITY τ row | S2 flights at 1–5 m/s |
+| 2 | Degeneracy thresholds: closed by D36 (degeneracy in an empty map is normal; beta pair kept). The tool `tools/uavnav/lio_calibration.py` and `PATTERN=altitude_sweep` stay as diagnostics only | `docs/analysis/2026-10-s1b-degeneracy-calibration.md` | closed |
+| 3 | DV1 re-watch: the O15 age band (0.145–0.25 s) was never exercised (applied-result age p99 28 ms at hover) | TRACEABILITY DV1 (CLOSED, with this note) | S2 |
+| 4 | `NO_PX4_SAMPLE` rejections vary per run (0 to about 19% of pairs) with the alignment still VALID; cause not investigated | `docs/analysis/2026-10-s1b-f34-check.md` §4 and §9, run `20261013T155144Z-no_gps-hover` | first S2 task touching the alignment |
+| 5 | no_gps heading reset of about 20° when EV yaw starts (D35): it came before the alignment was VALID; the `T` reset handling (D30/O11) must absorb a step that large if it comes later | `docs/architecture/DECISIONS.md` D35 | S2 / S4 |
+| 6 | Stale-epoch odometry gate and the two-resets-in-one-dropped-window limit | O25 | S3/S4 (restart) |
+| 7 | `/lio/scan`, the restart caller, the seed helper `T⁻¹ × PX4 pose` with `T` in `LioRestart` | O25 | S3/S4 |
+| 8 | Hardware: two lost scans in a row trip DEGRADED at `gap_degraded` = 0.25 s; the Fast DDS profile applies to SITL only; real Mid-360 noise and Ethernet transport | `config/ros/fastdds_sitl.xml`, README SITL section | hardware phase (P8) |
+| 9 | Unverified in flight: `DO_SET_MODE` (accepted when disarmed only), whether POSCTL comes from the stick stream or PX4's default; the `ImuGap` policy never fired; floor-only scene | `docs/analysis/2026-10-s1b-f34-check.md` §10 | S2 |
+| 10 | Deferred review minors: T11 M2/M3/M6/M8 (inter-arrival in /clock time, `ekf2_ev_pos` weighted by sample, private launch_ros attributes in a test, the probe re-run with the DDS profile); T8 M4 (diagnostic log of the first WRONG_FRAME / MALFORMED_CLOUD); T3 minors in `progress.md`; T7 deferred list in `progress.md`; `kEventSummaryEvery` duplicates the lio constant | `.superpowers/sdd/2026-10-12-s1b-ros-shells-and-sitl/progress.md` | when next touching the file |
+| 11 | Governance: classify the legacy `navigation_*` packages in `tools/uavnav/arch_rules.yaml` (7 warnings); recalibrate `stress:` thresholds after S2; run `python3 -m tools.uavnav.arch_health` at slice end | `docs/CHANGE_CONTROL.md` | S2 close |
