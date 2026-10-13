@@ -42,7 +42,9 @@ virtual environment for normal verification.
 - `make sitl-build` builds `uavnav_bringup uav_simulation uav_description
   uavnav_lio uavnav_px4_bridge` (and their dependencies). `make sitl-hover
   PROFILE=gps|no_gps` (optional `SPAWN_YAW_RAD=<rad>`, `HOVER_MODE=hold`,
-  `DRY_RUN=1`; `PATTERN=altitude_sweep` comes with S1b Task 13) runs
+  `DRY_RUN=1`; `PATTERN=altitude_sweep` with `PROFILE=gps`: 2.5 m steps to
+  20 m, data checks only, then `python3 -m tools.uavnav.lio_calibration
+  log/sitl/<run>`) runs
   `tools/uavnav/sitl_hover.sh --hover`: the probe's PX4/Gazebo/XRCE plus
   `ros2 launch uavnav_bringup s1_estimation.launch.py` (gz bridges, `lio`,
   `px4_bridge`) and `tools/uavnav/sitl_hover.py` (wait for TRACKING, VALID,

@@ -718,5 +718,219 @@ class SitlChecksTest(unittest.TestCase):
             sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)
 
 
+# --- the altitude sweep (Task 13) -------------------------------------------------------------------------------
+# A 10..180 s run of /clock time: LIO TRACKING from 22 s, armed 30..170 s; eight steps 2.5..20 m, step k climbs
+# from 35 + 13k s for 3 s and holds 10 s; land 139..165 s. Every stream is nominal; the keyword arguments break one.
+SWEEP_TARGETS_M = tuple(2.5 * (k + 1) for k in range(8))
+SWEEP_CHECKS = {"sweep_steps", "calibration_inputs", "events"}
+
+
+def sweep_hold(k):
+    return (38 + 13 * k) * S, (48 + 13 * k) * S
+
+
+def make_sweep_run(run_dir, lost_at_ns=None, hold_s=10.0, targets=SWEEP_TARGETS_M, height_error_m=0.0,
+                   scans_until_ns=None, phase_ok=True):
+    """Write a synthetic altitude sweep. lost_at_ns: LIO LOST then (no scan with eigenvalues after it, as in
+    S1b where a LOST LIO stays RESTARTING); scans_until_ns: the last LioScan with eigenvalues."""
+    run_dir = pathlib.Path(run_dir)
+    steps = []
+    for k, target in enumerate(targets):
+        hold_start, _ = sweep_hold(k)
+        steps.append({"target_m": target, "ok": True, "climb_start_ns": hold_start - 3 * S,
+                      "hold_start_ns": hold_start, "hold_end_ns": hold_start + int(hold_s * S),
+                      "reached_m": target})
+
+    def height(t):
+        h = 0.0
+        for k, step in enumerate(steps):
+            if t >= step["climb_start_ns"]:
+                h = step["target_m"] if t >= step["hold_start_ns"] else (steps[k - 1]["target_m"] if k else 0.0)
+        return h if t < 140 * S else max(0.0, h - (t - 140 * S) / 1e9)
+
+    end_ns = 175 * S
+    lio_state, alignment, vlp, truth, scans = [], [], [], [], []
+    for t in range(20 * S, end_ns, 10 * MS):
+        lio_state.append({"arrival_ns": t + 2 * MS, "stamp_ns": t, "epoch": 1, "lio_state": 1, "x": 0.0, "y": 0.0,
+                          "z": height(t), "qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0,
+                          "vx": 0.0, "vy": 0.0, "vz": 0.0})
+    for t in range(22 * S, end_ns, 100 * MS):
+        alignment.append({"arrival_ns": t + 30 * MS, "stamp_ns": t, "state": 1, "x_m": 0.0, "y_m": 0.0,
+                          "z_m": 0.0, "yaw_rad": math.pi / 2, "age_s": 0.0, "residual_position_m": 0.01,
+                          "residual_yaw_rad": 0.001})
+        last = lost_at_ns if lost_at_ns is not None else scans_until_ns
+        if last is None or t < last:
+            h = height(t)
+            scans.append(event(t + 20 * MS, "lio", "LioScan", reason="SCAN_GOOD", sensor_time_s=t / 1e9,
+                               input_points=8000.0, points=2900.0, translation_min_eigenvalue=5e5 / (1 + h),
+                               rotation_min_eigenvalue=2e7 / (1 + h), quality=90.0, degenerate=0.0))
+    for t in range(RUN_START_NS, end_ns, 20 * MS):
+        h = height(t)
+        vlp.append({"arrival_ns": t + 3 * MS, "timestamp_us": (t + MS) // 1000, "timestamp_sample_us": t // 1000,
+                    "xy_valid": True, "z_valid": True, "x": 0.0, "y": 0.0, "z": -(h + height_error_m), "vz": 0.0,
+                    "heading": math.pi / 2})
+        truth.append({"arrival_ns": t + 2 * MS, "stamp_ns": t, "x": 0.0, "y": 0.0, "z": h})
+    status = [{"arrival_ns": t + 2 * MS, "timestamp_us": t // 1000, "nav_state": 2,
+               "arming_state": 2 if 30 * S <= t <= 165 * S else 1} for t in range(RUN_START_NS, end_ns, 200 * MS)]
+    events_lio = [event(22 * S, "lio", "StateTransition", "INITIALIZING", "TRACKING", "CONFIRMATION_REACHED",
+                        sensor_time_s=22.0)]
+    if lost_at_ns is not None:
+        events_lio += [event(lost_at_ns - S, "lio", "StateTransition", "TRACKING", "DEGRADED", "DEGENERATE_SCANS",
+                             sensor_time_s=(lost_at_ns - S) / 1e9),
+                       event(lost_at_ns, "lio", "StateTransition", "DEGRADED", "LOST", "DEGENERACY_LOST",
+                             sensor_time_s=lost_at_ns / 1e9)]
+    events_lio = sorted(events_lio + scans, key=lambda r: r["t_ros_ns"])
+    events_lio.append(lio_node_summary(176 * S))
+    events_bridge = [event(25 * S, "px4_bridge", "AlignmentTransition", "INIT", "VALID", "CONSISTENT_PAIRS",
+                           input=0.0, sensor_time_s=25.0), bridge_node_summary(176 * S)]
+    for name, records in (("lio_state", lio_state), ("alignment", alignment), ("vehicle_local_position", vlp),
+                          ("ground_truth", truth), ("vehicle_status", status), ("events_lio", events_lio),
+                          ("events_px4_bridge", events_bridge)):
+        write_jsonl(run_dir / f"{name}.jsonl", records)
+    phases = [{"name": name, "ok": True, "detail": "", "start_ns": start, "end_ns": end}
+              for name, start, end in (("wait_ready", 20 * S, 30 * S), ("posctl", 30 * S, 30 * S),
+                                       ("arm", 30 * S, 35 * S), ("sweep", 35 * S, 139 * S),
+                                       ("land", 139 * S, 165 * S))]
+    phases[-1]["ok"] = phase_ok
+    meta = {"profile": "gps", "spawn_yaw_rad": 0.0, "pattern": "altitude_sweep", "hover_mode": "posctl",
+            "target_height_m": TARGET_HEIGHT_M, "ground_z_m": 0.0, "hover_window": None, "sweep_steps": steps,
+            "phases": phases, "interrupted": False}
+    (run_dir / "hover_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    return run_dir
+
+
+class SitlSweepChecksTest(unittest.TestCase):
+    def setUp(self):
+        self.run_dir = pathlib.Path(tempfile.mkdtemp(prefix="sitl_sweep_test_"))
+        self.addCleanup(shutil.rmtree, self.run_dir, True)
+
+    def failing(self, summary):
+        return {name for name, check in summary["checks"].items() if not check["pass"]}
+
+    def sweep(self, **kwargs):
+        make_sweep_run(self.run_dir, **kwargs)
+        return sitl_checks.evaluate_sweep(self.run_dir, "gps", 0.0)
+
+    def edit_meta(self, change):
+        meta = json.loads((self.run_dir / "hover_meta.json").read_text(encoding="utf-8"))
+        change(meta)
+        (self.run_dir / "hover_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    def test_sweep_pass_on_synthetic_records(self):
+        summary = self.sweep()
+        self.assertEqual(set(summary["checks"]), SWEEP_CHECKS)
+        self.assertEqual(self.failing(summary), set())
+        self.assertTrue(summary["phases_ok"])
+        self.assertEqual(summary["result"], "PASS")
+        self.assertEqual(summary["kind"], "sweep")
+        self.assertEqual(json.loads((self.run_dir / "summary.json").read_text(encoding="utf-8")), summary)
+        steps = summary["checks"]["sweep_steps"]["value"]["steps"]
+        self.assertEqual([s["target_m"] for s in steps], list(SWEEP_TARGETS_M))
+        self.assertAlmostEqual(steps[0]["hold_s"], 10.0, places=9)
+        self.assertAlmostEqual(steps[0]["max_height_error_m"], 0.0, places=9)
+        inputs = summary["checks"]["calibration_inputs"]["value"]
+        self.assertIsNone(inputs["first_lost_s"])
+        self.assertEqual(inputs["steps_before_lost"], 8)
+        self.assertEqual(inputs["scans_per_step"][0], 100)  # 10 s at 10 Hz
+        self.assertEqual(sitl_checks.main(["--sweep", str(self.run_dir), "--profile", "gps"]), 0)
+
+    def test_sweep_runs_the_data_checks_only(self):
+        # LIO LOST in the 5 m hold (no scan after it) and no EV fusion record at all: the hover criteria are not
+        # judged, so the sweep still passes; the steps after the LOST are reported.
+        hold_start, _ = sweep_hold(1)
+        summary = self.sweep(lost_at_ns=hold_start + 5 * S)
+        self.assertEqual(self.failing(summary), set())
+        inputs = summary["checks"]["calibration_inputs"]["value"]
+        self.assertAlmostEqual(inputs["first_lost_s"], (hold_start + 5 * S) / 1e9, places=9)
+        self.assertEqual(inputs["steps_before_lost"], 2)
+        self.assertEqual(inputs["scans_per_step"][1], 50)
+        self.assertEqual(inputs["scans_per_step"][2:], [0] * 6)
+        # LOST 1 s into a hold: that hold is reported (10 scans) but not required to be covered.
+        summary = self.sweep(lost_at_ns=hold_start + 1 * S)
+        self.assertEqual(self.failing(summary), set())
+        inputs = summary["checks"]["calibration_inputs"]["value"]
+        self.assertEqual((inputs["steps_before_lost"], inputs["scans_per_step"][1]), (1, 10))
+        # LOST before the first hold leaves no calibration data: that fails (closed), it is not a pass.
+        summary = self.sweep(lost_at_ns=36 * S)
+        self.assertEqual(self.failing(summary), {"calibration_inputs"})
+
+    def test_sweep_missing_data_fails_closed(self):
+        for name, expected in (("events_lio.jsonl", {"calibration_inputs", "events"}),
+                               ("events_px4_bridge.jsonl", {"events"}),
+                               ("ground_truth.jsonl", {"calibration_inputs"}),
+                               ("lio_state.jsonl", {"calibration_inputs"}),
+                               ("alignment.jsonl", {"calibration_inputs"}),
+                               ("vehicle_local_position.jsonl", {"sweep_steps"})):
+            make_sweep_run(self.run_dir)
+            (self.run_dir / name).unlink()
+            summary = sitl_checks.evaluate_sweep(self.run_dir, "gps", 0.0)
+            self.assertEqual(self.failing(summary), expected, name)
+            self.assertEqual(summary["result"], "FAIL")
+        # No step list: both step-based checks fail.
+        make_sweep_run(self.run_dir)
+        self.edit_meta(lambda m: m.pop("sweep_steps"))
+        self.assertEqual(self.failing(sitl_checks.evaluate_sweep(self.run_dir, "gps", 0.0)),
+                         {"sweep_steps", "calibration_inputs"})
+        # No meta at all: every check fails and the result is FAIL.
+        make_sweep_run(self.run_dir)
+        (self.run_dir / "hover_meta.json").unlink()
+        summary = sitl_checks.evaluate_sweep(self.run_dir, "gps", 0.0)
+        self.assertEqual(self.failing(summary), SWEEP_CHECKS - {"events"})
+        self.assertEqual(summary["result"], "FAIL")
+        # A scan stream that stops before the end of a hold while LIO is not LOST is missing data.
+        _, hold_end = sweep_hold(3)
+        summary = self.sweep(scans_until_ns=hold_end - 4 * S)
+        self.assertEqual(self.failing(summary), {"calibration_inputs"})
+        # A hole of more than 2 s in /lio/state inside a hold before the LOST is missing data.
+        make_sweep_run(self.run_dir)
+        hold_start, _ = sweep_hold(0)
+        states = [json.loads(line) for line in
+                  (self.run_dir / "lio_state.jsonl").read_text(encoding="utf-8").splitlines()]
+        write_jsonl(self.run_dir / "lio_state.jsonl",
+                    [r for r in states if not hold_start + 2 * S < r["stamp_ns"] < hold_start + 5 * S])
+        self.assertEqual(self.failing(sitl_checks.evaluate_sweep(self.run_dir, "gps", 0.0)), {"calibration_inputs"})
+        # Ground truth must cover every hold, also after a LOST (the altitude of each step is reported).
+        hold_start, _ = sweep_hold(1)
+        make_sweep_run(self.run_dir, lost_at_ns=hold_start + 5 * S)
+        last_start, _ = sweep_hold(7)
+        truth = [json.loads(line) for line in
+                 (self.run_dir / "ground_truth.jsonl").read_text(encoding="utf-8").splitlines()]
+        write_jsonl(self.run_dir / "ground_truth.jsonl",
+                    [r for r in truth if not last_start + 2 * S < r["stamp_ns"] < last_start + 5 * S])
+        self.assertEqual(self.failing(sitl_checks.evaluate_sweep(self.run_dir, "gps", 0.0)), {"calibration_inputs"})
+        # T must be known: an alignment that never was VALID before the LOST is missing data.
+        make_sweep_run(self.run_dir)
+        records = [json.loads(line) for line in
+                   (self.run_dir / "alignment.jsonl").read_text(encoding="utf-8").splitlines()]
+        write_jsonl(self.run_dir / "alignment.jsonl", [dict(r, state=0) for r in records])
+        self.assertEqual(self.failing(sitl_checks.evaluate_sweep(self.run_dir, "gps", 0.0)), {"calibration_inputs"})
+
+    def test_sweep_steps_are_judged(self):
+        self.assertEqual(self.failing(self.sweep(hold_s=8.0)), {"sweep_steps"})           # held 8 s, not 10 s
+        self.assertEqual(self.failing(self.sweep(targets=SWEEP_TARGETS_M[:7])), {"sweep_steps"})  # 17.5 m top
+        self.assertEqual(self.failing(self.sweep(height_error_m=0.6)), {"sweep_steps"})   # PX4 0.6 m off
+        self.assertEqual(self.failing(self.sweep(height_error_m=0.4)), set())
+        make_sweep_run(self.run_dir)
+        self.edit_meta(lambda m: m["sweep_steps"][4].update(ok=False))
+        self.assertEqual(self.failing(sitl_checks.evaluate_sweep(self.run_dir, "gps", 0.0)), {"sweep_steps"})
+        # The driver phases still decide the result: a failed land fails the run, and so does a missing sweep phase.
+        summary = self.sweep(phase_ok=False)
+        self.assertEqual((self.failing(summary), summary["phases_ok"], summary["result"]), (set(), False, "FAIL"))
+        make_sweep_run(self.run_dir)
+        self.edit_meta(lambda m: m.update(phases=[p for p in m["phases"] if p["name"] != "sweep"]))
+        self.assertEqual(sitl_checks.evaluate_sweep(self.run_dir, "gps", 0.0)["result"], "FAIL")
+
+    def test_hover_and_sweep_are_not_interchangeable(self):
+        make_sweep_run(self.run_dir)
+        with self.assertRaisesRegex(ValueError, "altitude_sweep"):
+            sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)
+        with self.assertRaisesRegex(ValueError, "gps profile only"):
+            sitl_checks.evaluate_sweep(self.run_dir, "no_gps", 0.0)
+        make_hover_run(self.run_dir)
+        with self.assertRaisesRegex(ValueError, "altitude_sweep"):
+            sitl_checks.evaluate_sweep(self.run_dir, "gps", 0.0)
+        self.assertEqual(sitl_checks.main(["--sweep", str(self.run_dir), "--profile", "gps"]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

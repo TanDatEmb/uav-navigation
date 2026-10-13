@@ -67,7 +67,9 @@ localization profiles are `config/px4/profiles/{gps,no_gps}.yaml`, validated by
 `tools/uavnav/px4_profile.py`. The simulation packages live in `src/sim/`.
 
 `make sitl-hover PROFILE=gps|no_gps` (optional `SPAWN_YAW_RAD=<rad>`,
-`HOVER_MODE=hold`, `DRY_RUN=1`; `PATTERN=altitude_sweep` comes with S1b Task 13)
+`HOVER_MODE=hold`, `DRY_RUN=1`; `PATTERN=altitude_sweep` with `PROFILE=gps`
+flies 2.5 m steps to 20 m, 10 s each, judged by data checks only; analyse it with
+`python3 -m tools.uavnav.lio_calibration log/sitl/<run>`, S1b Task 13)
 runs `tools/uavnav/sitl_hover.sh --hover`: the same PX4 SITL, Gazebo and
 MicroXRCEAgent, plus `ros2 launch uavnav_bringup s1_estimation.launch.py` (the gz
 bridges, `lio` and `px4_bridge`, all on `/clock` time) and the rclpy driver

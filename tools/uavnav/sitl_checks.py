@@ -10,6 +10,10 @@ fourteen checks: <mode>_accepted, ekf2_ev_pos, ekf2_ev_yaw, lio_tracking, lio_fl
 alignment_rate, alignment_jump_rejections, drift, lio_state_rate, ev_age, px4_time_identity, events and
 f34_values (reported only: F34 is judged in Task 12).
 
+evaluate_sweep(run_dir, profile, spawn_yaw_rad) judges the data of the altitude sweep (Task 13; gps only) and
+writes summary.json with three data checks: sweep_steps, calibration_inputs and events. The hover criteria are
+not judged (LIO is expected to degrade); tools/uavnav/lio_calibration.py analyses the data.
+
 Every check fails when its data is missing, empty or malformed (fail closed, SYSTEM_DESIGN §0): a check
 never passes on absent evidence. The result is PASS only when every check passes and every phase of the
 driver was ok (phases_ok).
@@ -50,6 +54,7 @@ CLI:
 
     python3 tools/uavnav/sitl_checks.py --probe RUN_DIR
     python3 tools/uavnav/sitl_checks.py --hover RUN_DIR --profile gps|no_gps --spawn-yaw-rad RAD
+    python3 tools/uavnav/sitl_checks.py --sweep RUN_DIR --profile gps --spawn-yaw-rad RAD
         -> prints the checks, writes RUN_DIR/summary.json; exit 0 PASS, 1 FAIL, 2 usage
 """
 import argparse
@@ -436,17 +441,21 @@ def _windowed(data: _Loader, name: str, key: str = "arrival_ns") -> list:
     data (one sample never stands for the window)."""
     start, end = _window(data)
     records = [r for r in data.jsonl(name) if start <= _field(r, key, int, name) <= end]
-    if not records:
-        raise MissingData(f"no {name} record in the hover window")
-    times = [r[key] for r in records]
+    _require_coverage([r[key] for r in records], start, end, f"{name} in the hover window")
+    return records
+
+
+def _require_coverage(times: list, start: int, end: int, what: str) -> None:
+    """Sorted times (ns) must cover start..end: at least one, the first/last within COVERAGE_EDGE_MAX_S of the ends
+    and no hole above COVERAGE_MAX_GAP_S; otherwise MissingData."""
+    if not times:
+        raise MissingData(f"no record of {what}")
     holes = [start, *times, end]
     worst_edge = max(times[0] - start, end - times[-1]) / 1e9
     worst_gap = max((b - a for a, b in zip(holes[1:-1], holes[2:-1])), default=0) / 1e9
     if worst_edge > COVERAGE_EDGE_MAX_S or worst_gap > COVERAGE_MAX_GAP_S:
-        raise MissingData(f"{name} does not cover the hover window: {len(records)} record(s), first/last "
-                          f"{worst_edge:.3f} s from an end (max {COVERAGE_EDGE_MAX_S}), largest hole "
-                          f"{worst_gap:.3f} s (max {COVERAGE_MAX_GAP_S})")
-    return records
+        raise MissingData(f"{what}: not covered, {len(times)} record(s), first/last {worst_edge:.3f} s from an end "
+                          f"(max {COVERAGE_EDGE_MAX_S}), largest hole {worst_gap:.3f} s (max {COVERAGE_MAX_GAP_S})")
 
 
 def _events(data: _Loader, name: str) -> list:
@@ -766,11 +775,10 @@ def evaluate_hover(run_dir, profile: str, spawn_yaw_rad: float) -> dict:
         mode = _hover_mode(meta)
     except MissingData:
         meta, mode = {}, "posctl"
-    if "profile" in meta and meta["profile"] != profile:
-        raise ValueError(f"the run recorded profile {meta['profile']!r}, not {profile!r}")
-    recorded_yaw = meta.get("spawn_yaw_rad")
-    if isinstance(recorded_yaw, (int, float)) and abs(recorded_yaw - spawn_yaw_rad) > 1e-9:
-        raise ValueError(f"the run recorded spawn yaw {recorded_yaw!r} rad, not {spawn_yaw_rad!r}")
+    if meta.get("pattern", "hover") != "hover":
+        raise ValueError(f"the run recorded pattern {meta['pattern']!r}, not a hover (judge an altitude_sweep "
+                         "with --sweep)")
+    _require_same_run(meta, profile, spawn_yaw_rad)
     checks = {
         f"{mode}_accepted": _run(_check_mode_accepted, data),
         "ekf2_ev_pos": _run(_check_ekf2_ev_pos, data),
@@ -792,10 +800,161 @@ def evaluate_hover(run_dir, profile: str, spawn_yaw_rad: float) -> dict:
         "pattern": meta.get("pattern"), "hover_mode": mode}, meta, checks)
 
 
+def _require_same_run(meta: dict, profile: str, spawn_yaw_rad: float) -> None:
+    if "profile" in meta and meta["profile"] != profile:
+        raise ValueError(f"the run recorded profile {meta['profile']!r}, not {profile!r}")
+    recorded_yaw = meta.get("spawn_yaw_rad")
+    if isinstance(recorded_yaw, (int, float)) and abs(recorded_yaw - spawn_yaw_rad) > 1e-9:
+        raise ValueError(f"the run recorded spawn yaw {recorded_yaw!r} rad, not {spawn_yaw_rad!r}")
+
+
+# --- the altitude sweep (Task 13) -------------------------------------------------------------------------------
+# Data checks only: the sweep feeds tools/uavnav/lio_calibration.py, and LIO is expected to degrade and may go
+# LOST as the walls leave the view (F36), so the hover criteria (TRACKING, EV fusion, alignment, drift) are not
+# judged. Every check still fails when its data is missing (fail closed).
+
+SWEEP_TARGETS_M = tuple(2.5 * (k + 1) for k in range(8))   # climb in 2.5 m steps to 20 m (plan Task 13)
+SWEEP_HOLD_MIN_S = 10.0                                    # each step held 10 s of /clock time
+
+
+def _sweep_steps(data: _Loader) -> list:
+    steps = data.meta().get("sweep_steps")
+    if not isinstance(steps, list) or not steps:
+        raise MissingData(f"no sweep_steps in {data.meta_name}: the driver never flew the sweep")
+    out = []
+    for step in steps:
+        if not isinstance(step, dict):
+            raise MissingData(f"sweep step is not an object: {step!r}")
+        row = {"target_m": _field(step, "target_m", float, "sweep_steps"),
+               "ok": _field(step, "ok", bool, "sweep_steps"),
+               "start_ns": _field(step, "hold_start_ns", int, "sweep_steps"),
+               "end_ns": _field(step, "hold_end_ns", int, "sweep_steps")}
+        if row["end_ns"] <= row["start_ns"]:
+            raise MissingData(f"empty hold of the {row['target_m']} m step")
+        out.append(row)
+    return out
+
+
+def _check_sweep_steps(data: _Loader) -> dict:
+    steps = _sweep_steps(data)
+    ground_z = _field(data.meta(), "ground_z_m", float, data.meta_name)
+    source = "vehicle_local_position.jsonl"
+    positions = data.jsonl(source)
+    rows = []
+    for step in steps:
+        inside = [r for r in positions if step["start_ns"] <= _field(r, "arrival_ns", int, source) <= step["end_ns"]]
+        _require_coverage([r["arrival_ns"] for r in inside], step["start_ns"], step["end_ns"],
+                          f"{source} in the {step['target_m']} m hold")
+        errors = []
+        for r in inside:
+            if _field(r, "z_valid", bool, source) is not True:
+                raise MissingData(f"vehicle_local_position z invalid in the {step['target_m']} m hold")
+            errors.append(abs((ground_z - _field(r, "z", float, source)) - step["target_m"]))
+        rows.append({"target_m": step["target_m"], "ok": step["ok"],
+                     "hold_s": (step["end_ns"] - step["start_ns"]) / 1e9,
+                     "max_height_error_m": max(errors), "samples": len(inside)})
+    targets_ok = (len(rows) == len(SWEEP_TARGETS_M)
+                  and all(abs(r["target_m"] - t) <= 1e-9 for r, t in zip(rows, SWEEP_TARGETS_M)))
+    passed = targets_ok and all(r["ok"] and r["hold_s"] >= SWEEP_HOLD_MIN_S - CLOCK_STEP_S
+                                and r["max_height_error_m"] <= HOVER_HEIGHT_TOL_M for r in rows)
+    return {"pass": passed, "value": {"steps": rows},
+            "detail": f"steps {SWEEP_TARGETS_M[0]}..{SWEEP_TARGETS_M[-1]} m every 2.5 m, each ok, held >= "
+                      f"{SWEEP_HOLD_MIN_S} s of /clock with the PX4 height within {HOVER_HEIGHT_TOL_M} m"}
+
+
+def _lio_scan_eigen_times(records: list) -> list:
+    """Sensor times (ns) of the LioScan events carrying both eigenvalues as finite numbers (the calibration input)."""
+    times = []
+    for r in _named(records, "LioScan"):
+        values = r["values"]
+        if all(isinstance(values.get(k), (int, float)) and not isinstance(values.get(k), bool)
+               and math.isfinite(values[k]) for k in ("translation_min_eigenvalue", "rotation_min_eigenvalue")):
+            times.append(_event_sensor_ns(r))
+    return sorted(times)
+
+
+def _event_sensor_ns(record: dict) -> int:
+    t = record["values"].get("sensor_time_s")
+    if isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t):
+        return int(round(t * 1e9))
+    return record["t_ros_ns"]  # SITL: sensor time = ROS time (D29)
+
+
+def _check_calibration_inputs(data: _Loader) -> dict:
+    steps = _sweep_steps(data)
+    lio = _events(data, "events_lio.jsonl")
+    lost = min((_event_sensor_ns(r) for r in _named(lio, "StateTransition") if r["state_after"] == "LOST"),
+               default=None)
+    scans = _lio_scan_eigen_times(lio)
+    states = sorted(_field(r, "stamp_ns", int, "lio_state.jsonl") for r in data.jsonl("lio_state.jsonl"))
+    truth = sorted(_field(r, "stamp_ns", int, "ground_truth.jsonl") for r in data.jsonl("ground_truth.jsonl"))
+    valid = [r for r in data.jsonl("alignment.jsonl")
+             if r.get("state") == ALIGNMENT_VALID and _field(r, "stamp_ns", int, "alignment.jsonl") >= 0
+             and (lost is None or r["stamp_ns"] < lost)]
+    for r in valid:
+        _field(r, "yaw_rad", float, "alignment.jsonl")
+    if not valid:
+        raise MissingData("no VALID alignment sample before the first LOST: T is unknown")
+    per_step, before_lost = [], 0
+    for step in steps:
+        start, end = step["start_ns"], step["end_ns"]
+        _require_coverage([t for t in truth if start <= t <= end], start, end,
+                          f"ground_truth.jsonl in the {step['target_m']} m hold")
+        cut = end if lost is None else min(end, lost)
+        in_hold = [t for t in scans if start <= t < cut]
+        per_step.append(len(in_hold))
+        if cut - start <= COVERAGE_EDGE_MAX_S * 1e9:
+            continue  # LOST before or right after the hold started: reported (0 or a few scans), not required
+        before_lost += 1
+        _require_coverage(in_hold, start, cut, f"LioScan eigenvalues in the {step['target_m']} m hold")
+        _require_coverage([t for t in states if start <= t <= cut], start, cut,
+                          f"lio_state.jsonl in the {step['target_m']} m hold")
+    if before_lost == 0:
+        raise MissingData("LIO went LOST before the first hold: no calibration data")
+    return {"pass": True,
+            "value": {"first_lost_s": None if lost is None else lost / 1e9, "steps_before_lost": before_lost,
+                      "scans_per_step": per_step, "scans_with_eigenvalues": len(scans),
+                      "alignment_valid_before_lost": len(valid)},
+            "detail": "every hold before the first LOST is covered by LioScan eigenvalues and /lio/state; every hold "
+                      "by ground truth; T known (a VALID alignment before the LOST). Steps after the LOST are "
+                      "reported only (S1b: a LOST LIO stays RESTARTING)"}
+
+
+def evaluate_sweep(run_dir, profile: str, spawn_yaw_rad: float) -> dict:
+    """Judge the data of an altitude sweep run (Task 13) and write run_dir/summary.json. Returns the summary.
+
+    Raises ValueError for a profile other than gps (the sweep is flown with GNSS, because EV is lost when LIO
+    degrades), a run that is not an altitude_sweep, or a profile/spawn yaw different from the recorded one."""
+    if profile != "gps" or not math.isfinite(spawn_yaw_rad):
+        raise ValueError(f"the altitude sweep is judged in the gps profile only, with a finite spawn yaw: "
+                         f"{profile!r} {spawn_yaw_rad!r}")
+    run_dir = pathlib.Path(run_dir)
+    data = _Loader(run_dir, "hover_meta.json")
+    try:
+        meta = data.meta()
+        mode = _hover_mode(meta)
+    except MissingData:
+        meta, mode = {}, "posctl"
+    if meta and meta.get("pattern") != "altitude_sweep":
+        raise ValueError(f"the run recorded pattern {meta.get('pattern')!r}, not altitude_sweep")
+    _require_same_run(meta, profile, spawn_yaw_rad)
+    checks = {
+        "sweep_steps": _run(_check_sweep_steps, data),
+        "calibration_inputs": _run(_check_calibration_inputs, data),
+        "events": _run(_check_events, data),
+    }
+    return _write_summary(run_dir, {
+        "kind": "sweep", "run_dir": str(run_dir), "profile": profile, "spawn_yaw_rad": spawn_yaw_rad,
+        "pattern": "altitude_sweep", "hover_mode": mode}, meta, checks)
+
+
 def _required_phases(kind: str, mode: str) -> set:
-    """The phases a complete run records: the probe at least hover and land; the hover driver all of its own."""
+    """The phases a complete run records: the probe at least hover and land; the hover and sweep drivers all of
+    their own."""
     if kind == "probe":
         return {"hover", "land"}
+    if kind == "sweep":
+        return {"wait_ready", mode, "arm", "sweep", "land"}
     return {"wait_ready", mode, "arm", "climb", "hover", "land"}
 
 
@@ -821,10 +980,13 @@ def main(argv=None) -> int:
                       help="probe run directory (log/sitl/<stamp>-<profile>-probe)")
     kind.add_argument("--hover", type=pathlib.Path, metavar="RUN_DIR",
                       help="hover run directory (log/sitl/<stamp>-<profile>-hover); needs --profile")
-    parser.add_argument("--profile", choices=("gps", "no_gps"), help="hover: the PX4 profile of the run")
-    parser.add_argument("--spawn-yaw-rad", type=float, default=0.0, help="hover: the spawn yaw of the run (ENU)")
+    kind.add_argument("--sweep", type=pathlib.Path, metavar="RUN_DIR",
+                      help="altitude sweep run directory (log/sitl/<stamp>-gps-altitude_sweep); needs --profile gps")
+    parser.add_argument("--profile", choices=("gps", "no_gps"), help="hover, sweep: the PX4 profile of the run")
+    parser.add_argument("--spawn-yaw-rad", type=float, default=0.0,
+                        help="hover, sweep: the spawn yaw of the run (ENU)")
     args = parser.parse_args(argv)
-    run_dir = args.probe or args.hover
+    run_dir = args.probe or args.hover or args.sweep
     if not run_dir.is_dir():
         print(f"sitl_checks: not a directory: {run_dir}", file=sys.stderr)
         return 2
@@ -832,9 +994,10 @@ def main(argv=None) -> int:
         summary = evaluate_probe(run_dir)
     else:
         if args.profile is None:
-            parser.error("--hover needs --profile")
+            parser.error("--hover and --sweep need --profile")
+        evaluate = evaluate_hover if args.hover else evaluate_sweep
         try:
-            summary = evaluate_hover(run_dir, args.profile, args.spawn_yaw_rad)
+            summary = evaluate(run_dir, args.profile, args.spawn_yaw_rad)
         except ValueError as exc:
             print(f"sitl_checks: {exc}", file=sys.stderr)
             return 2

@@ -2,10 +2,10 @@
 # SITL harness (S1b Task 3 probe, Task 11 hover). SYSTEM_DESIGN §0, §6.2 (c), §7.2; D29; D33 (O19, O20, O23, O24).
 #
 #   tools/uavnav/sitl_hover.sh --probe --profile gps|no_gps [--hover-mode posctl|hold] [--dry-run]
-#   tools/uavnav/sitl_hover.sh --hover --profile gps|no_gps [--spawn-yaw-rad RAD] [--pattern hover]
+#   tools/uavnav/sitl_hover.sh --hover --profile gps|no_gps [--spawn-yaw-rad RAD] [--pattern hover|altitude_sweep]
 #                              [--hover-mode posctl|hold] [--dry-run]
 #   (make sitl-probe PROFILE=gps [HOVER_MODE=hold] [DRY_RUN=1];
-#    make sitl-hover PROFILE=gps [SPAWN_YAW_RAD=1.2] [PATTERN=hover] [HOVER_MODE=hold] [DRY_RUN=1])
+#    make sitl-hover PROFILE=gps [SPAWN_YAW_RAD=1.2] [PATTERN=hover|altitude_sweep] [HOVER_MODE=hold] [DRY_RUN=1])
 #
 # Both start, each in its own session and process group (setsid), with GZ_IP=127.0.0.1 and ROS_LOG_DIR in the
 # run directory: MicroXRCEAgent udp4 -p 8888; tools/simulation/run_px4_mid360.sh (GZ_GUI=0; Gazebo + PX4 SITL;
@@ -14,7 +14,9 @@
 #     uav_simulation gz_lidar_bridge and tools/uavnav/sitl_probe.py; bounded at 240 s.
 #   --hover then starts `ros2 launch uavnav_bringup s1_estimation.launch.py` (the same two gz bridges, lio and
 #     px4_bridge, use_sim_time; the event logs in the run directory) and tools/uavnav/sitl_hover.py; bounded at
-#     300 s. PATTERN altitude_sweep is added by S1b Task 13 and refused here.
+#     300 s. --pattern altitude_sweep (S1b Task 13; gps profile and posctl only) flies 2.5 m steps to 20 m, 10 s
+#     each, and is judged by the data checks only (sitl_checks.py --sweep); tools/uavnav/lio_calibration.py
+#     analyses its directory.
 # The ROS 2 processes (gz bridges, the launch, the driver) get FASTRTPS_DEFAULT_PROFILES_FILE=config/ros/fastdds_sitl.xml:
 # a 16 MB shared-memory segment, so a 645 KB best-effort cloud is not lost in transport (Task 11; without it ~15 %
 # of the clouds never reached lio). MicroXRCEAgent and PX4 keep their own DDS defaults.
@@ -45,7 +47,7 @@ XRCE_PORT=8888
 
 usage() {
   echo "usage: $0 --probe --profile gps|no_gps [--hover-mode posctl|hold] [--dry-run]" >&2
-  echo "       $0 --hover --profile gps|no_gps [--spawn-yaw-rad RAD] [--pattern hover] [--hover-mode posctl|hold] [--dry-run]" >&2
+  echo "       $0 --hover --profile gps|no_gps [--spawn-yaw-rad RAD] [--pattern hover|altitude_sweep] [--hover-mode posctl|hold] [--dry-run]" >&2
   exit 2
 }
 
@@ -68,8 +70,12 @@ done
 [[ "${HOVER_MODE}" == posctl || "${HOVER_MODE}" == hold ]] || { echo "sitl_hover: --hover-mode must be posctl or hold" >&2; usage; }
 case "${PATTERN}" in
   hover) ;;
-  altitude_sweep) echo "sitl_hover: --pattern altitude_sweep is added by S1b Task 13" >&2; exit 2 ;;
-  *) echo "sitl_hover: --pattern must be hover" >&2; usage ;;
+  altitude_sweep)
+    [[ "${MODE}" == hover ]] || { echo "sitl_hover: --pattern applies to --hover only" >&2; usage; }
+    # Plan Task 13: gps only, because EV is lost when LIO degrades; the steps are flown with the throttle stick.
+    [[ "${PROFILE}" == gps && "${HOVER_MODE}" == posctl ]] \
+      || { echo "sitl_hover: --pattern altitude_sweep needs --profile gps and --hover-mode posctl" >&2; usage; } ;;
+  *) echo "sitl_hover: --pattern must be hover or altitude_sweep" >&2; usage ;;
 esac
 if [[ -n "${SPAWN_YAW_RAD}" ]] && ! "${PYTHON}" -c 'import math, sys; v = float(sys.argv[1]); sys.exit(0 if math.isfinite(v) and abs(v) <= 2 * math.pi else 1)' "${SPAWN_YAW_RAD}" 2>/dev/null; then
   echo "sitl_hover: --spawn-yaw-rad must be a finite number of radians in [-2 pi, 2 pi]: ${SPAWN_YAW_RAD}" >&2; usage
@@ -212,6 +218,9 @@ driver_cmd() {  # $1 = budget in seconds
 }
 if [[ "${MODE}" == probe ]]; then
   VERDICT_CMD=("${PYTHON}" tools/uavnav/sitl_checks.py --probe "${RUN_DIR}")
+elif [[ "${PATTERN}" == altitude_sweep ]]; then
+  VERDICT_CMD=("${PYTHON}" tools/uavnav/sitl_checks.py --sweep "${RUN_DIR}" --profile "${PROFILE}"
+               --spawn-yaw-rad "${SPAWN_YAW_RAD:-0}")
 else
   VERDICT_CMD=("${PYTHON}" tools/uavnav/sitl_checks.py --hover "${RUN_DIR}" --profile "${PROFILE}"
                --spawn-yaw-rad "${SPAWN_YAW_RAD:-0}")

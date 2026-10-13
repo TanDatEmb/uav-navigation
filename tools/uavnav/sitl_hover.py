@@ -14,6 +14,12 @@ Started by tools/uavnav/sitl_hover.sh --hover once PX4 SITL, MicroXRCEAgent and
 5. land (NAV_LAND once, again only if PX4 is not in AUTO_LAND), <= 30 s to the auto-disarm.
    On an interruption or an exception while armed, one best-effort NAV_LAND is sent before exit.
 
+--pattern altitude_sweep (S1b Task 13; gps profile and POSCTL only): phases 1-2 as above, then "sweep": climb in
+2.5 m steps to 20 m above the ground z (each climb <= 15 s of /clock, throttle stick as in 3), hold each step 10 s
+of /clock with centred sticks; then land (NAV_LAND from 20 m, <= 60 s to the auto-disarm). hover_meta.json records
+the steps (target, climb start, hold start/end, height reached) and no hover window; sitl_checks.evaluate_sweep
+judges the data only, tools/uavnav/lio_calibration.py analyses it.
+
 Records (JSONL, one file per topic, in --run-dir; formats in sitl_checks.py): /lio/state, /lio/health,
 /lio/odometry, /alignment, /fmu/in/vehicle_visual_odometry (the EV the bridge sends),
 /fmu/out/vehicle_local_position_v1, /fmu/out/estimator_status_flags, /fmu/out/vehicle_status_v1,
@@ -51,6 +57,10 @@ import sitl_probe  # noqa: E402  (the Task 3 flight phases: bounded waits, arm, 
 HOVER_SIM_S, HOVER_WALL_MAX_S = 60.0, 120.0   # the evaluation window; wall bound for RTF >= 0.5
 CLIMB_SIM_S, CLIMB_WALL_MAX_S = 20.0, 40.0
 LAND_S = 30.0
+SWEEP_TARGETS_M = tuple(2.5 * (k + 1) for k in range(8))  # 2.5 .. 20 m above the ground z (plan Task 13)
+SWEEP_HOLD_SIM_S = 10.0
+SWEEP_CLIMB_SIM_S, SWEEP_CLIMB_WALL_MAX_S = 15.0, 30.0    # one 2.5 m step
+SWEEP_LAND_S = 60.0                                       # NAV_LAND from 20 m (descent ~1 m/s, then disarm)
 RECORDS = ("lio_state", "lio_health", "lio_odometry", "alignment", "vehicle_visual_odometry",
            "vehicle_local_position", "estimator_status_flags", "vehicle_status", "vehicle_command_ack",
            "ground_truth")
@@ -209,9 +219,17 @@ class HoverRecorder(Node):
 class HoverFlight(sitl_probe.Flight):
     """The Task 11 phase sequence; the waits, arm, mode and land are the probe's."""
 
-    def __init__(self, node: HoverRecorder, mode: str, budget_s: float, stop: threading.Event):
+    def __init__(self, node: HoverRecorder, mode: str, budget_s: float, stop: threading.Event,
+                 pattern: str = "hover"):
         super().__init__(node, mode, budget_s, stop)
         self.ready_detail = None
+        self.pattern = pattern
+        self.sweep_steps = []
+        # The sweep keeps time for a landing from 20 m; the hover keeps the probe's reserve.
+        self.reserve_s = SWEEP_LAND_S if pattern == "altitude_sweep" else sitl_probe.LAND_RESERVE_S
+
+    def wait(self, predicate, timeout_s, reserve_s=None, **kwargs):
+        return super().wait(predicate, timeout_s, self.reserve_s if reserve_s is None else reserve_s, **kwargs)
 
     def log(self, text):
         print(f"[sitl_hover] {text}", flush=True)
@@ -233,8 +251,11 @@ class HoverFlight(sitl_probe.Flight):
         return ok, f"LIO TRACKING, alignment VALID, cs_ev_pos, xy_valid; {detail}"
 
     def climb(self):
+        return self.climb_to(sitl_probe.TARGET_HEIGHT_M, CLIMB_SIM_S, CLIMB_WALL_MAX_S)
+
+    def climb_to(self, height_m: float, sim_s: float, wall_s: float):
         start = self.node.snapshot()[0]
-        target = sitl_probe.TARGET_HEIGHT_M - sitl_probe.CLIMB_DONE_M
+        target = height_m - sitl_probe.CLIMB_DONE_M
 
         def step():
             h = self.height()
@@ -242,18 +263,17 @@ class HoverFlight(sitl_probe.Flight):
                 return False
             if h >= target:
                 return True
-            if self.node.snapshot()[0] - start > CLIMB_SIM_S * 1e9:
+            if self.node.snapshot()[0] - start > sim_s * 1e9:
                 return False
             if self.mode == "posctl":  # above the 0.3 takeoff threshold until clear of the ground, then proportional
                 stick = sitl_probe.TAKEOFF_STICK if h < 1.0 else min(
-                    sitl_probe.TAKEOFF_STICK, max(0.0, sitl_probe.CLIMB_GAIN * (sitl_probe.TARGET_HEIGHT_M - h)))
+                    sitl_probe.TAKEOFF_STICK, max(0.0, sitl_probe.CLIMB_GAIN * (height_m - h)))
                 self.node.set_throttle(stick)
             return False
         if self.mode == "hold":
             nan = float("nan")
             self.node.command(VehicleCommand.VEHICLE_CMD_NAV_TAKEOFF, 0.0, 0.0, 0.0, nan, nan, nan, nan)
-        ok = self.wait(lambda: step() or self.node.snapshot()[0] - start > CLIMB_SIM_S * 1e9, CLIMB_WALL_MAX_S,
-                       poll_s=0.02)
+        ok = self.wait(lambda: step() or self.node.snapshot()[0] - start > sim_s * 1e9, wall_s, poll_s=0.02)
         self.node.set_throttle(0.0)
         h = self.height()
         ok = ok and h is not None and h >= target
@@ -270,20 +290,48 @@ class HoverFlight(sitl_probe.Flight):
         sim_s = (end - start) / 1e9
         return ok and self.armed() and sim_s >= HOVER_SIM_S, f"{sim_s:.2f} s of /clock time"
 
+    def sweep(self):
+        """Climb in 2.5 m steps to 20 m, holding each step 10 s of /clock with centred sticks (Task 13)."""
+        for target in SWEEP_TARGETS_M:
+            climb_start = self.node.snapshot()[0]
+            ok, detail = self.climb_to(target, SWEEP_CLIMB_SIM_S, SWEEP_CLIMB_WALL_MAX_S)
+            self.node.set_throttle(0.0)
+            hold_start = self.node.snapshot()[0]
+            step = {"target_m": target, "ok": False, "climb_start_ns": climb_start, "hold_start_ns": hold_start,
+                    "hold_end_ns": hold_start, "reached_m": self.height(), "detail": detail}
+            self.sweep_steps.append(step)
+            if not ok:
+                return False, f"step {target} m: climb failed: {detail}"
+            held = self.wait(lambda: self.node.snapshot()[0] - hold_start >= SWEEP_HOLD_SIM_S * 1e9
+                             or not self.armed(), HOVER_WALL_MAX_S)
+            step["hold_end_ns"] = self.node.snapshot()[0]
+            hold_s = (step["hold_end_ns"] - hold_start) / 1e9
+            step["ok"] = held and self.armed() and hold_s >= SWEEP_HOLD_SIM_S
+            step["detail"] = f"{detail}; held {hold_s:.2f} s of /clock time"
+            self.log(f"sweep step {target} m: {'ok' if step['ok'] else 'FAILED'} {step['detail']}")
+            if not step["ok"]:
+                return False, f"step {target} m: hold failed after {hold_s:.2f} s"
+        return True, f"{len(self.sweep_steps)} steps to {SWEEP_TARGETS_M[-1]} m"
+
     def land(self):
         self.node.set_throttle(0.0)
         landing = VehicleStatus.NAVIGATION_STATE_AUTO_LAND
+        limit_s = SWEEP_LAND_S if self.pattern == "altitude_sweep" else LAND_S
 
         def resend_unless_landing():  # NAV_LAND once; again only if PX4 is not in AUTO_LAND 3 s later
             if not self.nav_state_is(landing):
                 self.send_land()
-        ok = self.wait(lambda: not self.armed(), LAND_S, reserve_s=0.0, action=resend_unless_landing, every_s=3.0)
-        return ok, "disarmed" if ok else f"still armed after {LAND_S} s"
+        ok = self.wait(lambda: not self.armed(), limit_s, reserve_s=0.0, action=resend_unless_landing, every_s=3.0)
+        return ok, "disarmed" if ok else f"still armed after {limit_s} s"
 
     def run(self) -> bool:
         ok = self.phase("wait_ready", self.wait_ready)
         flown = False
-        if ok:
+        if ok and self.pattern == "altitude_sweep":  # POSCTL only (checked in main)
+            ok = self.phase("posctl", self.set_mode) and self.phase("arm", self.arm)
+            flown = self.armed()
+            ok = ok and self.phase("sweep", self.sweep)
+        elif ok:
             if self.mode == "posctl":
                 ok = self.phase("posctl", self.set_mode) and self.phase("arm", self.arm)
                 ok = ok and self.phase("climb", self.climb)
@@ -304,13 +352,15 @@ def main(argv=None) -> int:
     parser.add_argument("--run-dir", required=True, type=pathlib.Path)
     parser.add_argument("--profile", required=True, choices=("gps", "no_gps"))
     parser.add_argument("--spawn-yaw-rad", type=float, default=0.0)
-    parser.add_argument("--pattern", default="hover", choices=("hover",),
-                        help="hover only; altitude_sweep is added by S1b Task 13")
+    parser.add_argument("--pattern", default="hover", choices=("hover", "altitude_sweep"),
+                        help="hover (Task 11) or altitude_sweep (Task 13: gps profile, posctl only)")
     parser.add_argument("--hover-mode", default="posctl", choices=tuple(sitl_probe.NAV_STATE))
     parser.add_argument("--budget-s", required=True, type=float, help="wall-time budget of the whole driver")
     args = parser.parse_args(argv)
     if not args.run_dir.is_dir() or not args.budget_s > 0 or not math.isfinite(args.spawn_yaw_rad):
         parser.error("--run-dir must exist, --budget-s must be > 0 and --spawn-yaw-rad finite")
+    if args.pattern == "altitude_sweep" and (args.profile != "gps" or args.hover_mode != "posctl"):
+        parser.error("--pattern altitude_sweep is flown with --profile gps and --hover-mode posctl only")
 
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
@@ -321,7 +371,7 @@ def main(argv=None) -> int:
     executor.add_node(node)
     spinner = threading.Thread(target=executor.spin, daemon=True)
     spinner.start()
-    flight = HoverFlight(node, args.hover_mode, args.budget_s, stop)
+    flight = HoverFlight(node, args.hover_mode, args.budget_s, stop, args.pattern)
     ok = False
     try:
         ok = flight.run()
@@ -337,6 +387,8 @@ def main(argv=None) -> int:
                 "hover_mode": args.hover_mode, "target_height_m": sitl_probe.TARGET_HEIGHT_M,
                 "ground_z_m": flight.ground_z, "hover_window": flight.hover_window, "phases": flight.phases,
                 "interrupted": stop.is_set()}
+        if args.pattern == "altitude_sweep":
+            meta["sweep_steps"] = flight.sweep_steps
         (args.run_dir / "hover_meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
         node.destroy_node()
         rclpy.try_shutdown()
