@@ -64,6 +64,8 @@
 //                          thread)   derived from std::exception or not)
 // Rate-limited events are emitted on the 1st, kEventSummaryEvery-th, ... occurrence per reason and epoch,
 // and once more at the end of the epoch when occurrences happened since the last one.
+// The lio node's ingest layer (package uavnav_lio, same component "lio") adds LioIngestReentered, LioScanDropped,
+// IngestSummary and LioInputRejected(STAMP_IN_FUTURE); their catalogue is in uavnav/lio_node/ingest.hpp.
 namespace uavnav::lio {
 
 /// True when `q` carries a rotation that normalising can recover: every coefficient finite and a norm above

@@ -33,20 +33,21 @@ build:
 test:
 	@$(PYTHON) tools/uavnav/clean_test_results.py --build-base build $(PKGS) && { $(ROS_ENV) if test -f install/setup.bash; then source install/setup.bash; fi; colcon test --packages-select $(PKGS) --parallel-workers 2 && rc=0 && for p in $(PKGS); do colcon test-result --verbose --test-result-base build/$$p || rc=1; done; exit $$rc; }
 
-# ThreadSanitizer run (D28) of SANITIZE_PKGS: uavnav_core (SpscQueue, event recorder) and uavnav_lio_core
-# (LioFrontend, LioBackend, LioRunner: the two-thread LIO). Builds them in the shared build/ with
+# ThreadSanitizer run (D28) of SANITIZE_PKGS: uavnav_core (SpscQueue, event recorder), uavnav_lio_core
+# (LioFrontend, LioBackend, LioRunner: the two-thread LIO) and uavnav_lio (only its ROS-free ingest library and its
+# tests: LioIngest's try-enter guard and the backend clock's shared ROS time). Builds them in the shared build/ with
 # -DUAVNAV_SANITIZE=thread (each package instruments only its own library and tests; fast_lio_core must already
 # be installed and is not instrumented), deletes their stale test results (as `make test`, so no old XML is
 # graded), runs their tests, fails closed when this run left no test log of a package, greps
 # the logs for TSan warnings, and ALWAYS rebuilds them without the sanitizer afterwards (even when the run
 # failed, and on SIGINT/SIGTERM through the trap, exit 130) so build/ and install/ return to the normal state. A
 # second Ctrl-C during that restore stops it and leaves a sanitized cache, which a plain `make build` keeps (the
-# cache holds UAVNAV_SANITIZE): run `make sanitize` again, or `make build PKGS="uavnav_core uavnav_lio_core"
+# cache holds UAVNAV_SANITIZE): run `make sanitize` again, or `make build PKGS="uavnav_core uavnav_lio_core uavnav_lio"
 # COLCON_EXTRA=--cmake-clean-cache`.
 # Fails when a build or test failed or a warning was found. Tests run under `setarch -R` (ASLR off): with the
 # host's high mmap entropy, TSan from gcc 13 aborts with "unexpected memory mapping" otherwise. One colcon
 # worker, -j2; do not run other heavy jobs meanwhile (15 GB RAM).
-SANITIZE_PKGS := uavnav_core uavnav_lio_core
+SANITIZE_PKGS := uavnav_core uavnav_lio_core uavnav_lio
 SANITIZE_BUILD = nice -n 10 env MAKEFLAGS=-j2 colcon build --packages-select $(SANITIZE_PKGS) --parallel-workers 1 --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 sanitize:

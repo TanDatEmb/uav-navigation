@@ -1,0 +1,21 @@
+# Default tier-(b) parameters of the lio node (uavnav_lio) for SITL: the base_link <- LiDAR mount (D33/O20).
+# Schema, units and bounds: kLioNodeSpecs in src/estimation/uavnav_lio/include/uavnav/lio_node/node_config.hpp.
+# A value outside its bounds, a missing key or an unknown key makes the process refuse to start.
+# This file is the single source of the mount (D22). The IMU <- LiDAR extrinsic stays in config/lio/sim.yaml
+# (extrinsic_imu_lidar_*_m); the node composes base_T_imu = base_T_lidar * imu_T_lidar^-1.
+#
+# Derivation (SITL model x500_mid360):
+#   src/sim/uav_simulation/models/x500_mid360/model.sdf: lidar_mid360 included at pose "0 0 0.28 0 0 0" and
+#   mid360_mount_joint base_link -> livox_frame at "0 0 0.28 0 0 0" (relative_to base_link): the LiDAR origin is
+#   0.28 m above base_link, axes aligned (roll = pitch = yaw = 0).
+#   Check: src/sim/uav_simulation/models/lidar_mid360/model.sdf puts the IMU at "0.011 0.02329 -0.04412" in
+#   livox_frame, i.e. imu_T_lidar t = (-0.011, -0.02329, 0.04412) (config/lio/sim.yaml), so the IMU sits at
+#   base_link (0.011, 0.02329, 0.28 - 0.04412 = 0.23588) m (pinned by LioNodeConfig.SimYamlLoadsAndComposesBaseTImu).
+# Angles: fixed-axis roll-pitch-yaw as in SDF/URDF poses, R = Rz(yaw) * Ry(pitch) * Rx(roll).
+
+extrinsic_base_lidar_x_m: 0.0            # LiDAR origin in base_link
+extrinsic_base_lidar_y_m: 0.0
+extrinsic_base_lidar_z_m: 0.28
+extrinsic_base_lidar_roll_rad: 0.0       # LiDAR axes in base_link
+extrinsic_base_lidar_pitch_rad: 0.0
+extrinsic_base_lidar_yaw_rad: 0.0
