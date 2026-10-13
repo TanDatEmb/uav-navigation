@@ -1,0 +1,35 @@
+# Architecture governance (docs/CHANGE_CONTROL.md). Checks only what is objective; it does not build ROS
+# or run SITL (those run on the owner's machine: make gate, make sanitize, make sitl-*).
+name: governance
+on:
+  pull_request:
+  push:
+    branches: [rebuild/v2]
+permissions:
+  contents: read
+jobs:
+  governance:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python3 -m pip install --user pyyaml
+      - name: Documentation links and citations
+        run: python3 tools/check_documentation.py . docs
+      - name: Evidence, deviations, dependency direction
+        run: python3 -m tools.uavnav.arch_check --strict-dates
+      - name: Governance tool tests
+        run: python3 -m unittest discover -s tools/uavnav/tests -t . -p 'test_arch*.py' -v
+      - name: Commit declarations (Arch-Level / Docs-Impact)
+        run: python3 -m tools.uavnav.check_change
+      - name: PR description declaration
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          printf '%s\n' "$PR_BODY" > "$RUNNER_TEMP/pr_body.md"
+          python3 -m tools.uavnav.check_change --base "$BASE_SHA" --body-file "$RUNNER_TEMP/pr_body.md"
+      - name: Stress indicators (report only)
+        run: python3 -m tools.uavnav.arch_health >> "$GITHUB_STEP_SUMMARY"

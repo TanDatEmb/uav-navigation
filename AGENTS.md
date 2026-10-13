@@ -38,9 +38,10 @@ Local workspace rules in `CLAUDE.local.md` take precedence over this file:
   - anything the design does not cover.
 
   Update the design first, then continue.
-- If several deviations pile up, or the design looks wrong as a whole, stop
-  implementation and revise the overall design. Patching around it is not
-  acceptable.
+- If several deviations pile up, or the design looks wrong as a whole, hold an
+  Architecture Review of the affected subsystem and stop widening related
+  workarounds ([CHANGE_CONTROL.md](docs/CHANGE_CONTROL.md) §5). Independent
+  work continues. Patching around the problem is not acceptable.
 - Never build on an OPEN question as if it were decided.
 
 ## 2. Structural rules (decision D12)
@@ -119,3 +120,13 @@ These rules come from what happened during S0.
 - Before deleting or moving a tracked path, run a **reference sweep** across all file types, not only `package.xml`: CMake, YAML, launch files, tests, scripts and docs. Grep for both the path and the package name. Resolve every hit, or list it with a reason, before the change.
 - Move a package in the slice that rebuilds it. Its first rebuild after the move uses `colcon build --cmake-clean-cache`, because the shared `build/` caches hold the old source path.
 - The owner allows agents to delete tracked files themselves (D30). Delete with explicit `git rm` paths after the reference sweep. If the permission system blocks a deletion, do not retry or work around it: write a script that runs one `git rm` command per path, dry-run it (`-n`), and hand it to the owner.
+
+## 7. Change levels and evidence (decision D34)
+
+The full rules are in [docs/CHANGE_CONTROL.md](docs/CHANGE_CONTROL.md). In short:
+
+- **Status words** in `docs/TRACEABILITY.md` are `DESIGNED`, `IMPLEMENTED`, `COMPONENT_VERIFIED`, `INTEGRATED`, `QUALIFIED`, `DEVIATED`, `BLOCKED`. A new test does not raise a status by itself. Evidence goes in backticks so `tools/uavnav/arch_check.py` can check that it exists.
+- **A commit that touches a contract path, an invariant file, or adds an enumerator to a state enum** ends its body with `Arch-Level: 0|1|2|3` and `Docs-Impact: none | <paths> | pending:<reason>`. Other commits need no trailer. Level 1 updates the spec and TRACEABILITY in the same change. Level 2 and 3 need an Architecture Review (`Review: AR<n>`, and `Decision: D<n>` for Level 3). An executor does not declare Level 2 or 3: it stops and reports.
+- **Each task report** names the invariants touched, the flags or states added, and the workarounds added with their root cause.
+- **Deviations** are `DV*` rows in TRACEABILITY with an owner, a review date or trigger, and a closing plan. A temporary deviation does not stay open without review.
+- `make gate` runs `arch_check.py` and `check_change.py`. Run `python3 -m tools.uavnav.arch_health` at the end of each slice; a signal over its threshold means an Architecture Review of that subsystem, not a redesign.

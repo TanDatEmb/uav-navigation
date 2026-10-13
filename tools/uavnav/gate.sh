@@ -14,6 +14,10 @@ stage_static() {
   git diff --check
   git diff --cached --check
   "$PYTHON" tools/check_documentation.py . docs
+  # Architecture governance (docs/CHANGE_CONTROL.md): evidence, deviations, dependency
+  # direction, and the Arch-Level declarations of commits after the baseline.
+  "$PYTHON" -m tools.uavnav.arch_check
+  "$PYTHON" -m tools.uavnav.check_change
 }
 
 stage_python() {

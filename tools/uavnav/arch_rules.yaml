@@ -1,0 +1,124 @@
+# Machine-readable half of docs/CHANGE_CONTROL.md (D34).
+# The prose (invariants, levels, review procedure) lives in that document; the paths, package rules and
+# thresholds that scripts need live here. Each fact has exactly one home: change a path or threshold here,
+# a rule's meaning there.
+
+# Commits after this one are checked by check_change.py. Older history is not rewritten or re-judged.
+baseline_commit: 12fc724
+
+# Subsystem = unit that architecture reviews, stress indicators and deviations refer to.
+subsystems:
+  core:       [src/core/uavnav_core, src/core/uavnav_interfaces]
+  ros_shell:  [src/core/uavnav_ros]
+  lio:        [src/estimation]
+  px4_bridge: [src/px4]
+  sim:        [src/sim, config/px4]
+  tooling:    [tools, Makefile]
+  docs:       [docs, AGENTS.md]
+
+# A change under these paths is visible to a consumer (message, config key, public header).
+# Such a commit must carry Arch-Level and Docs-Impact trailers; other commits may omit them (= Level 0).
+contract_paths:
+  - src/core/uavnav_interfaces/msg/*
+  - src/core/uavnav_interfaces/srv/*
+  - config/*
+  - src/*/*/include/*
+
+# The subset of contract paths whose repeated change makes consumers adapt (stress indicator S4).
+# Public headers are excluded: they change with every normal implementation step.
+churn_paths:
+  - src/core/uavnav_interfaces/msg/*
+  - src/core/uavnav_interfaces/srv/*
+  - config/*
+
+# Files that carry an architectural invariant (single writer, state tables, thread ownership, safety gates).
+# Touching them is allowed at Level 0 (a bug fix); the report names the invariant so the reviewer looks.
+invariant_paths:
+  INV-LIO-1-single-lifecycle-writer:
+    - src/estimation/uavnav_lio_core/include/uavnav/lio/lifecycle.hpp
+    - src/estimation/uavnav_lio_core/src/lifecycle.cpp
+    - src/estimation/uavnav_lio_core/src/frontend.cpp
+  INV-LIO-2-backend-cannot-reach-lifecycle:
+    - src/estimation/uavnav_lio_core/src/backend.cpp
+    - src/estimation/uavnav_lio_core/src/backend_math.cpp
+    - src/estimation/uavnav_lio_core/src/backend_math.hpp
+    - src/estimation/uavnav_lio_core/include/uavnav/lio/backend.hpp
+    - src/estimation/uavnav_lio_core/include/uavnav/lio/backend_config.hpp
+  INV-LIO-3-two-thread-ownership:
+    - src/estimation/uavnav_lio_core/src/runner.cpp
+    - src/estimation/uavnav_lio_core/include/uavnav/lio/runner.hpp
+    - src/estimation/uavnav_lio_core/include/uavnav/lio/channels.hpp
+  INV-PX4-1-alignment-fail-closed:
+    - src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/alignment.hpp
+    - src/px4/uavnav_px4_bridge/src/alignment.cpp
+  INV-PX4-2-ev-frame-and-epoch:
+    - src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/ev_encoder.hpp
+    - src/px4/uavnav_px4_bridge/src/ev_encoder.cpp
+    - src/px4/uavnav_px4_bridge/src/px4_time.cpp
+  INV-TIME-1-range-checked-stamps:
+    - src/core/uavnav_core/include/uavnav/core/time.hpp
+    - src/core/uavnav_ros/include/uavnav/ros/time_msg.hpp
+
+# Enum names matching this regex are state models: a commit that adds an enumerator is a new state
+# and needs Arch-Level >= 2 (SYSTEM_DESIGN §2.2: "adding a state requires a design review").
+state_enum_regex: '\w*(State|Phase)'
+
+# Dependency direction. `ros_free` packages may not depend on ROS packages or include ROS headers,
+# except in the file globs listed under ros_allowed (the node target / conversion layer).
+ros_markers: [rclcpp, rcl, rclcpp_components, sensor_msgs, geometry_msgs, nav_msgs, std_msgs, tf2, tf2_ros,
+              px4_msgs, px4_ros2_cpp, uavnav_interfaces, uavnav_ros, builtin_interfaces, rcl_interfaces]
+ros_free:
+  src/core/uavnav_core: {}
+  src/estimation/fast_lio_core: {}
+  src/estimation/uavnav_lio_core: {}
+  src/estimation/uavnav_lio:
+    ros_allowed:
+      - include/uavnav/lio_node/*
+      - src/lio_node.cpp
+      - src/lio_node_main.cpp
+      - src/ros_conversion.cpp
+      - test/cloud_msg.hpp
+      - test/ros_test_main.cpp
+      - test/test_lio_node.cpp
+      - test/test_ros_conversion.cpp
+  src/px4/uavnav_px4_bridge:
+    ros_allowed:
+      - include/uavnav/px4bridge/ros_conversion.hpp
+      - src/ros_conversion.cpp
+      - src/px4_bridge_node.cpp
+      - test/test_ros_conversion.cpp
+      - test/test_px4_bridge_node.cpp
+      - test/test_core_target_has_no_ros.cpp
+# Packages that are ROS shells by definition: no restriction on ROS use, still bound by allowed_deps.
+ros_shell_packages: [uavnav_ros, uavnav_interfaces]
+
+# In-repo packages each package may name in package.xml. Anything else is an architecture review item.
+allowed_deps:
+  uavnav_core: []
+  uavnav_interfaces: []
+  uavnav_ros: [uavnav_core, uavnav_interfaces]
+  fast_lio_core: [ikd_tree_vendor, ikfom_vendor]
+  uavnav_lio_core: [uavnav_core, fast_lio_core]
+  uavnav_lio: [uavnav_core, uavnav_lio_core, uavnav_interfaces, uavnav_ros]
+  uavnav_px4_bridge: [uavnav_core, uavnav_interfaces, uavnav_ros, px4_msgs]
+  uav_description: []
+  uav_simulation: [uav_description]
+
+# Product code never writes to stdout/stderr directly (AGENTS.md §2.3: one logger).
+banned_product_patterns:
+  regex: '\b(std::cout|std::cerr|printf\s*\(|fprintf\s*\()'
+  globs: [src/core/*/include/*, src/core/*/src/*, src/estimation/*/include/*, src/estimation/*/src/*,
+          src/px4/*/include/*, src/px4/*/src/*]
+
+# Stress indicators (arch_health.py). A signal over its threshold triggers an Architecture Review of
+# that subsystem; it never triggers a redesign by itself and never stops unrelated work.
+stress:
+  new_bool_members: 3          # S1: bool data members added to header files that already existed, per subsystem window
+  new_state_enumerators: 1     # S1: any new enumerator of a state enum
+  fix_commits_same_file: 5     # S3: fix/refactor commits touching the same non-test file (still in the tree)
+  contract_file_changes: 3     # S4: commits modifying the same message/config file after its creation
+  producer_fanout_packages: 3  # S4: a contract change that also touched this many other packages
+  workaround_markers: 2        # S2: added lines with workaround/hack/temporary/for-now markers
+  co_change_commits: 6         # S6: commits touching the same pair of packages (non-doc)
+  status_regressions: 1        # S8: TRACEABILITY rows that went to a lower status
+workaround_regex: '(?i)\b(workaround|hack|temporary|temporarily|for now|FIXME|XXX|kludge)\b'

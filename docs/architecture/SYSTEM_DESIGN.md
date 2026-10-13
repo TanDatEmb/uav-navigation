@@ -508,8 +508,8 @@ Bảng tiêu chí đầy đủ để đánh giá sau beta là O4 trong DECISIONS
 
 - Mỗi work package trỏ tới mục § của spec mà nó hiện thực.
 - [TRACEABILITY.md](../TRACEABILITY.md) ghi: yêu cầu → mục spec → WP → trạng thái → bằng chứng.
-- Cuối mỗi WP có bước review so code với spec. Mỗi chỗ lệch thành một mục O\*.
-- **Quy tắc dừng:** có ≥ 3 chỗ lệch đang mở, hoặc bất kỳ chỗ lệch nào chạm §2, thì dừng lại sửa thiết kế tổng.
+- Cuối mỗi WP có bước review so code với spec. Mỗi chỗ lệch thành một dòng `DV*` ở TRACEABILITY, và một mục O\* nếu cần owner quyết.
+- **Quy tắc review (D34, [CHANGE_CONTROL.md](../CHANGE_CONTROL.md)):** có ≥ 3 chỗ lệch đang mở, một chỉ báo stress vượt ngưỡng, hoặc một lệch chạm §2 hay một invariant, thì làm Architecture Review của hệ con liên quan và tạm ngừng mở rộng workaround liên quan. Việc độc lập không bị dừng. Lệch chạm §2 hay invariant là thay đổi mức L3: dừng các thay đổi liên quan tới khi có AR được duyệt.
 
 ## §8. Hoãn lại sau beta
 
