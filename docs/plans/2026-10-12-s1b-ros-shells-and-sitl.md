@@ -680,7 +680,7 @@ px4_msgs::msg::VehicleOdometry to_vehicle_odometry(const EvSample&, std::uint64_
 uavnav_interfaces::msg::Alignment to_msg(const AlignmentOutput&);                                // raw_* NaN when absent
 ```
 
-The node reads `config_file` and `events_jsonl`. It runs one callback group and a 100 ms ROS-clock timer that calls `on_tick`, with the topics and QoS of the runtime design.
+The node class is declared in `include/uavnav/px4bridge_node/px4_bridge_node.hpp` (the executable's `main` names no ROS type). It reads `config_file` and `events_jsonl`. Known limit (next to O25): two PX4 resets inside one window of dropped (invalid) samples apply only the last delta; the alignment's jump gate is the backstop. It runs one callback group and a 100 ms ROS-clock timer that calls `on_tick`, with the topics and QoS of the runtime design.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -692,7 +692,7 @@ The node reads `config_file` and `events_jsonl`. It runs one callback group and 
   }
   TEST(Px4BridgeRos, VehicleOdometryFields) { /* frames 2/2, angular_velocity NaN, timestamp and timestamp_sample */ }
   TEST(Px4BridgeRos, AlignmentMessageRawIsNanWhenAbsent) { /* raw nullopt -> raw_* NaN; state value == enum value */ }
-  TEST(Px4BridgeNode, InProcessPublishesEvAndAlignment) {
+  TEST(Px4BridgeNode, PublishesEvAndAlignmentFromLioAndPx4Streams) {   // in process; plus MultiThreadedExecutorKeepsCallbacksSerialised and one child-process ExecutableStartsAndStopsOnSigintWithTheSummaryLast
     // /lio/health TRACKING, /lio/odometry 10 Hz, /fmu/out/vehicle_local_position_v1 50 Hz consistent with T = (1, 2, 0, 0.3) for 5 s:
     // /alignment VALID with |x - 1| < 0.05; /fmu/in/vehicle_visual_odometry at 10 Hz +-10%; waits <= 60 s
   }
@@ -742,7 +742,7 @@ Spec §7.2 (S1 check), §6.1, D14; D33 (O19, O24). It needs the owner's machine 
   | `/lio/state` | 100 ± 5 Hz; inter-arrival p99 ≤ 20 ms (P7: not starved); the F23 step max \|Δp − v·Δt\| is reported |
   | EV age | ROS now − `timestamp_sample`, p99 ≤ 150 ms (< `EKF2_DELAY_MAX`) |
   | PX4 time | \|`vehicle_local_position.timestamp` − ROS now\| p99 ≤ 20 ms (D29) |
-  | Events (whole run) | zero `LioQueueOverflow`, `LioBackendFailed`, `ImuRateTooHigh`, `EventsDropped`; `LioScanDropped` ≤ 1% of scans; the `ImuGap` count is reported |
+  | Events (whole run) | zero `LioQueueOverflow`, `LioBackendFailed`, `ImuRateTooHigh`, `EventsDropped`; `LioScanDropped` ≤ 1% of scans; the `ImuGap` count is reported; `LioNodeSummary` has `rejected_wrong_frame == 0` and `rejected_malformed_cloud == 0` (confirms the Gazebo cloud layout and the IMU frame); the count of `Px4SampleRejected` with reason NOT_FINITE is reported and expected 0 (if non-zero, SITL decides whether the NaN rule must mask by validity flag); the point rate received at the lio node is reported (the probe saw ≈ 9 of 10 Hz) |
   | F34 values (reported here, judged in Task 12) | `yaw_T` max − min over the window; `yaw_T` − (π/2 − spawn yaw) |
 
 - [ ] **Step 1: Write the failing tests** (`SitlChecksTest`): `test_hover_pass_on_synthetic_records`; `test_fails_on_lio_lost` (`lio_tracking`); `test_fails_on_ev_fusion_gap` (`ekf2_ev_pos`); `test_fails_on_degraded_tracking_flapping` (`lio_flap_rate`: 3 DEGRADED→TRACKING transitions in 60 s fail; 0 pass; the rate and age percentiles are reported); `test_px4_time_identity_violation_fails` (50 ms offset); `test_hover_missing_topic_fails_closed`.
