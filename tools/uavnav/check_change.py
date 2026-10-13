@@ -90,12 +90,15 @@ def check_commit(root, rules, commit, decisions, range_files) -> list[Finding]:
     level = int(level_text)
 
     impact = trailers.get("Docs-Impact", "")
-    if level >= 1 and impact.lower() in ("", "none"):
+    # `<paths>, pending:<what is still owed>`: everything from the first "pending:" on is free text.
+    named, marker, debt = impact.partition("pending:")
+    named = named.strip().rstrip(",").strip()
+    if level >= 1 and not marker and named.lower() in ("", "none"):
         findings.append(Finding("ERROR", where, f"Arch-Level {level} needs Docs-Impact naming the documents it updates"))
-    if impact.startswith("pending:"):
-        findings.append(Finding("WARN", where, f"documentation debt: {impact}"))
-    elif impact.lower() not in ("", "none"):
-        for path in [p.strip() for p in impact.split(",") if p.strip()]:
+    if marker:
+        findings.append(Finding("WARN", where, f"documentation debt: pending:{debt}"))
+    if named and named.lower() != "none":
+        for path in [p.strip() for p in named.split(",") if p.strip()]:
             if not (root / path).exists():
                 findings.append(Finding("ERROR", where, f"Docs-Impact names {path}, which does not exist"))
             elif path not in range_files and path not in files:

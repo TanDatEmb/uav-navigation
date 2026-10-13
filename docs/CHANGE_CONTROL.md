@@ -49,7 +49,7 @@ Một tín hiệu stress **kích hoạt review, không tự động kích hoạt
 
 ```text
 Arch-Level: 0|1|2|3
-Docs-Impact: none | docs/architecture/SYSTEM_DESIGN.md, docs/TRACEABILITY.md | pending:<lý do>
+Docs-Impact: none | docs/architecture/SYSTEM_DESIGN.md, docs/TRACEABILITY.md | pending:<lý do>   # có thể ghép: <đường dẫn>, pending:<còn nợ gì>
 Review: AR<n>        # từ L2
 Decision: D<n>       # L3
 ```

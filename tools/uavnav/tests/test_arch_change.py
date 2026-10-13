@@ -68,6 +68,18 @@ class ChangeDeclarationTest(unittest.TestCase):
         self.assertEqual(errs, [])
         self.assertTrue(any("documentation debt" in n for n in notes))
 
+    def test_paths_followed_by_pending_text_with_commas_are_split_at_the_marker(self):
+        self.repo.write(MSG, "float64 x\nfloat64 y\n")
+        self.repo.write("docs/architecture/SYSTEM_DESIGN.md", "# Design\n\n§6.5 y\n")
+        self.repo.commit("feat(interfaces): add y", "Arch-Level: 1\nDocs-Impact: docs/architecture/SYSTEM_DESIGN.md, "
+                         "pending:TRACEABILITY row, O24 and the plan rule")
+        errs, notes = run(self.repo)
+        self.assertEqual(errs, [])
+        self.assertTrue(any("pending:TRACEABILITY row, O24" in n for n in notes))
+        self.repo.write(MSG, "float64 x\nfloat64 y\nfloat64 z\n")
+        self.repo.commit("feat(interfaces): add z", "Arch-Level: 1\nDocs-Impact: docs/nowhere.md, pending:later")
+        self.assertTrue(any("docs/nowhere.md, which does not exist" in e for e in run(self.repo)[0]))
+
     def test_a_new_state_enumerator_cannot_be_declared_below_level_two(self):
         self.repo.write(STATE_HPP, "enum class LioState { kA, kB, kC };\nstruct S {\n};\n")
         self.repo.commit("fix(lio): handle c", "Arch-Level: 1\nDocs-Impact: pending:x")
