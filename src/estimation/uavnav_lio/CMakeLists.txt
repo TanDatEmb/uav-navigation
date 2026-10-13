@@ -63,6 +63,8 @@ ament_export_dependencies(uavnav_core uavnav_lio_core Eigen3)
 set(UAVNAV_LIO_ROS_ENABLED OFF)
 if(UAVNAV_SANITIZE STREQUAL "")
   set(UAVNAV_LIO_ROS_ENABLED ON)
+  find_package(builtin_interfaces REQUIRED)
+  find_package(geometry_msgs REQUIRED)
   find_package(rclcpp REQUIRED)
   find_package(sensor_msgs REQUIRED)
   find_package(uavnav_interfaces REQUIRED)
@@ -75,6 +77,8 @@ if(UAVNAV_SANITIZE STREQUAL "")
     uavnav_lio_ingest
     uavnav_ros::uavnav_ros
     rclcpp::rclcpp
+    builtin_interfaces::builtin_interfaces__rosidl_typesupport_cpp
+    geometry_msgs::geometry_msgs__rosidl_typesupport_cpp
     sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
     uavnav_interfaces::uavnav_interfaces__rosidl_typesupport_cpp)
 

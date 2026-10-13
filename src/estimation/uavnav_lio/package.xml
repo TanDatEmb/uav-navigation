@@ -11,6 +11,8 @@
   <depend>uavnav_core</depend>
   <depend>uavnav_lio_core</depend>
   <depend>eigen3_cmake_module</depend>
+  <depend>builtin_interfaces</depend>
+  <depend>geometry_msgs</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
   <depend>uavnav_interfaces</depend>

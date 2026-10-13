@@ -11,6 +11,9 @@
 #include <string_view>
 #include <tuple>
 
+#include "builtin_interfaces/msg/time.hpp"
+#include "geometry_msgs/msg/pose.hpp"
+#include "geometry_msgs/msg/vector3.hpp"
 #include "uavnav/lio/lifecycle.hpp"
 #include "uavnav/lio_node/limits.hpp"
 #include "uavnav/ros/time_msg.hpp"
@@ -43,6 +46,11 @@ std::optional<std::uint32_t> float_field(const sensor_msgs::msg::PointCloud2& ms
     offset = f.offset;
   }
   return offset;
+}
+
+/// Two 4-byte fields at offsets a and b do not share a byte.
+constexpr bool disjoint(std::uint32_t a, std::uint32_t b) noexcept {
+  return a >= b ? a - b >= sizeof(float) : b - a >= sizeof(float);
 }
 
 float read_float(const std::uint8_t* p) noexcept {
@@ -109,7 +117,8 @@ Result<lio::ScanInput, ConversionError> to_scan_input(const sensor_msgs::msg::Po
   const auto ox = float_field(msg, "x");
   const auto oy = float_field(msg, "y");
   const auto oz = float_field(msg, "z");
-  if (!ox || !oy || !oz || msg.point_step < 3 * sizeof(float) || msg.is_bigendian) {
+  if (!ox || !oy || !oz || !disjoint(*ox, *oy) || !disjoint(*ox, *oz) || !disjoint(*oy, *oz) ||
+      msg.point_step < 3 * sizeof(float) || msg.is_bigendian) {
     return std::unexpected(ConversionError::kMalformedCloud);
   }
   // Sizes in 64 bits: width * point_step < 2^64; width * height * point_step may not be, so check it by division.

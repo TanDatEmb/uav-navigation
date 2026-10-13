@@ -58,8 +58,9 @@
 //   "LioInputRejected"  ConversionError (BAD_STAMP, NOT_FINITE, WRONG_FRAME, MALFORMED_CLOUD) or
 //                       NodeReason::kNoRosTime; rate-limited per reason (the 1st and every
 //                       lio::limits::kEventSummaryEvery-th; values stream 0 IMU / 1 scan, count).
-//   "LioPublishFailed"  NodeReason::kPublishFailed: a publish threw (rate-limited; values topic 0 state /
-//                       1 health / 2 odometry, count). The outputs of that call are lost; the node goes on.
+//   "LioPublishFailed"  NodeReason::kPublishFailed: one conversion or publish threw (rate-limited; values topic
+//                       0 state / 1 health / 2 odometry, count). Only that message is lost: each message has its
+//                       own failure scope, health first (detail/publish_outputs.hpp); the node goes on.
 //   "LioNodeFailed"     NodeReason::kCallbackException: an exception left the ingest or a conversion; emitted,
 //                       then rethrown to the executor (lio_node_main: RCLCPP_FATAL, shutdown(), exit 1).
 //   "LioNodeSummary"    NodeReason::kShutdown, once, in shutdown() before IngestSummary: the node's counters.
@@ -183,7 +184,7 @@ class LioNode : public rclcpp::Node {
 
   // Counters: written by the callbacks (one at a time), read by shutdown() after the gate closed.
   Counter imu_received_{0}, scans_received_{0}, scans_converted_{0}, points_in_{0}, points_non_finite_{0};
-  std::array<Counter, 4> rejected_{};  // by ConversionError
+  std::array<Counter, kConversionErrorCount> rejected_{};  // by ConversionError
   Counter no_ros_time_{0}, ingest_refused_{0}, states_published_{0}, health_published_{0}, odometry_published_{0},
       publish_failed_{0};
 };

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 #include <Eigen/Geometry>
@@ -12,6 +13,7 @@
 #include "cloud_msg.hpp"
 #include "uavnav/lio/lifecycle.hpp"
 #include "uavnav/lio/outputs.hpp"
+#include "uavnav/lio_node/detail/publish_outputs.hpp"
 #include "uavnav/lio_node/ingest.hpp"
 #include "uavnav/lio_node/ros_conversion.hpp"
 #include "uavnav_interfaces/msg/lio_health.hpp"
@@ -158,6 +160,12 @@ TEST(LioRosConversion, RejectsGarbageMessages) {
     c.fields[2].offset = testmsg::kPointStep - 2;
     EXPECT_EQ(ScanError(c), ConversionError::kMalformedCloud) << "z reads past the point";
     c = GoodCloud();
+    c.fields[2].offset = 6;  // z = bytes 6..9, overlapping y = bytes 4..7
+    EXPECT_EQ(ScanError(c), ConversionError::kMalformedCloud) << "overlapping y and z";
+    c = GoodCloud();
+    c.fields[0].offset = c.fields[1].offset = c.fields[2].offset = 0;  // every point would read (v, v, v)
+    EXPECT_EQ(ScanError(c), ConversionError::kMalformedCloud) << "x, y and z on the same bytes";
+    c = GoodCloud();
     c.data.pop_back();
     EXPECT_EQ(ScanError(c), ConversionError::kMalformedCloud) << "data one byte short";
     c = GoodCloud();
@@ -265,4 +273,53 @@ TEST(LioRosConversion, OutputsMapToMessages) {
     for (int c = 0; c < 3; ++c) EXPECT_EQ(om.velocity_covariance[static_cast<std::size_t>(3 * r + c)], o.vel_cov(r, c));
   }
   EXPECT_EQ(om.quality, 87U);
+}
+
+// Review T8 M1: each message has its own failure scope, so one failed publish never drops the health (a LOST
+// transition) or the odometry of the same call.
+TEST(LioRosConversion, OnePublishFailureLosesOnlyThatMessage) {
+  IngestOutputs out;
+  for (int i = 0; i < 3; ++i) {
+    const Eigen::Vector3d z = Eigen::Vector3d::Zero();
+    out.states.push_back(LioStateOut{time::SensorTime{kStampNs + i * 10'000'000}, 1, 0, lio::LioState::kLost, z,
+                                     Eigen::Quaterniond::Identity(), z, z, lio::ResetDelta{z, z, 0.0}});
+  }
+  out.health = lio::HealthOutput{time::SensorTime{kStampNs}, lio::LioState::kLost, 1, lio::LioReason::kLidarGapLost,
+                                 0.0, 0.0, 0.0, Eigen::Vector3d::Zero()};
+  out.odometry = lio::OdometryOutput{time::SensorTime{kStampNs}, 1, 0, Eigen::Vector3d::Zero(),
+                                     Eigen::Quaterniond::Identity(), Eigen::Vector3d::Zero(),
+                                     Eigen::Matrix<double, 6, 6>::Zero(), Eigen::Matrix3d::Zero(), 50};
+
+  std::vector<int> calls;  // 0 state, 1 health, 2 odometry, in call order
+  std::vector<int> failed;
+  const auto run = [&](int throwing_topic) {
+    calls.clear();
+    failed.clear();
+    int states_seen = 0;
+    detail::publish_outputs(
+        out,
+        [&](const uavnav_interfaces::msg::LioState&) {
+          calls.push_back(detail::kTopicState);
+          if (throwing_topic == detail::kTopicState && states_seen++ == 0) throw std::runtime_error("rcl");
+        },
+        [&](const uavnav_interfaces::msg::LioHealth& m) {
+          calls.push_back(detail::kTopicHealth);
+          EXPECT_EQ(m.state, uavnav_interfaces::msg::LioHealth::LOST);
+          if (throwing_topic == detail::kTopicHealth) throw std::runtime_error("rcl");
+        },
+        [&](const uavnav_interfaces::msg::LioOdometry&) {
+          calls.push_back(detail::kTopicOdometry);
+          if (throwing_topic == detail::kTopicOdometry) throw std::runtime_error("rcl");
+        },
+        [&](int topic) noexcept { failed.push_back(topic); });
+  };
+
+  run(detail::kTopicState);  // the first /lio/state publish throws
+  EXPECT_EQ(calls, (std::vector<int>{1, 0, 0, 0, 2})) << "health first, every state tried, then the odometry";
+  EXPECT_EQ(failed, std::vector<int>{detail::kTopicState});
+  run(detail::kTopicHealth);
+  EXPECT_EQ(calls, (std::vector<int>{1, 0, 0, 0, 2}));
+  EXPECT_EQ(failed, std::vector<int>{detail::kTopicHealth});
+  run(-1);
+  EXPECT_TRUE(failed.empty());
 }

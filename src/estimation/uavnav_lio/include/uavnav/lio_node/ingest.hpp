@@ -33,7 +33,9 @@
 // and the atomic counter, and it does not even store the ROS time). The guard's release on exit and acquire on
 // entry order every member write of one call before the next call, on whatever thread it runs. The estimator
 // thread (LioRunner's) reads only SharedRosTime, through the backend clock. stats() is any-thread (atomics).
-// stop() and the destructor run on the owner's thread when no call can run any more (after the executor stopped).
+// stop() and the destructor run on any thread once no call can run any more and every earlier call happens-before
+// them: the executor has stopped, or the caller's own gate is closed (the node's callback gate, lio_node.hpp; the
+// node calls stop() from rclcpp's pre-shutdown hook while the executor may still spin).
 //
 // Pending scan (O20). A scan whose end is after the newest IMU stamp the runner accepted would be refused by the
 // core (kScanAheadOfImu, F22). It waits instead, without blocking: ONE scan is held, and every call (on_imu and
@@ -229,9 +231,9 @@ class LioIngest {
   Result<IngestOutputs, IngestReason> on_scan(lio::ScanInput&& scan, const time::TimeSnapshot& now);
 
   /// LioRunner::stop() (joins the estimator thread), then one "IngestSummary". Idempotent; never throws. After it
-  /// the calls keep working on the frontend alone (LioRunner). Call it only after the executor has stopped: it
-  /// reads the ingest-thread state without the try-enter guard, so it must never run concurrently with on_imu or
-  /// on_scan.
+  /// the calls keep working on the frontend alone (LioRunner). It reads the ingest-thread state without the
+  /// try-enter guard, so call it only when no on_imu / on_scan can run any more and every earlier call
+  /// happens-before it (the executor stopped, or the caller's gate closed: LioNode's callback gate).
   void stop() noexcept;
 
   /// Any thread.

@@ -104,7 +104,32 @@ std::string EventKey(std::string_view name) { return "\"event\":\"" + std::strin
 std::size_t CountEvent(const std::vector<std::string>& lines, std::string_view name) {
   const std::string key = EventKey(name);
   return static_cast<std::size_t>(
-      std::count_if(lines.begin(), lines.end(), [&](const std::string& l) { return l.find(key) != std::string::npos; }));
+      std::count_if(lines.begin(), lines.end(),
+                    [&](const std::string& l) { return l.find(key) != std::string::npos; }));
+}
+
+/// The first line of event `name` and, when given, reason `reason`; empty when there is none.
+std::string EventLine(const std::vector<std::string>& lines, std::string_view name, std::string_view reason = {}) {
+  for (const std::string& l : lines) {
+    if (l.find(EventKey(name)) == std::string::npos) continue;
+    if (!reason.empty() && l.find("\"reason\":\"" + std::string(reason) + "\"") == std::string::npos) continue;
+    return l;
+  }
+  return {};
+}
+
+std::size_t CountEvent(const std::vector<std::string>& lines, std::string_view name, std::string_view reason) {
+  const std::string reason_key = "\"reason\":\"" + std::string(reason) + "\"";
+  return static_cast<std::size_t>(std::count_if(lines.begin(), lines.end(), [&](const std::string& l) {
+    return l.find(EventKey(name)) != std::string::npos && l.find(reason_key) != std::string::npos;
+  }));
+}
+
+/// The number `key` of an event's values in a JSONL line; NaN (and a failure) when it is missing.
+double JsonNumber(const std::string& line, const std::string& key) {
+  const auto at = line.find("\"" + key + "\":");
+  EXPECT_NE(at, std::string::npos) << key << " in " << line;
+  return at == std::string::npos ? std::numeric_limits<double>::quiet_NaN() : std::stod(line.substr(at + key.size() + 3));
 }
 
 /// The room scan once (the scene is static), with every kInfEvery-th point replaced by an inf no-return.
@@ -196,6 +221,7 @@ class Peer {
   }
 
   std::int64_t RosNowNs() const { return node_->now().nanoseconds(); }
+  void PublishImu(const sensor_msgs::msg::Imu& m) { imu_pub_->publish(m); }
 
   /// IMU samples k in [from, to) of the schedule base_ns + k * 5 ms, and a cloud after every 20th sample, stamped
   /// like it. `burst` samples are published back to back every burst * 5 ms (1: one every 5 ms); the average pace
@@ -203,7 +229,9 @@ class Peer {
   void Stream(std::int64_t base_ns, int from, int to, const sensor_msgs::msg::PointCloud2& cloud, int burst = 1) {
     const auto start = std::chrono::steady_clock::now();
     for (int k = from; k < to; ++k) {
-      if ((k - from) % burst == 0) std::this_thread::sleep_until(start + (k - from) * std::chrono::nanoseconds(kImuPeriodNs));
+      if ((k - from) % burst == 0) {
+        std::this_thread::sleep_until(start + (k - from) * std::chrono::nanoseconds(kImuPeriodNs));
+      }
       const std::int64_t stamp = base_ns + k * kImuPeriodNs;
       imu_pub_->publish(testmsg::Imu(stamp, Eigen::Vector3d::Zero(), Eigen::Vector3d(0.0, 0.0, room::kGravity)));
       if (k % kImuPerScan == kImuPerScan - 1) {
@@ -316,12 +344,7 @@ TEST(LioNode, InProcessSyntheticRunPublishesAllTopics) {
   });
   // The node counts the dropped no-returns: inf_points per converted scan (some scans may be lost on the wire,
   // so the expected total is derived from the node's own scan count).
-  const std::string& s = *summary;
-  const auto value = [&s](const std::string& key) {
-    const auto at = s.find("\"" + key + "\":");
-    EXPECT_NE(at, std::string::npos) << key;
-    return at == std::string::npos ? -1.0 : std::stod(s.substr(at + key.size() + 3));
-  };
+  const auto value = [&summary](const std::string& key) { return JsonNumber(*summary, key); };
   const double scans = value("scans_converted");
   EXPECT_GE(scans, 80.0) << "most of the 100 clouds arrive";
   EXPECT_EQ(value("points_non_finite"), scans * inf_points);
@@ -389,6 +412,77 @@ TEST(LioNode, ShutdownJoinsTheBackendThenFlushesEvents) {
   BoundedShutdown(*node);  // idempotent
   node.reset();            // the destructor after shutdown() writes nothing more
   EXPECT_EQ(ReadLines(jsonl), after_shutdown);
+  if (!HasFailure()) std::filesystem::remove(jsonl);
+}
+
+// Review T8 M2: with use_sim_time and no /clock the ROS time is 0 ("no ROS time yet"): every message is refused
+// with NO_ROS_TIME before the conversion, and the ingest is never called (ingest.hpp "ROS time zero").
+TEST(LioNode, NoRosTimeRefusesEveryMessageBeforeTheIngest) {
+  const auto jsonl = TempJsonl("no_ros_time");
+  int inf_points = 0;
+  const auto cloud = RoomCloud(&inf_points);
+  Peer peer;
+  rclcpp::NodeOptions options = SimOptions(jsonl);
+  options.append_parameter_override("use_sim_time", true);  // nobody publishes /clock in this test
+  auto node = std::make_shared<LioNode>(options);
+  Spinner spinner(std::make_shared<rclcpp::executors::SingleThreadedExecutor>(), node);
+  ASSERT_TRUE(peer.WaitMatched());
+
+  peer.Stream(peer.RosNowNs() - 1'000'000'000, 0, 200, cloud);  // 1 s: 200 IMU, 10 clouds
+  std::this_thread::sleep_for(300ms);
+  spinner.Stop();
+  BoundedShutdown(*node);
+
+  const auto lines = ReadLines(jsonl);
+  EXPECT_GE(CountEvent(lines, "LioInputRejected", "NO_ROS_TIME"), 1U);
+  EXPECT_EQ(CountEvent(lines, "LioInputRejected"), CountEvent(lines, "LioInputRejected", "NO_ROS_TIME"));
+  const std::string summary = EventLine(lines, "LioNodeSummary");
+  ASSERT_FALSE(summary.empty());
+  const double received = JsonNumber(summary, "imu_received") + JsonNumber(summary, "scans_received");
+  EXPECT_GT(received, 0.0);
+  EXPECT_EQ(JsonNumber(summary, "rejected_no_ros_time"), received) << "every message refused";
+  EXPECT_EQ(JsonNumber(summary, "scans_converted"), 0.0) << "refused before the conversion";
+  EXPECT_EQ(JsonNumber(summary, "ingest_refused"), 0.0);
+  EXPECT_EQ(CountEvent(lines, "ImuInitialized"), 0U);
+  const std::string ingest = EventLine(lines, "IngestSummary");
+  ASSERT_FALSE(ingest.empty());
+  EXPECT_EQ(JsonNumber(ingest, "request_pushed"), 0.0) << "no IMU sample reached the runner";
+  EXPECT_EQ(JsonNumber(ingest, "stamps_in_future"), 0.0) << "the ingest was never called";
+  if (!HasFailure()) std::filesystem::remove(jsonl);
+}
+
+// Review T8 M2: a garbage message (an IMU sample in the wrong frame) is refused at the boundary with an event and
+// a counter, and changes nothing.
+TEST(LioNode, WrongFrameImuIsRefusedWithAnEvent) {
+  const auto jsonl = TempJsonl("wrong_frame");
+  Peer peer;
+  auto node = std::make_shared<LioNode>(SimOptions(jsonl));
+  Spinner spinner(std::make_shared<rclcpp::executors::SingleThreadedExecutor>(), node);
+  ASSERT_TRUE(peer.WaitMatched());
+
+  const std::int64_t base = peer.RosNowNs() - 1'000'000'000;
+  for (int k = 0; k < 3; ++k) {  // a few, spaced: best effort may lose one, the counts below are relative
+    sensor_msgs::msg::Imu m = testmsg::Imu(base + k * kImuPeriodNs, Eigen::Vector3d::Zero(),
+                                           Eigen::Vector3d(0.0, 0.0, room::kGravity));
+    m.header.frame_id = "base_link";
+    peer.PublishImu(m);
+    std::this_thread::sleep_for(50ms);
+  }
+  std::this_thread::sleep_for(300ms);
+  spinner.Stop();
+  BoundedShutdown(*node);
+
+  const auto lines = ReadLines(jsonl);
+  const std::string summary = EventLine(lines, "LioNodeSummary");
+  ASSERT_FALSE(summary.empty());
+  const double received = JsonNumber(summary, "imu_received");
+  EXPECT_GE(received, 1.0);
+  EXPECT_EQ(JsonNumber(summary, "rejected_wrong_frame"), received);
+  EXPECT_EQ(JsonNumber(summary, "ingest_refused"), 0.0);
+  EXPECT_EQ(CountEvent(lines, "LioInputRejected", "WRONG_FRAME"), 1U) << "rate-limited: the 1st occurrence";
+  const std::string event = EventLine(lines, "LioInputRejected", "WRONG_FRAME");
+  EXPECT_EQ(JsonNumber(event, "stream"), 0.0) << "IMU";
+  EXPECT_EQ(JsonNumber(EventLine(lines, "IngestSummary"), "request_pushed"), 0.0) << "nothing reached the runner";
   if (!HasFailure()) std::filesystem::remove(jsonl);
 }
 

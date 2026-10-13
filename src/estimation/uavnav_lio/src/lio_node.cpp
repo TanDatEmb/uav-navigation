@@ -12,6 +12,7 @@
 #include "uavnav/core/tee_sink.hpp"
 #include "uavnav/lio/config.hpp"
 #include "uavnav/lio/limits.hpp"
+#include "uavnav/lio_node/detail/publish_outputs.hpp"
 #include "uavnav/lio_node/node_config.hpp"
 #include "uavnav/ros/qos.hpp"
 #include "uavnav/ros/ros_event_sink.hpp"
@@ -27,10 +28,6 @@ using events::EventBuilder;
 /// "stream" value of LioInputRejected (the frontend's numbering: 0 IMU, 1 scan).
 constexpr int kStreamImu = 0;
 constexpr int kStreamScan = 1;
-/// "topic" value of LioPublishFailed.
-constexpr int kTopicState = 0;
-constexpr int kTopicHealth = 1;
-constexpr int kTopicOdometry = 2;
 
 /// Rate limit of the per-sample events: the 1st and every kEventSummaryEvery-th occurrence (the frontend's).
 constexpr bool spam_due(std::uint64_t count) noexcept {
@@ -44,7 +41,9 @@ std::uint64_t bump(std::atomic<std::uint64_t>& c, std::uint64_t by = 1) noexcept
   return v;
 }
 
-double d(const std::atomic<std::uint64_t>& c) noexcept { return static_cast<double>(c.load(std::memory_order_relaxed)); }
+double as_double(const std::atomic<std::uint64_t>& c) noexcept {
+  return static_cast<double>(c.load(std::memory_order_relaxed));
+}
 
 std::string describe(const std::string& path, const config::ConfigError& e) {
   return path + ": " + std::string(config::to_string(e.kind)) + (e.key.empty() ? "" : " '" + e.key + "'") +
@@ -137,7 +136,8 @@ void LioNode::start(const std::string& config, const std::string& node_config, c
   ingest_ = std::move(*ingest);
 
   // (4) Publishers (QoS O21), then both subscriptions in ONE MutuallyExclusive group.
-  state_pub_ = create_publisher<uavnav_interfaces::msg::LioState>(std::string(kStateTopic), rosutil::qos::state_output());
+  state_pub_ =
+      create_publisher<uavnav_interfaces::msg::LioState>(std::string(kStateTopic), rosutil::qos::state_output());
   health_pub_ =
       create_publisher<uavnav_interfaces::msg::LioHealth>(std::string(kHealthTopic), rosutil::qos::reliable_output());
   odometry_pub_ = create_publisher<uavnav_interfaces::msg::LioOdometry>(std::string(kOdometryTopic),
@@ -231,35 +231,35 @@ void LioNode::reject(ConversionError e, int stream, const time::TimeSnapshot& no
 }
 
 void LioNode::publish(const IngestOutputs& out, const time::TimeSnapshot& now) noexcept {
-  int topic = kTopicState;
-  try {
-    for (const LioStateOut& s : out.states) {
-      state_pub_->publish(to_msg(s));
-      bump(states_published_);
-    }
-    topic = kTopicHealth;
-    if (out.health) {
-      health_pub_->publish(to_msg(*out.health));
-      bump(health_published_);
-    }
-    topic = kTopicOdometry;
-    if (out.odometry) {
-      odometry_pub_->publish(to_msg(*out.odometry));
-      bump(odometry_published_);
-    }
-  } catch (...) {
-    const std::uint64_t n = bump(publish_failed_);
-    if (spam_due(n)) {
-      emit(EventBuilder(Component::kLio, "LioPublishFailed", now)
-               .reason(NodeReason::kPublishFailed)
-               .value("topic", topic)
-               .value("count", static_cast<double>(n)));
-    }
-  }
+  detail::publish_outputs(
+      out,
+      [this](const uavnav_interfaces::msg::LioState& m) {
+        state_pub_->publish(m);
+        bump(states_published_);
+      },
+      [this](const uavnav_interfaces::msg::LioHealth& m) {
+        health_pub_->publish(m);
+        bump(health_published_);
+      },
+      [this](const uavnav_interfaces::msg::LioOdometry& m) {
+        odometry_pub_->publish(m);
+        bump(odometry_published_);
+      },
+      [this, &now](int topic) noexcept {
+        const std::uint64_t n = bump(publish_failed_);
+        if (spam_due(n)) {
+          emit(EventBuilder(Component::kLio, "LioPublishFailed", now)
+                   .reason(NodeReason::kPublishFailed)
+                   .value("topic", topic)
+                   .value("count", static_cast<double>(n)));
+        }
+      });
 }
 
 void LioNode::report_exception(int stream, const time::TimeSnapshot& now) noexcept {
-  emit(EventBuilder(Component::kLio, "LioNodeFailed", now).reason(NodeReason::kCallbackException).value("stream", stream));
+  emit(EventBuilder(Component::kLio, "LioNodeFailed", now)
+           .reason(NodeReason::kCallbackException)
+           .value("stream", stream));
 }
 
 void LioNode::emit(const events::EventBuilder& b) noexcept {
@@ -283,23 +283,24 @@ void LioNode::finish() noexcept {
 
   // (2) The node's counters, before the ingest's summary (the JSONL file ends with IngestSummary).
   const time::TimeSnapshot now = rosutil::snapshot(*get_clock());
+  const auto rejected = [this](ConversionError e) { return as_double(rejected_[static_cast<std::size_t>(e)]); };
   emit(EventBuilder(Component::kLio, "LioNodeSummary", now)
            .reason(NodeReason::kShutdown)
-           .value("imu_received", d(imu_received_))
-           .value("scans_received", d(scans_received_))
-           .value("scans_converted", d(scans_converted_))
-           .value("points_in", d(points_in_))
-           .value("points_non_finite", d(points_non_finite_))
-           .value("rejected_bad_stamp", d(rejected_[static_cast<std::size_t>(ConversionError::kBadStamp)]))
-           .value("rejected_not_finite", d(rejected_[static_cast<std::size_t>(ConversionError::kNotFinite)]))
-           .value("rejected_wrong_frame", d(rejected_[static_cast<std::size_t>(ConversionError::kWrongFrame)]))
-           .value("rejected_malformed_cloud", d(rejected_[static_cast<std::size_t>(ConversionError::kMalformedCloud)]))
-           .value("rejected_no_ros_time", d(no_ros_time_))
-           .value("ingest_refused", d(ingest_refused_))
-           .value("states_published", d(states_published_))
-           .value("health_published", d(health_published_))
-           .value("odometry_published", d(odometry_published_))
-           .value("publish_failed", d(publish_failed_)));
+           .value("imu_received", as_double(imu_received_))
+           .value("scans_received", as_double(scans_received_))
+           .value("scans_converted", as_double(scans_converted_))
+           .value("points_in", as_double(points_in_))
+           .value("points_non_finite", as_double(points_non_finite_))
+           .value("rejected_bad_stamp", rejected(ConversionError::kBadStamp))
+           .value("rejected_not_finite", rejected(ConversionError::kNotFinite))
+           .value("rejected_wrong_frame", rejected(ConversionError::kWrongFrame))
+           .value("rejected_malformed_cloud", rejected(ConversionError::kMalformedCloud))
+           .value("rejected_no_ros_time", as_double(no_ros_time_))
+           .value("ingest_refused", as_double(ingest_refused_))
+           .value("states_published", as_double(states_published_))
+           .value("health_published", as_double(health_published_))
+           .value("odometry_published", as_double(odometry_published_))
+           .value("publish_failed", as_double(publish_failed_)));
 
   // (3) LioRunner::stop joins the estimator thread before its channels go; then "IngestSummary".
   if (ingest_) ingest_->stop();

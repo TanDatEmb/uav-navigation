@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
+#include "builtin_interfaces/msg/time.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "uavnav/core/result.hpp"
@@ -42,6 +44,10 @@ constexpr std::string_view to_string(ConversionError e) {
 
 static_assert(ReasonEnum<ConversionError>);
 
+/// Number of ConversionError values (the node keeps one counter per value).
+inline constexpr std::size_t kConversionErrorCount = 4;
+static_assert(static_cast<std::size_t>(ConversionError::kMalformedCloud) + 1 == kConversionErrorCount);
+
 /// Per-cloud point counts, written only when the cloud is converted.
 struct CloudStats {
   std::uint32_t points_in;          ///< width * height
@@ -59,7 +65,8 @@ Result<lio::ImuInput, ConversionError> to_imu_input(const sensor_msgs::msg::Imu&
 ///   kBadStamp       header.stamp (as for the IMU);
 ///   kWrongFrame     header.frame_id != limits::kLidarFrameId;
 ///   kMalformedCloud exactly one field each named x, y and z, each FLOAT32 with count 1 and offset + 4 <=
-///                   point_step; point_step >= 12; little-endian data (is_bigendian false, the host order);
+///                   point_step, their three byte ranges pairwise disjoint; point_step >= 12;
+///                   little-endian data (is_bigendian false, the host order);
 ///                   row_step == width * point_step (no row padding); data.size() == width * height *
 ///                   point_step (computed without overflow). Other fields (intensity, ring) are ignored.
 /// Points whose x, y or z is not finite are dropped and counted (stats.points_non_finite; O20: about 69% of a
