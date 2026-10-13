@@ -56,7 +56,7 @@ Result<EvSample, EvReason> encode_ev(const EvInput& in, ClockMode mode) {
     return std::unexpected(EvReason::kNonFiniteState);
   }
   const double qn = qv.norm();
-  if (!(std::fabs(qn - 1.0) <= kQuaternionNormTolerance)) return std::unexpected(EvReason::kNonFiniteState);
+  if (!(std::fabs(qn - 1.0) <= kQuaternionNormTolerance)) return std::unexpected(EvReason::kBadQuaternion);
 
   const Eigen::Quaterniond q_flu{qv[0] / qn, qv[1] / qn, qv[2] / qn, qv[3] / qn};
 

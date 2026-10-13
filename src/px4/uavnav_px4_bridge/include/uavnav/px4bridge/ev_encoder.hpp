@@ -38,8 +38,8 @@ struct EvSample {
 };
 
 /// kNotTracking is evaluated first, so a lost or initialising LIO never yields a sample.
-/// A zero or non-unit quaternion is reported as kNonFiniteState (a dedicated reason is an S1b option).
-enum class EvReason : std::uint8_t { kEncoded, kNotTracking, kNonFiniteState, kBadCovariance, kTime };
+/// A finite but zero or non-unit quaternion is kBadQuaternion; a non-finite value anywhere is kNonFiniteState.
+enum class EvReason : std::uint8_t { kEncoded, kNotTracking, kNonFiniteState, kBadCovariance, kTime, kBadQuaternion };
 
 constexpr std::string_view to_string(EvReason r) {
   switch (r) {
@@ -48,6 +48,7 @@ constexpr std::string_view to_string(EvReason r) {
     case EvReason::kNonFiniteState: return "NON_FINITE_STATE";
     case EvReason::kBadCovariance: return "BAD_COVARIANCE";
     case EvReason::kTime: return "TIME";
+    case EvReason::kBadQuaternion: return "BAD_QUATERNION";
   }
   return "";
 }
@@ -72,8 +73,8 @@ struct EvInput {
 /// Encodes one sample. Checks run in this order and the first failure wins:
 ///  1. !tracking                                 -> kNotTracking
 ///  2. to_px4 / to_px4_us failure                -> kTime
-///  3. non-finite p, q, v (also after the float32 cast), or q not unit
-///     (|norm - 1| > 1e-3, zero norm included)   -> kNonFiniteState
+///  3. non-finite p, q, v (also after the float32 cast)  -> kNonFiniteState
+///     then q not unit (|norm - 1| > 1e-3, zero norm included) -> kBadQuaternion
 ///  4. covariance: the whole 3x3 orientation block must be finite (its off-diagonals are needed for
 ///     the rotation), and every reported variance (position, orientation, velocity) must be finite and
 ///     > 0, also after the float32 cast            -> kBadCovariance

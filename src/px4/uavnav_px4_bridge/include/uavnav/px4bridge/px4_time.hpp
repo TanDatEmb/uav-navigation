@@ -15,13 +15,15 @@ enum class ClockMode : std::uint8_t { kSimulationIdentity, kRealtime };
 
 enum class Px4TimeError : std::uint8_t {
   kRealtimeNotSupported,  ///< ClockMode::kRealtime: no sensor->PX4 offset estimator in the beta
-  kNegative               ///< the instant is before the PX4 epoch (ns < 0)
+  kNegative,              ///< the instant is before the PX4 epoch (ns < 0)
+  kOutOfRange             ///< a PX4 microsecond stamp beyond time::kMaxStampSeconds (it would overflow int64 ns)
 };
 
 constexpr std::string_view to_string(Px4TimeError e) {
   switch (e) {
     case Px4TimeError::kRealtimeNotSupported: return "REALTIME_NOT_SUPPORTED";
     case Px4TimeError::kNegative: return "NEGATIVE";
+    case Px4TimeError::kOutOfRange: return "OUT_OF_RANGE";
   }
   return "";
 }
@@ -36,5 +38,12 @@ Result<time::Px4Time, Px4TimeError> to_px4(time::SensorTime t, ClockMode mode);
 /// (1999 ns -> 1 us). Contract: t.ns >= 0, which to_px4 guarantees. A negative input
 /// saturates to 0 instead of wrapping to a huge unsigned value.
 std::uint64_t to_px4_us(time::Px4Time t);
+
+/// PX4 microseconds (VehicleOdometry.timestamp_sample) -> SensorTime, the range-checked converter for an
+/// external stamp (SYSTEM_DESIGN §6.3, D29). kSimulationIdentity only: PX4 time is the simulation /clock, so
+/// the nanoseconds are us * 1000; kRealtime and any unknown mode give kRealtimeNotSupported (checked first,
+/// fail closed, as to_px4). us > time::kMaxStampSeconds * 1'000'000 gives kOutOfRange; the check is made on
+/// the microseconds BEFORE the multiplication, so no input can overflow int64.
+Result<time::SensorTime, Px4TimeError> from_px4_us(std::uint64_t us, ClockMode mode);
 
 }  // namespace uavnav::px4bridge

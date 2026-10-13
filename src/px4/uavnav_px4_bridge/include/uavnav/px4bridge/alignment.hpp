@@ -269,7 +269,8 @@ class AlignmentEstimator {
   ///  5. tracking:
   ///     INVALID -> INIT (kLioTracking); the new accumulation starts with the NEXT pair.
   ///     FROZEN  -> VALID (kLioTracking); the pair, if any, is then processed as in VALID, but the
-  ///                reason stays kLioTracking (the jump rejection protects T).
+  ///                reason is kLioTracking, except a jump-rejected pair, which reports kPairRejectedJump
+  ///                (T unchanged; the jump rejection protects T).
   ///     no PX4 pair                                             -> kNoPx4Sample, nothing changes
   ///     INIT: consistent with the running mean at the vehicle -> added (kPairAccepted), and at
   ///           consistent_pairs and every member within the thresholds of the final mean at its own vehicle

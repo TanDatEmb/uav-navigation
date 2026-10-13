@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <filesystem>
 #include <initializer_list>
 #include <limits>
 #include <string>
@@ -67,6 +68,26 @@ TEST(AlignmentConfig, BetaValuesLoad) {
   EXPECT_DOUBLE_EQ(r->jump_yaw_rad, 0.0873);
   EXPECT_EQ(r->valid_stale, time::seconds(1));
   EXPECT_EQ(r->frozen_max, time::seconds(10));
+}
+
+// D22: config/px4_bridge/sim.yaml is the single source of the SITL alignment values.
+TEST(AlignmentConfig, SimYamlLoads) {
+  const std::filesystem::path file = std::filesystem::path(UAVNAV_REPO_CONFIG_DIR) / "px4_bridge" / "sim.yaml";
+  const auto values = config::load_params_file(file, kAlignmentSpecs);
+  ASSERT_TRUE(values.has_value()) << file << ": " << values.error().key << ": " << values.error().detail;
+  EXPECT_EQ(values->size(), kAlignmentSpecs.size());
+  for (const config::ParamSpec& spec : kAlignmentSpecs) {
+    EXPECT_TRUE(values->contains(std::string(spec.key))) << spec.key;
+  }
+  const auto cfg = load_alignment_config(*values);
+  ASSERT_TRUE(cfg.has_value()) << cfg.error().key << ": " << cfg.error().detail;
+  const AlignmentConfig beta{time::seconds(2), 20U, 0.5, 0.0873, time::seconds(1), time::seconds(10)};
+  EXPECT_EQ(cfg->tau, beta.tau);
+  EXPECT_EQ(cfg->consistent_pairs, beta.consistent_pairs);
+  EXPECT_DOUBLE_EQ(cfg->jump_position_m, beta.jump_position_m);
+  EXPECT_DOUBLE_EQ(cfg->jump_yaw_rad, beta.jump_yaw_rad);
+  EXPECT_EQ(cfg->valid_stale, beta.valid_stale);
+  EXPECT_EQ(cfg->frozen_max, beta.frozen_max);
 }
 
 TEST(AlignmentConfig, SpecsAreValidAndComplete) {

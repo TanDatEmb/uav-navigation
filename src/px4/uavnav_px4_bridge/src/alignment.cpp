@@ -362,7 +362,9 @@ AlignmentOutput AlignmentEstimator::on_lio(const LioPoseSample& s) noexcept {
   const Pair pair{instant(px4->p, px4->yaw, s.p_frd_m, s.yaw_frd_rad), s.p_frd_m, px4->p};
   newest_pair_ = s.t;
   const AlignmentReason r = state_ == AlignmentState::kInit ? accumulate(pair, s.t) : filter(pair, s.t);
-  return output(transition.value_or(r), pair.inst);
+  // FROZEN -> VALID reports the transition (kLioTracking) unless the returning pair itself is jump-rejected:
+  // that rejection (T unchanged) is the more important fact and keeps its own reason.
+  return output(r == AlignmentReason::kPairRejectedJump ? r : transition.value_or(r), pair.inst);
 }
 
 AlignmentOutput AlignmentEstimator::on_tick(time::SensorTime now) noexcept {

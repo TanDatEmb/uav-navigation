@@ -39,6 +39,9 @@ if(BUILD_TESTING)
     ament_add_gtest(${test_name} test/${test_name}.cpp TIMEOUT 300)
     target_link_libraries(${test_name} uavnav_px4_bridge::uavnav_px4_bridge_core)
     target_compile_options(${test_name} PRIVATE ${UAVNAV_PX4_BRIDGE_STRICT_WARNINGS})
+    # test_alignment_config loads config/px4_bridge/sim.yaml (D22); the path is relative to this package.
+    target_compile_definitions(${test_name} PRIVATE
+      UAVNAV_REPO_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../config")
   endforeach()
 endif()
 

@@ -385,13 +385,45 @@ TEST(EvEncoder, RejectsValueThatOverflowsFloat) {
 TEST(EvEncoder, RejectsZeroAndNonUnitQuaternion) {
   EvInput in = Good();
   in.q = Eigen::Quaterniond{0, 0, 0, 0};
-  ExpectReason(in, EvReason::kNonFiniteState);
+  ExpectReason(in, EvReason::kBadQuaternion);
   in.q = Eigen::Quaterniond{2, 0, 0, 0};
-  ExpectReason(in, EvReason::kNonFiniteState);
+  ExpectReason(in, EvReason::kBadQuaternion);
   in.q = Eigen::Quaterniond{0.5, 0, 0, 0};
-  ExpectReason(in, EvReason::kNonFiniteState);
+  ExpectReason(in, EvReason::kBadQuaternion);
   in.q = Eigen::Quaterniond{1.01, 0, 0, 0};
+  ExpectReason(in, EvReason::kBadQuaternion);
+}
+
+TEST(EvEncoder, BadQuaternionHasItsOwnReason) {
+  EvInput in = Good();
+  in.q = Eigen::Quaterniond{0, 0, 0, 0};
+  ExpectReason(in, EvReason::kBadQuaternion);
+  in.q = Eigen::Quaterniond{1.01, 0, 0, 0};  // |q| = 1.01
+  ExpectReason(in, EvReason::kBadQuaternion);
+  in.q = Eigen::Quaterniond{kNan, 0, 0, 0};  // not finite stays a non-finite state
   ExpectReason(in, EvReason::kNonFiniteState);
+  in.q = Eigen::Quaterniond{1, kInf, 0, 0};
+  ExpectReason(in, EvReason::kNonFiniteState);
+}
+
+TEST(EvEncoder, NonUnitQuaternionWithRotatedCovariance) {
+  // |q| = 1 + 5e-4 is inside the tolerance: the encoder normalises q first, so the body variances are
+  // the diagonal of R^T S R for the UNIT rotation (yaw 1.0), not for the scaled one.
+  Eigen::Matrix3d world;  // SPD, anisotropic, nonzero off-diagonals
+  world << 0.040, 0.010, -0.008,
+           0.010, 0.010, 0.004,
+           -0.008, 0.004, 0.002;
+  EvInput in = Good();
+  const Eigen::Quaterniond unit = QuatZyx(1.0, 0.0, 0.0);
+  in.q = Eigen::Quaterniond{unit.coeffs() * (1.0 + 5e-4)};
+  ASSERT_NEAR(in.q.norm(), 1.0 + 5e-4, 1e-12);
+  in.pose_cov.block<3, 3>(3, 3) = world;
+  const Eigen::Matrix3d body = ExplicitRtSR(ExplicitRzyx(1.0, 0.0, 0.0), world);
+  EXPECT_GT(std::fabs(body(0, 0) - world(0, 0)), 1e-3);
+  const EvSample s = MustEncode(in);
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_NEAR(s.orientation_variance[static_cast<std::size_t>(i)], body(i, i), 1e-6) << i;
+  }
 }
 
 TEST(EvEncoder, StateIsCheckedBeforeCovariance) {
@@ -428,5 +460,6 @@ TEST(EvEncoder, ReasonNamesAreUpperSnake) {
   EXPECT_EQ(to_string(EvReason::kNonFiniteState), "NON_FINITE_STATE");
   EXPECT_EQ(to_string(EvReason::kBadCovariance), "BAD_COVARIANCE");
   EXPECT_EQ(to_string(EvReason::kTime), "TIME");
+  EXPECT_EQ(to_string(EvReason::kBadQuaternion), "BAD_QUATERNION");
   static_assert(ReasonEnum<EvReason>);
 }

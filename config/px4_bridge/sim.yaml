@@ -1,0 +1,21 @@
+# Default tier-(b) parameters of the PX4 bridge core (uavnav_px4_bridge_core) for SITL: the alignment
+# T (lio_odom -> PX4 local NED) of SYSTEM_DESIGN §4.1. This file is the single source of these values (D22).
+# Schema, units and bounds: kAlignmentSpecs in src/px4/uavnav_px4_bridge/include/uavnav/px4bridge/config.hpp.
+# A value outside its bounds, a missing key or an unknown key makes the process refuse to start.
+# All values are beta starting values; S1b tunes them from SITL logs.
+# Cross rule: alignment_frozen_max_s > alignment_valid_stale_s.
+
+# --- filter of T (SYSTEM_DESIGN §4.1, D30) ----------------------------------------------------------
+# no separate rate limiter: the jump gate and tau bound the rate of T at the vehicle.
+# at a 0.1 s scan period one step moves T by at most jump_position x 0.1 / tau = 0.5 x 0.1 / 2.0 = 0.025 m
+# (0.25 m/s) and yaw by jump_yaw x 0.1 / tau = 0.0873 x 0.1 / 2.0 = 0.0044 rad (0.25 deg, 2.5 deg/s)
+alignment_tau_s: 2.0                     # filter time constant of T; alpha = dt / tau <= 1 (tau >= 0.2 s)
+alignment_consistent_pairs: 20           # consistent pairs (INIT) to enter VALID: 2 s of scans at 10 Hz
+alignment_jump_position_m: 0.5           # a pair farther than this from the filtered T, measured at the vehicle, is rejected
+alignment_jump_yaw_rad: 0.0873           # yaw jump gate: 5 deg = 0.0873 rad
+
+# --- lifecycle of the output (SYSTEM_DESIGN §4.1) ---------------------------------------------------
+# valid_stale covers one missed 10 Hz scan plus the pairing window on both sides (0.1 + 2 x 0.05 s = 0.2 s)
+# with margin, so one unpaired scan never invalidates T
+alignment_valid_stale_s: 1.0             # VALID with no accepted pair for longer -> INVALID
+alignment_frozen_max_s: 10.0             # FROZEN (LIO lost) for longer -> INVALID; = lio_recovery_timeout_s (D18)

@@ -595,6 +595,21 @@ TEST(Alignment, FrozenReturnsToValidWhenTrackingReturns) {
   EXPECT_EQ(sim.step().reason, AlignmentReason::kPairAccepted);
 }
 
+TEST(Alignment, FrozenToValidJumpRejectedPairKeepsItsReason) {
+  Sim sim;
+  sim.run_until_valid();
+  const AlignmentOutput before = sim.step();
+  for (int i = 0; i < 5; ++i) ASSERT_EQ(sim.step(false).state, AlignmentState::kFrozen);
+  // PX4 moved 1 m (> jump_position 0.5 m) while LIO was lost: the pair of the returning scan is outside the gate.
+  sim.truth.x_m += 1.0;
+  const AlignmentOutput back = sim.step(true);
+  EXPECT_EQ(back.state, AlignmentState::kValid);  // FROZEN -> VALID still happens
+  EXPECT_EQ(back.reason, AlignmentReason::kPairRejectedJump);
+  ExpectPoseEq(back.filtered, before.filtered);  // T unchanged
+  ASSERT_TRUE(back.raw.has_value());
+  EXPECT_GT(back.residual_position_m, 0.5);
+}
+
 TEST(Alignment, TrackingFalseNeverYieldsValid) {
   Sim sim;
   sim.run_until_valid();
@@ -1341,7 +1356,11 @@ TEST(AlignmentFuzz, EveryStateChangeIsAListedEdge) {
         ASSERT_NE(o.state, AlignmentState::kValid);
       }
       if (o.state != before) {
-        const Edge e{before, o.state, o.reason};
+        // FROZEN -> VALID whose returning pair is jump-rejected reports that rejection instead of the
+        // transition reason; the edge itself is still the listed FROZEN -> VALID (kLioTracking).
+        const bool frozen_valid_rejected = before == AlignmentState::kFrozen && o.state == AlignmentState::kValid &&
+                                           o.reason == AlignmentReason::kPairRejectedJump;
+        const Edge e{before, o.state, frozen_valid_rejected ? AlignmentReason::kLioTracking : o.reason};
         ASSERT_TRUE(listed(e)) << "seed " << seed << " " << to_string(before) << " -> " << to_string(o.state)
                                << " (" << to_string(o.reason) << ")";
         seen.insert(e);
