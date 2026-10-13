@@ -52,7 +52,10 @@ virtual environment for normal verification.
   (`sitl_checks.evaluate_hover`, fourteen checks plus every phase ok). On a
   failure read `python3 -m tools.uavnav.events <run>/events_lio.jsonl
   --timeline` (and `events_px4_bridge.jsonl`) first. Owner machine time; never
-  part of `make test` or `make gate`.
+  part of `make test` or `make gate`. Both SITL modes give their ROS 2
+  processes `FASTRTPS_DEFAULT_PROFILES_FILE=config/ros/fastdds_sitl.xml` (16 MB
+  shared-memory segment; a 645 KB cloud is otherwise lost ~15 % of the time).
+  Start a ROS tool that must see the clouds with the same variable.
 - PX4 profiles (`config/px4/profiles/*.yaml`) are validated by
   `tools/uavnav/px4_profile.py`; an unknown key or a value other than the
   decided one (D20, D28, D33/O23) refuses start.

@@ -82,7 +82,11 @@ DEGRADED→TRACKING rate, alignment state, rate and jump rejections, drift
 against Gazebo ground truth, the `/lio/state` rate, EV age, PX4 time, the event
 counts of both nodes, and the F34 values (reported). The node event logs are
 `events_lio.jsonl` and `events_px4_bridge.jsonl` in the run directory
-(`python3 -m tools.uavnav.events <file> --timeline`).
+(`python3 -m tools.uavnav.events <file> --timeline`). The harness gives its ROS 2
+processes (gz bridges, launch, driver; not MicroXRCEAgent or PX4)
+`FASTRTPS_DEFAULT_PROFILES_FILE=config/ros/fastdds_sitl.xml`: a 16 MB Fast DDS
+shared-memory segment, so a 645 KB best-effort cloud is not lost in transport
+(without it about 15 % of the clouds never reached `lio`).
 
 ## Documentation
 

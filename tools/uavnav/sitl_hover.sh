@@ -15,6 +15,9 @@
 #   --hover then starts `ros2 launch uavnav_bringup s1_estimation.launch.py` (the same two gz bridges, lio and
 #     px4_bridge, use_sim_time; the event logs in the run directory) and tools/uavnav/sitl_hover.py; bounded at
 #     300 s. PATTERN altitude_sweep is added by S1b Task 13 and refused here.
+# The ROS 2 processes (gz bridges, the launch, the driver) get FASTRTPS_DEFAULT_PROFILES_FILE=config/ros/fastdds_sitl.xml:
+# a 16 MB shared-memory segment, so a 645 KB best-effort cloud is not lost in transport (Task 11; without it ~15 %
+# of the clouds never reached lio). MicroXRCEAgent and PX4 keep their own DDS defaults.
 # The run is bounded (wall, from the first process start); every group it started is torn down on EXIT, INT
 # and TERM (SIGINT, then SIGTERM, then SIGKILL, by process group and by session, in reverse start order), and
 # the teardown verifies with pgrep that none of its processes remain. It never signals a process it did not
@@ -75,8 +78,10 @@ PROFILE_FILE="${WS_DIR}/config/px4/profiles/${PROFILE}.yaml"
 LIO_CONFIG="${WS_DIR}/config/lio/sim.yaml"
 LIO_NODE_CONFIG="${WS_DIR}/config/lio/node_sim.yaml"
 BRIDGE_CONFIG="${WS_DIR}/config/px4_bridge/sim.yaml"
+DDS_PROFILE="${WS_DIR}/config/ros/fastdds_sitl.xml"
 
 refuse() { echo "sitl_hover: REFUSED: $*" >&2; exit 2; }
+[[ -f "${DDS_PROFILE}" ]] || refuse "missing ${DDS_PROFILE}"
 
 ###############################################################################
 # Prechecks (read-only; also in --dry-run)
@@ -168,15 +173,18 @@ else
 fi
 export ROS_LOG_DIR="${RUN_DIR}/ros_log"  # the ROS and launch logs stay in the run directory
 
+# The Fast DDS profile of the ROS 2 processes (see the header); not for MicroXRCEAgent or PX4.
+DDS_ENV=(FASTRTPS_DEFAULT_PROFILES_FILE="${DDS_PROFILE}")
 # name and command of each process group, in start order (the driver is started last, with its budget).
 # shellcheck disable=SC2034  # read through the CMD_<name> nameref
 {
   CMD_xrce_agent=(MicroXRCEAgent udp4 -p "${XRCE_PORT}")
   CMD_px4_gz=(env GZ_GUI=0 SESSION_DIR="${RUN_DIR}" UAVNAV_PX4_PROFILE="${PROFILE_FILE}" PYTHON="${PYTHON}"
               "${SPAWN_ENV[@]}" tools/simulation/run_px4_mid360.sh)
-  CMD_control_bridge=(ros2 run ros_gz_bridge parameter_bridge --ros-args -p "config_file:=${CONTROL_BRIDGE_YAML}")
-  CMD_lidar_bridge=(ros2 run uav_simulation gz_lidar_bridge)
-  CMD_estimation=(ros2 launch uavnav_bringup s1_estimation.launch.py "lio_config:=${LIO_CONFIG}"
+  CMD_control_bridge=(env "${DDS_ENV[@]}" ros2 run ros_gz_bridge parameter_bridge --ros-args
+                      -p "config_file:=${CONTROL_BRIDGE_YAML}")
+  CMD_lidar_bridge=(env "${DDS_ENV[@]}" ros2 run uav_simulation gz_lidar_bridge)
+  CMD_estimation=(env "${DDS_ENV[@]}" ros2 launch uavnav_bringup s1_estimation.launch.py "lio_config:=${LIO_CONFIG}"
                   "lio_node_config:=${LIO_NODE_CONFIG}" "bridge_config:=${BRIDGE_CONFIG}" "events_dir:=${RUN_DIR}")
 }
 if [[ "${MODE}" == probe ]]; then
@@ -188,10 +196,10 @@ else
 fi
 driver_cmd() {  # $1 = budget in seconds
   if [[ "${MODE}" == probe ]]; then
-    DRIVER_CMD=("${PYTHON}" tools/uavnav/sitl_probe.py --run-dir "${RUN_DIR}" --profile "${PROFILE}"
+    DRIVER_CMD=(env "${DDS_ENV[@]}" "${PYTHON}" tools/uavnav/sitl_probe.py --run-dir "${RUN_DIR}" --profile "${PROFILE}"
                 --hover-mode "${HOVER_MODE}" --budget-s "$1")
   else
-    DRIVER_CMD=("${PYTHON}" tools/uavnav/sitl_hover.py --run-dir "${RUN_DIR}" --profile "${PROFILE}"
+    DRIVER_CMD=(env "${DDS_ENV[@]}" "${PYTHON}" tools/uavnav/sitl_hover.py --run-dir "${RUN_DIR}" --profile "${PROFILE}"
                 --spawn-yaw-rad "${SPAWN_YAW_RAD:-0}" --pattern "${PATTERN}" --hover-mode "${HOVER_MODE}"
                 --budget-s "$1")
   fi

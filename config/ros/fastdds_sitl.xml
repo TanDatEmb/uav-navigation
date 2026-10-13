@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  Fast DDS participant profile of the SITL ROS 2 processes (S1b Task 11; harness environment only, not a product
+  setting). tools/uavnav/sitl_hover.sh exports FASTRTPS_DEFAULT_PROFILES_FILE=<this file> for the processes it starts
+  that use rmw_fastrtps_cpp (the Jazzy default): the gz bridges, lio, px4_bridge and the rclpy driver. Not for
+  MicroXRCEAgent or PX4.
+
+  Why: a Gazebo MID-360 cloud is 645289 bytes (20160 points x 32 B + header), larger than the default shared-memory
+  segment of a participant (512 KB). Such a cloud was sent in fragments through the full segment / UDP and, best
+  effort (SensorDataQoS, D33/O21), about 15 % of the clouds never reached lio (hover 20261013T151158Z-gps-hover: 775
+  of 913) and two in a row tripped the LiDAR gap rule (DEGRADED). A 16 MB segment carries a whole cloud in shared
+  memory: a 60 s bridge-only count went from 286 of 476 delivered to 477 of 477.
+  Both transports stay: SHM for same-host peers, UDPv4 for any peer that cannot use it.
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>sitl_shm</transport_id>
+      <type>SHM</type>
+      <segment_size>16777216</segment_size>
+      <maxMessageSize>16777216</maxMessageSize>
+    </transport_descriptor>
+    <transport_descriptor>
+      <transport_id>sitl_udp</transport_id>
+      <type>UDPv4</type>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="uavnav_sitl_participant" is_default_profile="true">
+    <rtps>
+      <userTransports>
+        <transport_id>sitl_shm</transport_id>
+        <transport_id>sitl_udp</transport_id>
+      </userTransports>
+      <useBuiltinTransports>false</useBuiltinTransports>
+    </rtps>
+  </participant>
+</profiles>
