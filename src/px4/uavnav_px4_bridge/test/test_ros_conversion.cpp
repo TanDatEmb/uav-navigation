@@ -267,3 +267,24 @@ TEST(Px4BridgeRos, AlignmentStampThatCannotBeAMessageStampIsTheEpoch) {
   EXPECT_EQ(m.stamp.sec, 0);
   EXPECT_EQ(m.stamp.nanosec, 0U);
 }
+
+// The strict rule (ros_conversion.hpp): a NaN position is refused as NOT_FINITE also when PX4 marks it invalid, so
+// it is reported by the node as Px4SampleRejected NOT_FINITE and not as the core's PX4_POSITION_INVALID.
+TEST(Px4BridgeRos, NanPositionWithValidityFlagFalseIsRefusedAsNotFinite) {
+  px4_msgs::msg::VehicleLocalPosition m = GoodLocalPosition();
+  m.xy_valid = false;
+  m.x = kNaNF;
+  EXPECT_EQ(Reason(to_px4_local_position(m)), BridgeReason::kNotFinite);
+
+  m = GoodLocalPosition();
+  m.z_valid = false;
+  m.z = kNaNF;
+  EXPECT_EQ(Reason(to_px4_local_position(m)), BridgeReason::kNotFinite);
+
+  // Finite numbers with the flag false still convert (the core skips them with PX4_POSITION_INVALID).
+  m = GoodLocalPosition();
+  m.xy_valid = false;
+  const auto r = to_px4_local_position(m);
+  ASSERT_TRUE(r.has_value());
+  EXPECT_FALSE(r->xy_valid);
+}

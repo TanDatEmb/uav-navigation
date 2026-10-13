@@ -35,16 +35,16 @@ ament_export_targets(export_uavnav_px4_bridge_core HAS_LIBRARY_TARGET)
 ament_export_dependencies(uavnav_core Eigen3)
 
 # --- uavnav_px4_bridge_ros + px4_bridge_node: the ROS node (S1b Task 10; SYSTEM_DESIGN §4.1, §6.4, §6.5, D33/O19-O22) ---
-# Message conversion at the boundary (a static library, linked by the executable and the tests; not exported) and the
-# `px4_bridge_node` executable in lib/uavnav_px4_bridge. The core target above links no rclcpp and no message package;
-# test_core_target_has_no_ros pins that. ROS may appear only in the files listed under ros_allowed of this package in
-# tools/uavnav/arch_rules.yaml, which is why the node class lives in src/px4_bridge_node.cpp and the node test drives
-# the executable as a process.
+# Message conversion at the boundary and the Px4BridgeNode class (a static library, linked by the executable and the
+# tests; not exported), and the `px4_bridge_node` executable in lib/uavnav_px4_bridge. The core target above links no
+# rclcpp and no message package; test_core_target_has_no_ros pins that. ROS may appear only in the files listed under
+# ros_allowed of this package in tools/uavnav/arch_rules.yaml.
+find_package(builtin_interfaces REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(uavnav_interfaces REQUIRED)
 find_package(uavnav_ros REQUIRED)
-add_library(uavnav_px4_bridge_ros STATIC src/ros_conversion.cpp)
+add_library(uavnav_px4_bridge_ros STATIC src/ros_conversion.cpp src/px4_bridge_node.cpp)
 target_compile_options(uavnav_px4_bridge_ros PRIVATE ${UAVNAV_PX4_BRIDGE_STRICT_WARNINGS})
 set_target_properties(uavnav_px4_bridge_ros PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # The C++ typesupport target of a message package carries its headers and the library publishers need.
@@ -55,7 +55,7 @@ target_link_libraries(uavnav_px4_bridge_ros PUBLIC
   px4_msgs::px4_msgs__rosidl_typesupport_cpp
   uavnav_interfaces::uavnav_interfaces__rosidl_typesupport_cpp)
 
-add_executable(px4_bridge_node src/px4_bridge_node.cpp)
+add_executable(px4_bridge_node src/px4_bridge_main.cpp)
 target_compile_options(px4_bridge_node PRIVATE ${UAVNAV_PX4_BRIDGE_STRICT_WARNINGS})
 target_link_libraries(px4_bridge_node PRIVATE uavnav_px4_bridge_ros)
 install(TARGETS px4_bridge_node DESTINATION lib/${PROJECT_NAME})
@@ -86,12 +86,13 @@ if(BUILD_TESTING)
     UAVNAV_PX4_BRIDGE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     UAVNAV_PX4_BRIDGE_CORE_LIBS="${UAVNAV_PX4_BRIDGE_CORE_LIBS}")
 
-  # The node as a process: the test is a ROS peer in its own DDS domain and runs the executable (own main, which
-  # sets that domain in the environment the child inherits). RESOURCE_LOCK ros_dds as the other in-process ROS
-  # tests (the name uavnav_ros and uavnav_lio use), so ctest never runs two of them at once.
+  # The node in process: the shared main of the uavnav_ros scheme (per-package DDS domain 227..232, localhost) and the
+  # RESOURCE_LOCK name uavnav_ros and uavnav_lio use, so ctest never runs two in-process ROS tests at once. One test
+  # of it starts the real px4_bridge_node executable (the main()), so it depends on that target.
   ament_add_gtest(test_px4_bridge_node test/test_px4_bridge_node.cpp TIMEOUT 300 SKIP_LINKING_MAIN_LIBRARIES)
+  target_sources(test_px4_bridge_node PRIVATE test/ros_test_main.cpp)
   add_dependencies(test_px4_bridge_node px4_bridge_node)
-  target_link_libraries(test_px4_bridge_node uavnav_px4_bridge_ros gtest)
+  target_link_libraries(test_px4_bridge_node uavnav_px4_bridge_ros)
   target_compile_options(test_px4_bridge_node PRIVATE ${UAVNAV_PX4_BRIDGE_STRICT_WARNINGS})
   target_compile_definitions(test_px4_bridge_node PRIVATE
     UAVNAV_PX4_BRIDGE_NODE_EXE="$<TARGET_FILE:px4_bridge_node>"

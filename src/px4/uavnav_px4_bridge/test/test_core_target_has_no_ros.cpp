@@ -16,9 +16,12 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// The files where ROS is allowed (tools/uavnav/arch_rules.yaml ros_allowed of this package).
-constexpr std::array<std::string_view, 3> kRosFiles = {"ros_conversion.hpp", "ros_conversion.cpp",
-                                                       "px4_bridge_node.cpp"};
+// The files where ROS is allowed (tools/uavnav/arch_rules.yaml ros_allowed of this package): the conversion layer,
+// the node (include/uavnav/px4bridge_node/, src/px4_bridge_node.cpp) and the executable's main. The main names no
+// ROS type itself but belongs to the node target.
+constexpr std::array<std::string_view, 4> kRosFiles = {"ros_conversion.hpp", "ros_conversion.cpp",
+                                                       "px4_bridge_node.cpp", "px4_bridge_main.cpp"};
+constexpr std::string_view kRosDirectory = "px4bridge_node";
 
 // What the core must not name: the ROS client library, the PX4 messages, the generated v2 messages and the ROS
 // helpers of uavnav_ros ("uavnav/ros/").
@@ -51,6 +54,7 @@ std::string StripComments(const std::string& text) {
 }
 
 bool IsRosFile(const fs::path& file) {
+  if (file.parent_path().filename() == kRosDirectory) return true;
   return std::any_of(kRosFiles.begin(), kRosFiles.end(), [&](std::string_view n) { return file.filename() == n; });
 }
 

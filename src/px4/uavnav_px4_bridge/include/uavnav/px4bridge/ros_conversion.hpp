@@ -24,9 +24,12 @@ namespace uavnav::px4bridge {
 /// range-checked converter (SITL: PX4 microseconds are simulation time, D29). x, y, z (NED), heading, the three
 /// reset counters and the deltas are copied; xy_valid and z_valid are copied as flags (the bridge decides what an
 /// invalid sample means, O22). kNotFinite when the microseconds are out of range or when any of x, y, z, heading,
-/// delta_xy, delta_z, delta_heading is NaN or inf: EKF2 publishes finite values (zero deltas when no reset
-/// happened) also while a validity flag is false, so a non-finite number is a corrupt message, and refusing it
-/// here keeps its reset counters out of the alignment, as an invalid-flag sample does (O22).
+/// delta_xy, delta_z, delta_heading is NaN or inf, also while xy_valid or z_valid is false: a deliberate strict
+/// rule (the sample is dropped and reported as Px4SampleRejected NOT_FINITE by the node, not as
+/// PX4_POSITION_INVALID by the core). Neither path consumes the sample's reset counters, so a reset it carries is
+/// applied by the next valid sample. Unverified: whether EKF2 ever publishes a NaN while a validity flag is false.
+/// The SITL hover report (S1b Task 11) counts the NOT_FINITE refusals, expected 0; a non-zero count with the flags
+/// false means the rule should check x, y, delta_xy only under xy_valid and z, delta_z only under z_valid.
 Result<Px4LocalPositionIn, BridgeReason> to_px4_local_position(const px4_msgs::msg::VehicleLocalPosition& msg);
 
 /// uavnav_interfaces/LioOdometry -> LioOdometryIn: stamp (SensorTime, from_msg), the sample's OWN epoch

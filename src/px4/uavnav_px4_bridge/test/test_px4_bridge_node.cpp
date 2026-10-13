@@ -1,22 +1,21 @@
-// The px4_bridge node (SYSTEM_DESIGN §4.1, §6.1, §6.4, §6.5; D33/O19-O22; Review Focus 5).
-//
-// The node runs as a CHILD PROCESS (the px4_bridge_node executable), and this test is its ROS peer. The node class
-// lives in src/px4_bridge_node.cpp, the only place besides ros_conversion.* where tools/uavnav/arch_rules.yaml lets
-// ROS in, so a test cannot include it; running the executable also tests the real main (parameters, signal
-// handling, exit code).
+// The px4_bridge node (SYSTEM_DESIGN §4.1, §6.1, §6.4, §6.5; D33/O19-O22; Review Focus 4 and 5).
 //
 // Conventions:
+// - The node runs IN PROCESS (Px4BridgeNode, one SingleThreadedExecutor or, for the serialisation test, a
+//   MultiThreadedExecutor) with this test as its ROS peer; ONE test starts the real px4_bridge_node executable as a
+//   child process, for its main() (start, SIGINT, exit code, the last JSONL record).
 // - Synthetic data only: the LIO and PX4 streams of a vehicle that moves slowly, consistent with the truth
 //   T = (1, 2, 0, 0.3) (the world of test_bridge.cpp). PX4 samples at 50 Hz, one odometry every 100 ms published
 //   ~73 ms after its stamp (the LIO scan-to-output delay), so every scan has PX4 samples on both sides.
-// - Time: use_sim_time is false, so ROS time is the system time in both processes and the stamps are ROS now.
-// - Isolation: main() puts the test and its child in a DDS domain derived from the pid (215..232), localhost only;
-//   CMake serialises the in-process ROS tests with RESOURCE_LOCK ros_dds.
-// - Every wait is bounded (60 s; a child that does not stop is killed and the test fails).
+// - Time: use_sim_time is false, so ROS time is the system time and the stamps are ROS now.
+// - The rclcpp context comes from ros_test_main.cpp (per-package DDS domain 227..232, localhost; the child inherits
+//   ROS_DOMAIN_ID); CMake serialises the in-process ROS tests with RESOURCE_LOCK ros_dds.
+// - Every wait is bounded (60 s; a child that does not stop is killed and the test fails; a child also dies with
+//   this process, PR_SET_PDEATHSIG). The PX4 stream is best effort: no test asserts an exact count over it.
 #include <gtest/gtest.h>
 
 #include <signal.h>
-#include <spawn.h>
+#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -34,6 +33,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -43,14 +43,16 @@
 #include "px4_msgs/msg/vehicle_local_position.hpp"
 #include "px4_msgs/msg/vehicle_odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "uavnav/px4bridge_node/px4_bridge_node.hpp"
 #include "uavnav/ros/qos.hpp"
 #include "uavnav_interfaces/msg/alignment.hpp"
 #include "uavnav_interfaces/msg/lio_health.hpp"
 #include "uavnav_interfaces/msg/lio_odometry.hpp"
 
-extern char** environ;
-
 using namespace std::chrono_literals;
+using uavnav::px4bridge_node::Px4BridgeNode;
+using uavnav::px4bridge_node::Px4BridgeNodeStartFailed;
+using uavnav::px4bridge_node::StartError;
 
 namespace {
 
@@ -76,13 +78,27 @@ bool Eventually(Pred pred, std::chrono::steady_clock::time_point deadline) {
   return true;
 }
 
+std::filesystem::path TempDir() {
+  return std::filesystem::temp_directory_path() / ("uavnav_px4_bridge_node_test_" + std::to_string(::getpid()));
+}
+
 std::filesystem::path TempJsonl(const std::string& name) {
-  const auto dir = std::filesystem::temp_directory_path() / ("uavnav_px4_bridge_node_test_" + std::to_string(::getpid()));
-  std::filesystem::create_directories(dir);
-  const auto file = dir / (name + ".jsonl");
+  std::filesystem::create_directories(TempDir());
+  const auto file = TempDir() / (name + ".jsonl");
   std::filesystem::remove(file);
   return file;
 }
+
+/// Removes the temporary directory after a fully green run (it is kept for diagnosis when a test failed).
+class TempDirEnvironment : public ::testing::Environment {
+ public:
+  void TearDown() override {
+    if (::testing::UnitTest::GetInstance()->Failed()) return;
+    std::error_code ec;
+    std::filesystem::remove_all(TempDir(), ec);
+  }
+};
+[[maybe_unused]] ::testing::Environment* const kTempDirEnvironment = ::testing::AddGlobalTestEnvironment(new TempDirEnvironment);
 
 std::vector<std::string> ReadLines(const std::filesystem::path& file) {
   std::ifstream in(file);
@@ -112,7 +128,20 @@ double JsonNumber(const std::string& line, const std::string& key) {
   return at == std::string::npos ? std::numeric_limits<double>::quiet_NaN() : std::stod(line.substr(at + key.size() + 3));
 }
 
-// --- the node under test, as a process ---------------------------------------------------------------------------
+rclcpp::NodeOptions Options(const std::string& config, const std::string& events, bool sim_time = false) {
+  rclcpp::NodeOptions o;
+  std::vector<rclcpp::Parameter> p = {rclcpp::Parameter(std::string(uavnav::px4bridge_node::kConfigFileParam), config),
+                                      rclcpp::Parameter(std::string(uavnav::px4bridge_node::kEventsJsonlParam), events)};
+  if (sim_time) p.emplace_back("use_sim_time", true);
+  o.parameter_overrides(p);
+  return o;
+}
+
+rclcpp::NodeOptions SimOptions(const std::filesystem::path& events, bool sim_time = false) {
+  return Options(UAVNAV_PX4_BRIDGE_SIM_YAML, events.string(), sim_time);
+}
+
+// --- the real executable, as a child process ---------------------------------------------------------------
 
 class NodeProcess {
  public:
@@ -122,23 +151,24 @@ class NodeProcess {
     std::vector<char*> argv;
     for (std::string& a : args) argv.push_back(a.data());
     argv.push_back(nullptr);
-    const int rc = ::posix_spawn(&pid_, UAVNAV_PX4_BRIDGE_NODE_EXE, nullptr, nullptr, argv.data(), environ);
-    EXPECT_EQ(rc, 0) << "cannot start " << UAVNAV_PX4_BRIDGE_NODE_EXE;
-    if (rc != 0) pid_ = 0;
+    pid_ = ::fork();
+    if (pid_ == 0) {                       // child: async-signal-safe calls only
+      ::prctl(PR_SET_PDEATHSIG, SIGKILL);  // dies with the test process, also on its abort() or SIGKILL
+      ::execv(UAVNAV_PX4_BRIDGE_NODE_EXE, argv.data());
+      ::_exit(127);
+    }
+    EXPECT_GT(pid_, 0) << "cannot start " << UAVNAV_PX4_BRIDGE_NODE_EXE;
   }
   ~NodeProcess() { Kill(); }
   NodeProcess(const NodeProcess&) = delete;
   NodeProcess& operator=(const NodeProcess&) = delete;
 
-  /// SIGINT, as Ctrl-C and `ros2 launch` do.
-  void Interrupt() const {
-    if (pid_ > 0) ::kill(pid_, SIGINT);
-  }
-
-  /// The exit code (128 + signal when killed by one), or nullopt when it did not exit in `limit`.
-  std::optional<int> WaitExit(std::chrono::seconds limit) {
-    if (pid_ <= 0) return std::nullopt;
-    const auto deadline = std::chrono::steady_clock::now() + limit;
+  /// SIGINT, then the exit code within 20 s (128 + signal when killed by one); a child that stays is killed and
+  /// the test fails.
+  int Stop() {
+    if (pid_ <= 0) return -1;
+    ::kill(pid_, SIGINT);
+    const auto deadline = std::chrono::steady_clock::now() + 20s;
     for (;;) {
       int status = 0;
       const pid_t r = ::waitpid(pid_, &status, WNOHANG);
@@ -146,21 +176,13 @@ class NodeProcess {
         pid_ = 0;
         return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
       }
-      if (std::chrono::steady_clock::now() > deadline) return std::nullopt;
+      if (std::chrono::steady_clock::now() > deadline) {
+        ADD_FAILURE() << "the node did not stop within 20 s of SIGINT";
+        Kill();
+        return -1;
+      }
       std::this_thread::sleep_for(20ms);
     }
-  }
-
-  /// SIGINT, then the exit code within 20 s; a child that stays is killed and the test fails.
-  int Stop() {
-    Interrupt();
-    const auto code = WaitExit(20s);
-    if (!code) {
-      ADD_FAILURE() << "the node did not stop within 20 s of SIGINT";
-      Kill();
-      return -1;
-    }
-    return *code;
   }
 
  private:
@@ -174,16 +196,6 @@ class NodeProcess {
 
   pid_t pid_{0};
 };
-
-std::vector<std::string> NodeArgs(const std::filesystem::path& events, bool sim_time = false) {
-  std::vector<std::string> a = {"-p", std::string("config_file:=") + UAVNAV_PX4_BRIDGE_SIM_YAML, "-p",
-                                "events_jsonl:=" + events.string()};
-  if (sim_time) {
-    a.emplace_back("-p");
-    a.emplace_back("use_sim_time:=true");
-  }
-  return a;
-}
 
 // --- the synthetic world -----------------------------------------------------------------------------------------
 
@@ -268,7 +280,7 @@ struct World {
 /// spin() starts would be lost, so it is repeated), bounded at 60 s.
 class Spinner {
  public:
-  explicit Spinner(const rclcpp::Node::SharedPtr& node) : exec_(std::make_shared<rclcpp::executors::SingleThreadedExecutor>()) {
+  Spinner(std::shared_ptr<rclcpp::Executor> exec, const rclcpp::Node::SharedPtr& node) : exec_(std::move(exec)) {
     exec_->add_node(node);
     done_ = std::async(std::launch::async, [e = exec_] { e->spin(); });
   }
@@ -290,7 +302,7 @@ class Spinner {
   }
 
  private:
-  std::shared_ptr<rclcpp::executors::SingleThreadedExecutor> exec_;
+  std::shared_ptr<rclcpp::Executor> exec_;
   std::future<void> done_;
 };
 
@@ -311,7 +323,7 @@ class Peer {
           const std::scoped_lock lock(mutex_);
           ev_.push_back(m);
         });
-    spinner_ = std::make_unique<Spinner>(node_);
+    spinner_ = std::make_unique<Spinner>(std::make_shared<rclcpp::executors::SingleThreadedExecutor>(), node_);
   }
   ~Peer() { spinner_.reset(); }
 
@@ -374,29 +386,47 @@ class Peer {
   std::unique_ptr<Spinner> spinner_;  // last: stopped first, before the subscriptions die
 };
 
-}  // namespace
 
-TEST(Px4BridgeNode, InProcessPublishesEvAndAlignment) {
-  // (The plan's name; the node is a child process, see the file comment.)
+/// Shuts the node down under a 10 s bound (std::async); aborts instead of hanging.
+void BoundedShutdown(Px4BridgeNode& node) {
+  auto done = std::async(std::launch::async, [&node] { node.shutdown(); });
+  if (done.wait_for(10s) != std::future_status::ready) {
+    ADD_FAILURE() << "Px4BridgeNode::shutdown() did not return within 10 s: aborting instead of hanging";
+    std::abort();
+  }
+}
+
+/// The callback groups of a node that own subscriptions or timers.
+struct GroupInfo {
+  rclcpp::CallbackGroupType type;
+  int subscriptions;
+  int timers;
+};
+
+std::vector<GroupInfo> CallbackGroups(rclcpp::Node& node) {
+  std::vector<GroupInfo> out;
+  node.for_each_callback_group([&out](rclcpp::CallbackGroup::SharedPtr group) {
+    GroupInfo info{group->type(), 0, 0};
+    group->collect_all_ptrs([&](const rclcpp::SubscriptionBase::SharedPtr&) { ++info.subscriptions; },
+                            [](const rclcpp::ServiceBase::SharedPtr&) {}, [](const rclcpp::ClientBase::SharedPtr&) {},
+                            [&](const rclcpp::TimerBase::SharedPtr&) { ++info.timers; },
+                            [](const rclcpp::Waitable::SharedPtr&) {});
+    if (info.subscriptions > 0 || info.timers > 0) out.push_back(info);
+  });
+  return out;
+}
+
+/// The alignment, EV and event checks of a run of `Stream` that reached VALID (shared by both executors).
+void ExpectPublishedEvAndAlignment(Peer& peer, const World& world, int odometry_sent) {
   const auto deadline = std::chrono::steady_clock::now() + kWait;
-  const auto jsonl = TempJsonl("synthetic");
-  Peer peer;
-  NodeProcess node(NodeArgs(jsonl));
-  ASSERT_TRUE(peer.WaitMatched()) << "discovery did not match the topics within 60 s";
-
-  World world;
-  world.t0_ns = peer.RosNowNs();
-  const int odometry_sent = peer.Stream(world, 250);  // 5 s of PX4 samples, 49 odometry
-  ASSERT_GE(odometry_sent, 45);
-
+  std::vector<AlignmentMsg> alignments;
   EXPECT_TRUE(Eventually(
       [&] {
-        const auto a = peer.Alignments();
-        return !a.empty() && a.back().state == AlignmentMsg::VALID;
+        alignments = peer.Alignments();
+        return !alignments.empty() && alignments.back().state == AlignmentMsg::VALID;
       },
       deadline))
       << "/alignment VALID";
-  const auto alignments = peer.Alignments();
   ASSERT_FALSE(alignments.empty());
   const AlignmentMsg& last = alignments.back();
   EXPECT_EQ(last.state, AlignmentMsg::VALID);
@@ -421,6 +451,7 @@ TEST(Px4BridgeNode, InProcessPublishesEvAndAlignment) {
     EXPECT_EQ(m.pose_frame, VehicleOdometryMsg::POSE_FRAME_FRD);
     EXPECT_EQ(m.velocity_frame, VehicleOdometryMsg::VELOCITY_FRAME_FRD);
     EXPECT_EQ(m.reset_counter, 1) << "the epoch of the sample, never the output predictor's counter (F14)";
+    EXPECT_EQ(m.quality, 80);
     for (const float w : m.angular_velocity) EXPECT_TRUE(std::isnan(w));
     EXPECT_GE(m.timestamp, m.timestamp_sample);
     EXPECT_GT(m.position_variance[0], 0.0F);
@@ -431,8 +462,28 @@ TEST(Px4BridgeNode, InProcessPublishesEvAndAlignment) {
   EXPECT_NEAR(ev.front().position[0], p.x(), 1e-3);
   EXPECT_NEAR(ev.front().position[1], -p.y(), 1e-3);
   EXPECT_NEAR(ev.front().position[2], -p.z(), 1e-3);
+  EXPECT_NEAR(ev.front().velocity[0], world.v_flu.x(), 1e-4);
+  EXPECT_NEAR(ev.front().velocity[1], -world.v_flu.y(), 1e-4);
+  EXPECT_NEAR(ev.front().velocity[2], -world.v_flu.z(), 1e-4);
+}
 
-  EXPECT_EQ(node.Stop(), 0);
+}  // namespace
+
+TEST(Px4BridgeNode, PublishesEvAndAlignmentFromLioAndPx4Streams) {
+  const auto jsonl = TempJsonl("synthetic");
+  Peer peer;
+  auto node = std::make_shared<Px4BridgeNode>(SimOptions(jsonl));
+  Spinner spinner(std::make_shared<rclcpp::executors::SingleThreadedExecutor>(), node);
+  ASSERT_TRUE(peer.WaitMatched()) << "discovery did not match the topics within 60 s";
+
+  World world;
+  world.t0_ns = peer.RosNowNs();
+  const int odometry_sent = peer.Stream(world, 250);  // 5 s of PX4 samples, 49 odometry
+  ASSERT_GE(odometry_sent, 45);
+  ExpectPublishedEvAndAlignment(peer, world, odometry_sent);
+  spinner.Stop();
+  BoundedShutdown(*node);
+
   const auto lines = ReadLines(jsonl);
   ASSERT_FALSE(lines.empty());
   EXPECT_FALSE(EventLines(lines, "AlignmentTransition", "PAIRS_CONSISTENT").empty());
@@ -441,12 +492,55 @@ TEST(Px4BridgeNode, InProcessPublishesEvAndAlignment) {
   EXPECT_GE(JsonNumber(lines.back(), "ev_published"), 40.0);
   EXPECT_GE(JsonNumber(lines.back(), "ticks"), 30.0);
   EXPECT_EQ(JsonNumber(lines.back(), "publish_failed"), 0.0);
+  EXPECT_EQ(JsonNumber(lines.back(), "first_tick"), 0.0) << "the constructor ran the first tick, before the subscriptions";
+  EXPECT_TRUE(EventLines(lines, "BridgeNodeFailed").empty());
+}
+
+TEST(Px4BridgeNode, MultiThreadedExecutorKeepsCallbacksSerialised) {  // Review Focus 4
+  const auto jsonl = TempJsonl("multithreaded");
+  Peer peer;
+  auto node = std::make_shared<Px4BridgeNode>(SimOptions(jsonl));
+
+  // Structure: the three subscriptions and the timer sit in ONE MutuallyExclusive group, so an executor with any
+  // number of threads runs their callbacks one at a time (Px4Bridge has no overlap guard).
+  const auto groups = CallbackGroups(*node);
+  // (rclcpp's own default group keeps the parameter-events subscription; it is the only other one with an entity.)
+  const GroupInfo* ours = nullptr;
+  for (const GroupInfo& g : groups) {
+    if (g.timers > 0) {
+      ASSERT_EQ(ours, nullptr) << "the timer is in one group";
+      ours = &g;
+    } else {
+      EXPECT_LE(g.subscriptions, 1) << "no subscription of the node outside its group";
+    }
+  }
+  ASSERT_NE(ours, nullptr);
+  EXPECT_EQ(ours->type, rclcpp::CallbackGroupType::MutuallyExclusive);
+  EXPECT_EQ(ours->subscriptions, 3);
+  EXPECT_EQ(ours->timers, 1);
+
+  // Behaviour: the same run on a 4-thread executor gives the same result.
+  Spinner spinner(std::make_shared<rclcpp::executors::MultiThreadedExecutor>(rclcpp::ExecutorOptions(), 4), node);
+  ASSERT_TRUE(peer.WaitMatched());
+  World world;
+  world.t0_ns = peer.RosNowNs();
+  const int odometry_sent = peer.Stream(world, 250);
+  ASSERT_GE(odometry_sent, 45);
+  ExpectPublishedEvAndAlignment(peer, world, odometry_sent);
+  spinner.Stop();
+  BoundedShutdown(*node);
+
+  const auto lines = ReadLines(jsonl);
+  ASSERT_FALSE(lines.empty());
+  EXPECT_TRUE(EventLines(lines, "BridgeNodeFailed").empty());
+  EXPECT_NE(lines.back().find(EventKey("BridgeNodeSummary")), std::string::npos) << lines.back();
 }
 
 TEST(Px4BridgeNode, GarbageMessagesAreRefusedWithEventsAndChangeNothing) {  // Review Focus 5
   const auto jsonl = TempJsonl("garbage");
   Peer peer;
-  NodeProcess node(NodeArgs(jsonl));
+  auto node = std::make_shared<Px4BridgeNode>(SimOptions(jsonl));
+  Spinner spinner(std::make_shared<rclcpp::executors::SingleThreadedExecutor>(), node);
   ASSERT_TRUE(peer.WaitMatched());
   ASSERT_TRUE(Eventually([&] { return !peer.Alignments().empty(); }, std::chrono::steady_clock::now() + kWait));
 
@@ -467,15 +561,16 @@ TEST(Px4BridgeNode, GarbageMessagesAreRefusedWithEventsAndChangeNothing) {  // R
     std::this_thread::sleep_for(50ms);
   }
   std::this_thread::sleep_for(1s);  // the node takes them; nothing is observable on the topics
+  spinner.Stop();
+  BoundedShutdown(*node);
 
-  EXPECT_EQ(node.Stop(), 0);
   const auto lines = ReadLines(jsonl);
-  const auto odometry = EventLines(lines, "LioInputRejected", "NOT_FINITE");
-  ASSERT_FALSE(odometry.empty());
+  const auto rejected = EventLines(lines, "LioInputRejected", "NOT_FINITE");
+  ASSERT_FALSE(rejected.empty());
   const auto stream = [](const std::string& l) { return JsonNumber(l, "stream"); };
-  EXPECT_TRUE(std::any_of(odometry.begin(), odometry.end(), [&](const std::string& l) { return stream(l) == 0.0; }))
+  EXPECT_TRUE(std::any_of(rejected.begin(), rejected.end(), [&](const std::string& l) { return stream(l) == 0.0; }))
       << "odometry (stream 0)";
-  EXPECT_TRUE(std::any_of(odometry.begin(), odometry.end(), [&](const std::string& l) { return stream(l) == 1.0; }))
+  EXPECT_TRUE(std::any_of(rejected.begin(), rejected.end(), [&](const std::string& l) { return stream(l) == 1.0; }))
       << "health (stream 1)";
   EXPECT_FALSE(EventLines(lines, "Px4SampleRejected", "NOT_FINITE").empty());
   // Nothing reached the bridge: no pair, no transition, no EV, T still INIT.
@@ -488,17 +583,20 @@ TEST(Px4BridgeNode, GarbageMessagesAreRefusedWithEventsAndChangeNothing) {  // R
   ASSERT_NE(summary.find(EventKey("BridgeNodeSummary")), std::string::npos) << summary;
   EXPECT_EQ(JsonNumber(summary, "odometry_received"), 3.0);
   EXPECT_EQ(JsonNumber(summary, "health_received"), 3.0);
-  EXPECT_EQ(JsonNumber(summary, "local_position_received"), 6.0);
   EXPECT_EQ(JsonNumber(summary, "rejected_odometry"), 3.0);
   EXPECT_EQ(JsonNumber(summary, "rejected_health"), 3.0);
-  EXPECT_EQ(JsonNumber(summary, "rejected_local_position"), 6.0);
+  // The PX4 stream is best effort: a datagram may be lost, but every one that arrived was refused (2 per round).
+  const double px4_received = JsonNumber(summary, "local_position_received");
+  EXPECT_GE(px4_received, 3.0);
+  EXPECT_EQ(JsonNumber(summary, "rejected_local_position"), px4_received);
   EXPECT_EQ(JsonNumber(summary, "ev_published"), 0.0);
 }
 
 TEST(Px4BridgeNode, ShutdownFlushesOpenRejectionEpisodesBeforeTheSummary) {
   const auto jsonl = TempJsonl("flush");
   Peer peer;
-  NodeProcess node(NodeArgs(jsonl));
+  auto node = std::make_shared<Px4BridgeNode>(SimOptions(jsonl));
+  Spinner spinner(std::make_shared<rclcpp::executors::SingleThreadedExecutor>(), node);
   ASSERT_TRUE(peer.WaitMatched());
   ASSERT_TRUE(Eventually([&] { return !peer.Alignments().empty(); }, std::chrono::steady_clock::now() + kWait));
 
@@ -511,7 +609,8 @@ TEST(Px4BridgeNode, ShutdownFlushesOpenRejectionEpisodesBeforeTheSummary) {
     std::this_thread::sleep_for(100ms);
   }
   std::this_thread::sleep_for(500ms);
-  EXPECT_EQ(node.Stop(), 0);
+  spinner.Stop();
+  BoundedShutdown(*node);
 
   const auto lines = ReadLines(jsonl);
   const auto rejected = EventLines(lines, "LioInputRejected", "STAMP_IN_FUTURE");
@@ -521,9 +620,7 @@ TEST(Px4BridgeNode, ShutdownFlushesOpenRejectionEpisodesBeforeTheSummary) {
   EXPECT_EQ(JsonNumber(rejected[1], "suppressed"), 3.0);
   EXPECT_EQ(JsonNumber(rejected[1], "summary"), 1.0);
   // Order at shutdown: the flushed summary, then the node summary, which closes the file.
-  const auto at = [&](const std::string& what) {
-    return std::find(lines.begin(), lines.end(), what) - lines.begin();
-  };
+  const auto at = [&](const std::string& what) { return std::find(lines.begin(), lines.end(), what) - lines.begin(); };
   EXPECT_LT(at(rejected[1]), at(lines.back()));
   EXPECT_NE(lines.back().find(EventKey("BridgeNodeSummary")), std::string::npos) << lines.back();
 }
@@ -533,7 +630,8 @@ TEST(Px4BridgeNode, NoRosTimeRefusesEveryMessageBeforeTheBridge) {
   // stamp would be refused as "ahead" of a tick at 0, or the bridge's reference time would be 0).
   const auto jsonl = TempJsonl("no_ros_time");
   Peer peer;
-  NodeProcess node(NodeArgs(jsonl, true));
+  auto node = std::make_shared<Px4BridgeNode>(SimOptions(jsonl, true));
+  Spinner spinner(std::make_shared<rclcpp::executors::SingleThreadedExecutor>(), node);
   ASSERT_TRUE(peer.WaitMatched(false));
 
   World world;
@@ -545,17 +643,18 @@ TEST(Px4BridgeNode, NoRosTimeRefusesEveryMessageBeforeTheBridge) {
     std::this_thread::sleep_for(50ms);
   }
   std::this_thread::sleep_for(1s);
-  EXPECT_EQ(node.Stop(), 0);
+  spinner.Stop();
+  BoundedShutdown(*node);
 
   EXPECT_TRUE(peer.Alignments().empty()) << "no tick without ROS time";
   EXPECT_TRUE(peer.Ev().empty());
   const auto lines = ReadLines(jsonl);
   const auto refused = EventLines(lines, "BridgeNoRosTime", "NO_ROS_TIME");
   ASSERT_FALSE(refused.empty());
-  EXPECT_EQ(JsonNumber(refused[0], "count"), 1.0);
+  EXPECT_EQ(JsonNumber(refused[0], "count_total"), 1.0);
   const std::string& summary = lines.back();
   ASSERT_NE(summary.find(EventKey("BridgeNodeSummary")), std::string::npos) << summary;
-  // Every message that arrived was refused (the best-effort PX4 stream may lose one to discovery, so count what arrived).
+  // Every message that arrived was refused (the best-effort PX4 stream may lose one to discovery).
   const double received = JsonNumber(summary, "odometry_received") + JsonNumber(summary, "health_received") +
                           JsonNumber(summary, "local_position_received");
   EXPECT_GE(received, 6.0);
@@ -563,27 +662,29 @@ TEST(Px4BridgeNode, NoRosTimeRefusesEveryMessageBeforeTheBridge) {
   EXPECT_EQ(JsonNumber(summary, "odometry_received"), 3.0);
   EXPECT_EQ(JsonNumber(summary, "health_received"), 3.0);
   EXPECT_EQ(JsonNumber(summary, "ticks"), 0.0);
+  EXPECT_EQ(JsonNumber(summary, "first_tick"), -1.0) << "no tick path ran at ROS time 0";
   EXPECT_TRUE(EventLines(lines, "AlignmentTransition").empty());
 }
 
 TEST(Px4BridgeNode, MissingOrInvalidConfigRefusesToStart) {
   const auto jsonl = TempJsonl("refuse");
-  const auto expect_refusal = [&](const std::vector<std::string>& args, const char* what) {
-    NodeProcess node(args);
-    const auto code = node.WaitExit(30s);
-    ASSERT_TRUE(code.has_value()) << what << ": the node kept running";
-    EXPECT_NE(*code, 0) << what;
+  const auto expect_refusal = [&](const rclcpp::NodeOptions& options, StartError why, const char* what) {
+    try {
+      Px4BridgeNode node(options);
+      ADD_FAILURE() << what << ": the node started";
+    } catch (const Px4BridgeNodeStartFailed& e) {
+      EXPECT_EQ(e.reason(), why) << what << ": " << e.what();
+    }
   };
-  expect_refusal({}, "no parameters");
-  expect_refusal({"-p", "events_jsonl:=" + jsonl.string()}, "no config_file");
-  expect_refusal({"-p", std::string("config_file:=") + UAVNAV_PX4_BRIDGE_SIM_YAML}, "no events_jsonl");
-  expect_refusal({"-p", "config_file:=/nonexistent/px4_bridge.yaml", "-p", "events_jsonl:=" + jsonl.string()},
+  expect_refusal(rclcpp::NodeOptions(), StartError::kParameterInvalid, "no parameters");
+  expect_refusal(Options("", jsonl.string()), StartError::kParameterInvalid, "empty config_file");
+  expect_refusal(Options(UAVNAV_PX4_BRIDGE_SIM_YAML, ""), StartError::kParameterInvalid, "empty events_jsonl");
+  expect_refusal(Options("/nonexistent/px4_bridge.yaml", jsonl.string()), StartError::kConfigInvalid,
                  "unreadable config_file");
-  expect_refusal({"-p", std::string("config_file:=") + UAVNAV_PX4_BRIDGE_SIM_YAML, "-p",
-                  "events_jsonl:=/nonexistent_dir/events.jsonl"},
+  expect_refusal(Options(UAVNAV_PX4_BRIDGE_SIM_YAML, "/nonexistent_dir/events.jsonl"), StartError::kEventsFileFailed,
                  "events file that cannot be opened");
   // A config that violates a bound or the cross rule (frozen_max > valid_stale).
-  const auto bad = jsonl.parent_path() / "bad_config.yaml";
+  const auto bad = TempDir() / "bad_config.yaml";
   {
     std::ifstream in(UAVNAV_PX4_BRIDGE_SIM_YAML);
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -592,17 +693,29 @@ TEST(Px4BridgeNode, MissingOrInvalidConfigRefusesToStart) {
     text.replace(at, std::string("alignment_frozen_max_s: 10.0").size(), "alignment_frozen_max_s: 0.5");
     std::ofstream(bad) << text;
   }
-  expect_refusal({"-p", "config_file:=" + bad.string(), "-p", "events_jsonl:=" + jsonl.string()}, "invalid config_file");
+  expect_refusal(Options(bad.string(), jsonl.string()), StartError::kConfigInvalid, "invalid config_file");
 }
 
-int main(int argc, char** argv) {
-  ::setenv("ROS_AUTOMATIC_DISCOVERY_RANGE", "LOCALHOST", 1);
-  ::setenv("ROS_LOCALHOST_ONLY", "1", 1);
-  // The child inherits the domain: 215..232 (lower domains map onto UDP ports inside the Linux ephemeral range).
-  ::setenv("ROS_DOMAIN_ID", std::to_string(215 + (::getpid() % 18)).c_str(), 1);
-  rclcpp::init(argc, argv);
-  ::testing::InitGoogleTest(&argc, argv);
-  const int rc = RUN_ALL_TESTS();
-  rclcpp::shutdown();
-  return rc;
+// The real main(): the executable starts with its parameters, joins the graph, and a SIGINT ends it with exit 0 and
+// the node summary as the last record of the JSONL file (the pre-shutdown hook ran shutdown()). Also: no
+// parameters, no start (exit != 0).
+TEST(Px4BridgeNode, ExecutableStartsAndStopsOnSigintWithTheSummaryLast) {
+  const auto jsonl = TempJsonl("executable");
+  Peer peer;
+  NodeProcess node({"-p", std::string("config_file:=") + UAVNAV_PX4_BRIDGE_SIM_YAML, "-p",
+                    "events_jsonl:=" + jsonl.string()});
+  ASSERT_TRUE(peer.WaitMatched()) << "discovery did not match the topics within 60 s";
+  ASSERT_TRUE(Eventually([&] { return !peer.Alignments().empty(); }, std::chrono::steady_clock::now() + kWait))
+      << "the node ticks and publishes /alignment";
+  EXPECT_EQ(peer.Alignments().back().state, AlignmentMsg::INIT);
+
+  EXPECT_EQ(node.Stop(), 0);
+  const auto lines = ReadLines(jsonl);
+  ASSERT_FALSE(lines.empty());
+  EXPECT_NE(lines.back().find(EventKey("BridgeNodeSummary")), std::string::npos) << lines.back();
+  EXPECT_GE(JsonNumber(lines.back(), "ticks"), 1.0);
+
+  NodeProcess no_parameters({});
+  std::this_thread::sleep_for(2s);  // it has refused and exited by now; a node that ran would answer SIGINT with 0
+  EXPECT_NE(no_parameters.Stop(), 0) << "a node without its parameters must not run";
 }
