@@ -85,6 +85,8 @@ ros_free:
       - test/test_ros_conversion.cpp
   src/px4/uavnav_px4_bridge:
     ros_allowed:
+      - include/uavnav/px4bridge_node/*
+      - test/ros_test_main.cpp
       - include/uavnav/px4bridge/ros_conversion.hpp
       - src/ros_conversion.cpp
       - src/px4_bridge_node.cpp
