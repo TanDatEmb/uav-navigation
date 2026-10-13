@@ -48,7 +48,8 @@
 // Every callback: one rosutil::snapshot (TimeSnapshot), refused while its ROS time is 0; conversion
 // (ros_conversion.hpp; a refusal is a rate-limited "LioInputRejected" / "Px4SampleRejected" with
 // BridgeReason::kNotFinite); the bridge call; then every output is published on the same thread, each in its own
-// failure scope (a publish never waits for a reader).
+// failure scope. The EV topic is best-effort, so its publish does not wait for a reader; /alignment is reliable
+// (keep-last, depth 10) and may wait behind a slow reader (not measured).
 //
 // Shutdown, shutdown(): (1) the node stops taking callbacks: a callback that starts after this returns at once,
 // and shutdown waits for the one in flight to return (it never blocks); (2) Px4Bridge::flush(now) ends every open

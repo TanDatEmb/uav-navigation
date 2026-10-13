@@ -41,11 +41,13 @@
 // one rosutil::snapshot (TimeSnapshot), refused while its ROS time is 0 (use_sim_time before the first /clock:
 // "no ROS time yet", ingest.hpp "ROS time zero"); SharedRosTime::store of that ROS time; conversion
 // (ros_conversion.hpp; a refusal is a rate-limited "LioInputRejected" with the ConversionError); LioIngest; then
-// every output is published on the same thread (best-effort or keep-last QoS: a publish never waits for a reader).
+// every output is published on the same thread. /lio/state is best-effort, so its publish does not wait for a
+// reader; the reliable topics (/lio/odometry, /lio/health; keep-last, depth 10) may wait in publish() behind a slow
+// reader. That wait was not measured.
 //
 // Shutdown (runtime design "Shutdown" row), shutdown(): (1) the node stops taking callbacks: a callback that
-// starts after this returns at once, and shutdown waits for the one in flight, if any, to return (it never
-// blocks: ingest and publish do not wait); (2) "LioNodeSummary"; (3) LioIngest::stop(): LioRunner::stop joins the
+// starts after this returns at once, and shutdown waits for the one in flight, if any, to return (ingest does not
+// wait; a reliable publish may, see Threads); (2) "LioNodeSummary"; (3) LioIngest::stop(): LioRunner::stop joins the
 // estimator thread before its channels go, then "IngestSummary"; (4) the ingest is destroyed, then the recorder
 // (its writer drains the ring into the JSONL file and /events, joins, closes the file), so the JSONL file ends
 // with IngestSummary; (5) the publishers, subscriptions and the node itself go with the LioNode object.

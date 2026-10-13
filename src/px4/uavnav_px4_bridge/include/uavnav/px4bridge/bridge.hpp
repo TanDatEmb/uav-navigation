@@ -30,9 +30,13 @@
 //     alignment as on_lio(tracking = true) with the FRD pose (frames.hpp; a quaternion that is not a rotation gives
 //     a NaN yaw, which the alignment refuses). A gated sample is not fed: its non-TRACKING health already was.
 //     Limitation (deferred to O25, S3/S4): an odometry of an OLDER epoch than the newest health is not gated.
-//   /lio/health. Every non-TRACKING health (any epoch; an unknown state code counts as not TRACKING) is fed as
-//     on_lio(tracking = false), so a LIO loss takes T VALID -> FROZEN (D11's BACKUP path), never VALID -> INVALID
-//     by kStale. A TRACKING health only updates the gate. The newest ARRIVED health is the gate's reference; a
+//   /lio/health. Every non-TRACKING health (any epoch; the core treats every code other than kTracking as not
+//     TRACKING) is fed as on_lio(tracking = false), so a LIO loss takes T VALID -> FROZEN (D11's BACKUP path),
+//     never VALID -> INVALID by kStale. A state code outside the known range never reaches the core: the node
+//     refuses it in the conversion (ros_conversion.cpp to_lio_health_in; rate-limited "LioInputRejected" with
+//     reason NOT_FINITE, counted in rejected_health), so such a health neither gates the EV nor freezes T and T
+//     stays as it was. A LIO state code added later (S4) must be added to LioHealthCode and the conversion range,
+//     or its healths are ignored. A TRACKING health only updates the gate. The newest ARRIVED health is the gate's reference; a
 //     health stamped before the stored one of the same epoch is refused (kOutOfOrder, "LioInputRejected") and
 //     changes neither the gate nor the alignment (fail closed against an out-of-order delivery).
 //   vehicle_local_position. A sample with xy_valid or z_valid false is skipped ("Px4SampleRejected",

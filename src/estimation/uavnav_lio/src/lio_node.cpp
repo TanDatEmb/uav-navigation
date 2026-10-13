@@ -277,7 +277,8 @@ void LioNode::shutdown() noexcept {
 }
 
 void LioNode::finish() noexcept {
-  // (1) No callback enters any more; wait for the one in flight (it never blocks: ingest and publish do not wait).
+  // (1) No callback enters any more; wait for the one in flight (ingest does not wait; a reliable publish may,
+  // see lio_node.hpp "Threads").
   accepting_.store(false, std::memory_order_seq_cst);
   while (in_flight_.load(std::memory_order_seq_cst) != 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
 

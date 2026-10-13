@@ -116,7 +116,8 @@ BridgeOutputs Px4Bridge::on_lio_health(const LioHealthIn& in, const time::TimeSn
     return {};
   }
 
-  // Every non-TRACKING health (an unknown code too) freezes T (O22); the pose of a lost sample is never used.
+  // Every non-TRACKING health freezes T (O22); the pose of a lost sample is never used. (A code outside the known
+  // range does not get here: the node refuses it in the conversion.)
   const AlignmentState before = alignment_.state();
   const LioPoseSample lost{in.t, Eigen::Vector3d::Zero(), 0.0, false};
   const AlignmentOutput out = report(before, alignment_.on_lio(lost), Input::kHealth, in.t, in.epoch, now);
