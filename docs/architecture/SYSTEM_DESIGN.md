@@ -182,6 +182,7 @@ INITIALIZING ──map đủ ∧ 5 scan tốt liên tiếp──► TRACKING ◄
 
 - Mỗi scan, tính ma trận 6×6 `HᵀR⁻¹H` và tách thành khối **tịnh tiến** và khối **xoay**. Trị riêng nhỏ nhất của mỗi khối so với ngưỡng (tầng b), có hysteresis.
 - Giá trị khởi đầu của ngưỡng là một việc của lát S1: lấy từ log trị riêng trên scene mở và scene suy biến (bay cao) trong SITL.
+- **Kết quả S1b (O27):** chuyến quét độ cao không đủ để hiệu chỉnh vì LIO LOST ngay sau khi suy biến bắt đầu (≈ 4.76 m) và S1b chưa có restart. Ngưỡng giữ giá trị beta (biên khoảng 2.5× tịnh tiến, 2× xoay so với các lần hover); hiệu chỉnh chuyển sang S2 khi có chuyển động thật.
 - Mọi scan đều ghi log các trị riêng này.
 
 ### §3.3 Output predictor `/lio/state` 100 Hz
