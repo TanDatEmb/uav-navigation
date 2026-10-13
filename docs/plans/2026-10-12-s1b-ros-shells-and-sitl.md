@@ -735,6 +735,7 @@ Spec §7.2 (S1 check), §6.1, D14; D33 (O19, O24). It needs the owner's machine 
   |---|---|
   | EKF2 | `cs_ev_pos` in ≥ 95% of samples; `cs_ev_yaw` false throughout (gps) or true in ≥ 95% (no_gps, D20) |
   | LIO | TRACKING for 100% of the window; no LOST and at most 2 TRACKING entries in the run |
+  | LIO flapping (owner 2026-10-13: accept the O15 flapping band, check the rate in SITL) | the number of DEGRADED→TRACKING transitions (from `StateTransition` events) is reported with the p50/p99 of the result age (`ScanResultTooOld.age_s` and the age of applied results); pass when ≤ 1 per 60 s of the window. A larger rate fails and stops for the owner (options: reset the DEGRADED confirmation run on a tick with gap > `gap_degraded`, or tie `gap_degraded` to the measured latency) |
   | Alignment | VALID throughout; `/alignment` ≥ 9 Hz; `PAIR_REJECTED_JUMP` ≤ 1% of pairs; no `STALE`; VALID after each `Px4ResetApplied` |
   | Drift | PX4 horizontal drift against ground truth (ENU→NED, from the window start) ≤ 0.3 m |
   | `/lio/state` | 100 ± 5 Hz; inter-arrival p99 ≤ 20 ms (P7: not starved); the F23 step max \|Δp − v·Δt\| is reported |
@@ -743,7 +744,7 @@ Spec §7.2 (S1 check), §6.1, D14; D33 (O19, O24). It needs the owner's machine 
   | Events (whole run) | zero `LioQueueOverflow`, `LioBackendFailed`, `ImuRateTooHigh`, `EventsDropped`; `LioScanDropped` ≤ 1% of scans; the `ImuGap` count is reported |
   | F34 values (reported here, judged in Task 12) | `yaw_T` max − min over the window; `yaw_T` − (π/2 − spawn yaw) |
 
-- [ ] **Step 1: Write the failing tests** (`SitlChecksTest`): `test_hover_pass_on_synthetic_records`; `test_fails_on_lio_lost` (`lio_tracking`); `test_fails_on_ev_fusion_gap` (`ekf2_ev_pos`); `test_px4_time_identity_violation_fails` (50 ms offset); `test_hover_missing_topic_fails_closed`.
+- [ ] **Step 1: Write the failing tests** (`SitlChecksTest`): `test_hover_pass_on_synthetic_records`; `test_fails_on_lio_lost` (`lio_tracking`); `test_fails_on_ev_fusion_gap` (`ekf2_ev_pos`); `test_fails_on_degraded_tracking_flapping` (`lio_flap_rate`: 3 DEGRADED→TRACKING transitions in 60 s fail; 0 pass; the rate and age percentiles are reported); `test_px4_time_identity_violation_fails` (50 ms offset); `test_hover_missing_topic_fails_closed`.
 
   Run: `tools/uavnav/gate.sh python`. Expected: `AttributeError` for `evaluate_hover`, `GATE_RESULT=FAIL`.
 
