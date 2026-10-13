@@ -21,12 +21,14 @@ Result<time::TimePoint<Tag>, time::TimeError> from_msg(const builtin_interfaces:
   return time::from_stamp<Tag>(stamp.sec, stamp.nanosec);
 }
 
-/// An instant as a message stamp. Errors, never a wrapped or clamped stamp:
+/// An instant in any domain as a message stamp (a SensorTime for LioState.stamp, a RosTime for
+/// NavCommand.stamp). Errors, never a wrapped or clamped stamp:
 /// - t.ns < 0: kNegativeSeconds (the same reason from_msg gives a negative stamp);
 /// - t.ns / 1e9 > INT32_MAX (year 2038 and later): kOutOfRange. builtin_interfaces/Time.sec is an int32, so
 ///   such a stamp would wrap to a negative one in the message. kOutOfRange is the reason from_stamp already
 ///   uses for "seconds above the representable maximum"; a new TimeError would change the core enum.
-inline Result<builtin_interfaces::msg::Time, time::TimeError> to_msg(time::SensorTime t) {
+template <class Tag>
+Result<builtin_interfaces::msg::Time, time::TimeError> to_msg(time::TimePoint<Tag> t) {
   if (t.ns < 0) return std::unexpected(time::TimeError::kNegativeSeconds);
   const std::int64_t sec = t.ns / 1'000'000'000;
   if (sec > std::numeric_limits<std::int32_t>::max()) return std::unexpected(time::TimeError::kOutOfRange);
@@ -36,12 +38,16 @@ inline Result<builtin_interfaces::msg::Time, time::TimeError> to_msg(time::Senso
   return msg;
 }
 
-/// One snapshot of the two clocks: steady_now() and `clock.now()` (the node's ROS clock, which follows
-/// /clock in simulation). ros is 0 when the clock time is not convertible (negative or above the
-/// time_convert range, or the clock threw), so a bad clock never makes a garbage RosTime. Never throws.
+/// One snapshot of the two clocks: steady_now() and `clock.now()`. `clock` must be the node's ROS clock
+/// (RCL_ROS_TIME); any other clock type gives ros{0}, so a system or steady clock is never mistaken for
+/// ROS time. With use_sim_time the ROS clock follows /clock and reads 0 until the first /clock message,
+/// which is ros{0} too: "no ROS time yet". ros is also 0 when the clock time is not convertible (negative
+/// or above the time_convert range, or the clock threw), so a bad clock never makes a garbage RosTime.
+/// Never throws.
 inline time::TimeSnapshot snapshot(const rclcpp::Clock& clock) noexcept {
   time::TimeSnapshot s{time::steady_now(), time::RosTime{0}};
   try {
+    if (clock.get_clock_type() != RCL_ROS_TIME) return s;
     const std::int64_t ns = clock.now().nanoseconds();
     if (ns >= 0) {
       const auto ros = time::from_stamp<time::RosTag>(ns / 1'000'000'000, static_cast<std::uint32_t>(ns % 1'000'000'000));

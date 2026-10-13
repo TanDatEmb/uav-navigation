@@ -55,6 +55,7 @@ TEST(RosTime, FromMsgIsRangeChecked) {
 
 TEST(RosTime, ToMsgRoundTrip) {
   for (const std::int64_t ns : {std::int64_t{0}, std::int64_t{1}, std::int64_t{999'999'999}, std::int64_t{1'000'000'000},
+                                std::int64_t{1'700'000'000'123'456'789},  // a realistic epoch stamp (Nov 2023)
                                 std::int64_t{1'700'000'000'123'456'789} / 1000,
                                 std::int64_t{2'147'483'647} * 1'000'000'000 + 999'999'999}) {
     const auto msg = rosutil::to_msg(SensorTime{ns});
@@ -65,6 +66,27 @@ TEST(RosTime, ToMsgRoundTrip) {
     ASSERT_TRUE(back.has_value()) << ns;
     EXPECT_EQ(back->ns, ns);
   }
+}
+
+TEST(RosTime, ToMsgIsAvailableForEveryDomain) {
+  // NavCommand.stamp is a RosTime, LioState.stamp a SensorTime: same conversion, same checks.
+  const auto ros = rosutil::to_msg(RosTime{1'700'000'000'123'456'789});
+  ASSERT_TRUE(ros.has_value());
+  EXPECT_EQ(ros->sec, 1'700'000'000);
+  EXPECT_EQ(ros->nanosec, 123'456'789U);
+  const auto back = rosutil::from_msg<RosTag>(*ros);
+  ASSERT_TRUE(back.has_value());
+  EXPECT_EQ(back->ns, 1'700'000'000'123'456'789);
+
+  const auto negative = rosutil::to_msg(RosTime{-1});
+  ASSERT_FALSE(negative.has_value());
+  EXPECT_EQ(negative.error(), TimeError::kNegativeSeconds);
+  const auto over = rosutil::to_msg(RosTime{(std::int64_t{1} << 31) * 1'000'000'000});
+  ASSERT_FALSE(over.has_value());
+  EXPECT_EQ(over.error(), TimeError::kOutOfRange);
+  const auto steady = rosutil::to_msg(SteadyTime{5});
+  ASSERT_TRUE(steady.has_value());
+  EXPECT_EQ(steady->sec, 0);
 }
 
 TEST(RosTime, ToMsgRefusesWhatTheMessageCannotHold) {
@@ -108,8 +130,8 @@ std::int64_t ros_ns_of(std::int64_t clock_ns) {
 
 TEST(RosTime, SnapshotPairsSteadyAndRosClocks) {
   const SteadyTime before = steady_now();
-  rclcpp::Clock system(RCL_SYSTEM_TIME);
-  const TimeSnapshot s = rosutil::snapshot(system);
+  rclcpp::Clock ros(RCL_ROS_TIME);  // no sim time: follows the system clock
+  const TimeSnapshot s = rosutil::snapshot(ros);
   const SteadyTime after = steady_now();
   EXPECT_GE(s.steady.ns, before.ns);
   EXPECT_LE(s.steady.ns, after.ns);
@@ -117,6 +139,14 @@ TEST(RosTime, SnapshotPairsSteadyAndRosClocks) {
 
   EXPECT_EQ(ros_ns_of(12'345'678'901LL), 12'345'678'901LL);
   EXPECT_EQ(ros_ns_of(0), 0);
+}
+
+TEST(RosTime, SnapshotRosIsZeroForAClockThatIsNotRosTime) {
+  rclcpp::Clock system(RCL_SYSTEM_TIME);
+  rclcpp::Clock steady(RCL_STEADY_TIME);
+  EXPECT_EQ(rosutil::snapshot(system).ros.ns, 0);
+  EXPECT_EQ(rosutil::snapshot(steady).ros.ns, 0);
+  EXPECT_GT(rosutil::snapshot(system).steady.ns, 0);
 }
 
 TEST(RosTime, SnapshotRosIsZeroWhenTheClockTimeIsUnconvertible) {

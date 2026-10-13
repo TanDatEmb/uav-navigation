@@ -15,6 +15,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "uavnav/core/event.hpp"
 #include "uavnav/core/event_recorder.hpp"
+#include "uavnav/ros/detail/publish_batch.hpp"
 #include "uavnav/ros/qos.hpp"
 #include "uavnav/ros/ros_event_sink.hpp"
 #include "uavnav_interfaces/msg/event_record.hpp"
@@ -42,8 +43,9 @@ class EventsFixture : public ::testing::Test {
     sub_ = sub_node_->create_subscription<Msg>("/events", rosutil::qos::events(),
                                                [this](Msg::UniquePtr m) { received_.push_back(*m); });
     executor_.add_node(sub_node_);
-    sink_ = rosutil::RosEventSink::create(*pub_node_);
-    ASSERT_NE(sink_, nullptr);
+    auto sink = rosutil::RosEventSink::create(*pub_node_);
+    ASSERT_TRUE(sink.has_value());
+    sink_ = std::move(*sink);
     // Reliable + volatile: a message written before the two ends match is lost, so wait for both ends.
     ASSERT_TRUE(wait_until([this] { return sink_->subscription_count() > 0 && sub_->get_publisher_count() > 0; }));
   }
@@ -176,30 +178,94 @@ TEST_F(EventsFixture, PublishesFromTheRecordersWriterThread) {
 }
 
 // A publish that throws comes back as kIo; nothing escapes, and the records before it were published.
-// (rclcpp ignores a publish on a shut-down context, so the throw is injected through the test seam.)
-TEST(RosEventSink, ReturnsIoWhenPublishThrows) {
+// The batch loop is driven directly with a throwing publish function (no test hook in the product sink).
+TEST(RosEventSink, PublishBatchReturnsIoWhenPublishThrows) {
   std::vector<std::string> published;
   int calls = 0;
-  auto sink = rosutil::RosEventSink::create_with_publish_function([&](const Msg& m) {
+  const auto publish = [&](const Msg& m) {
     if (++calls == 2) throw std::runtime_error("publish failed");
     published.push_back(m.event);
-  });
-  ASSERT_NE(sink, nullptr);
+  };
 
   std::array<Rec, 3> batch{};
   batch[0].event = "first";
   batch[1].event = "second";
   batch[2].event = "third";
   Result<void, events::SinkError> result;
-  EXPECT_NO_THROW(result = sink->write(batch));
+  EXPECT_NO_THROW(result = rosutil::detail::publish_batch(batch, publish));
   ASSERT_FALSE(result.has_value());
   EXPECT_EQ(result.error(), events::SinkError::kIo);
   EXPECT_EQ(published, std::vector<std::string>{"first"});
 
-  // The next batch is attempted again (the sink is not latched into failure).
+  // The next batch is attempted again (not latched into failure): the 3rd call does not throw.
   std::array<Rec, 1> next{};
   next[0].event = "again";
-  calls = 2;  // next call is the 3rd: does not throw
-  EXPECT_TRUE(sink->write(next).has_value());
-  EXPECT_EQ(published.back(), "again");
+  EXPECT_TRUE(rosutil::detail::publish_batch(next, publish).has_value());
+  EXPECT_EQ(published, (std::vector<std::string>{"first", "again"}));
+}
+
+namespace {
+
+// A context of its own, so shutting it down does not touch the process-wide one.
+std::shared_ptr<rclcpp::Context> private_context() {
+  auto context = std::make_shared<rclcpp::Context>();
+  rclcpp::InitOptions init_options;
+  init_options.set_domain_id(215);
+  context->init(0, nullptr, init_options);
+  return context;
+}
+
+std::shared_ptr<rclcpp::Node> node_on(const std::shared_ptr<rclcpp::Context>& context, const std::string& base) {
+  rclcpp::NodeOptions options;
+  options.context(context);
+  return std::make_shared<rclcpp::Node>(base + std::to_string(g_node_counter.fetch_add(1)), options);
+}
+
+}  // namespace
+
+// rclcpp ignores a publish on a shut-down context without any error, so write() checks the context itself;
+// through the recorder this shows up as one counted sink failure instead of a silent loss.
+TEST(RosEventSink, WriteAfterContextShutdownReturnsIo) {
+  const auto context = private_context();
+  const auto node = node_on(context, "event_sink_dead_");
+  auto sink = rosutil::RosEventSink::create(*node);
+  ASSERT_TRUE(sink.has_value());
+  Rec r;
+  r.event = "BeforeShutdown";
+  EXPECT_TRUE((*sink)->write(std::span<const Rec>(&r, 1)).has_value());
+
+  auto recorder = events::EventRecorder::create(std::move(*sink));
+  ASSERT_TRUE(recorder.has_value());
+  context->shutdown("test");
+
+  Rec after;
+  after.event = "AfterShutdown";
+  ASSERT_TRUE((*recorder)->emit(after));
+  (*recorder)->flush();
+  EXPECT_EQ((*recorder)->stats().sink_failures, 1U);
+  EXPECT_EQ((*recorder)->stats().written, 0U);
+}
+
+TEST(RosEventSink, WriteReturnsIoOnADirectCallAfterShutdown) {
+  const auto context = private_context();
+  const auto node = node_on(context, "event_sink_dead_direct_");
+  auto sink = rosutil::RosEventSink::create(*node);
+  ASSERT_TRUE(sink.has_value());
+  context->shutdown("test");
+  Rec r;
+  r.event = "AfterShutdown";
+  Result<void, events::SinkError> result;
+  EXPECT_NO_THROW(result = (*sink)->write(std::span<const Rec>(&r, 1)));
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error(), events::SinkError::kIo);
+}
+
+TEST(RosEventSink, CreateFailsWhenTheNodesContextIsShutDown) {
+  const auto context = private_context();
+  const auto node = node_on(context, "event_sink_create_");
+  context->shutdown("test");
+  const auto sink = rosutil::RosEventSink::create(*node);
+  ASSERT_FALSE(sink.has_value());
+  EXPECT_EQ(sink.error(), rosutil::RosSinkError::kPublisherCreateFailed);
+  EXPECT_EQ(rosutil::to_string(sink.error()), "PUBLISHER_CREATE_FAILED");
 }

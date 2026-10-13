@@ -21,7 +21,11 @@ target_compile_options(uavnav_ros PRIVATE ${UAVNAV_ROS_STRICT_WARNINGS})
 # Static code is linked into shared libraries and nodes of other packages.
 set_target_properties(uavnav_ros PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(uavnav_ros PUBLIC uavnav_core::uavnav_core)
-ament_target_dependencies(uavnav_ros PUBLIC rclcpp builtin_interfaces uavnav_interfaces)
+# The C++ typesupport target of a message package carries its headers and the library publishers need.
+target_link_libraries(uavnav_ros PUBLIC
+  rclcpp::rclcpp
+  builtin_interfaces::builtin_interfaces__rosidl_generator_cpp
+  uavnav_interfaces::uavnav_interfaces__rosidl_typesupport_cpp)
 
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS uavnav_ros EXPORT export_uavnav_ros
@@ -40,6 +44,9 @@ if(BUILD_TESTING)
     target_sources(${test_name} PRIVATE test/ros_test_main.cpp)
     target_link_libraries(${test_name} uavnav_ros::uavnav_ros)
     target_compile_options(${test_name} PRIVATE ${UAVNAV_ROS_STRICT_WARNINGS})
+    # In-process ROS tests share the DDS domain space: serialise them. Every other package's in-process ROS
+    # test must set the same lock name (ros_dds) so ctest never runs two of them at once.
+    set_tests_properties(${test_name} PROPERTIES RESOURCE_LOCK ros_dds)
   endforeach()
 endif()
 
