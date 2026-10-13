@@ -66,6 +66,10 @@
 // and once more at the end of the epoch when occurrences happened since the last one.
 namespace uavnav::lio {
 
+/// True when `q` carries a rotation that normalising can recover: every coefficient finite and a norm above
+/// 1e-9 (the one check of the frontend, the backend adapters and the output predictor).
+inline bool usable(const Eigen::Quaterniond& q) { return q.coeffs().allFinite() && q.norm() > 1e-9; }
+
 struct ImuInput {
   time::SensorTime t;
   Eigen::Vector3d gyro_rad_s;

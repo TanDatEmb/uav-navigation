@@ -38,7 +38,9 @@ struct QueueStats {
 /// Bounded, lock-free single-producer/single-consumer FIFO (SYSTEM_DESIGN §3.5, D30/O14).
 ///
 /// - A fixed ring of exactly `Capacity` usable slots inside the object: nothing is allocated after
-///   construction.
+///   construction. The ring is inside the object, so `sizeof(SpscQueue)` is about
+///   `Capacity * sizeof(T)` plus a few cache lines: put a large queue on the heap (e.g. in a
+///   `std::unique_ptr`), never on a thread's stack or as a big automatic variable.
 /// - `try_push` (producer thread only) never blocks, never allocates and never throws. On a full
 ///   ring it returns `QueueError::kFull`, leaves the item unmoved and counts it in `rejected`.
 ///   The queue emits no event; the pushing side does, with its own reason.

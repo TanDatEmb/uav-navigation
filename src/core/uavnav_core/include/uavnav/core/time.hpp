@@ -49,6 +49,14 @@ struct TimePoint {
   friend constexpr TimePoint operator-(TimePoint t, Duration d) { return TimePoint{t.ns - d.ns}; }
 };
 
+/// An instant as seconds since its clock's epoch, ns / 1e9 like the Duration overload. Only at
+/// calculation or log boundaries (e.g. an event's sensor_time_s); never store the result or compare
+/// two of them across domains.
+template <class Tag>
+constexpr double to_seconds(TimePoint<Tag> t) {
+  return static_cast<double>(t.ns) / 1e9;
+}
+
 struct SensorTag;
 struct RosTag;
 struct SteadyTag;

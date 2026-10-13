@@ -9,6 +9,8 @@
 #include <utility>
 #include <variant>
 
+#include "uavnav/core/angles.hpp"
+#include "uavnav/core/time.hpp"
 #include "uavnav/lio/limits.hpp"
 
 // Extracted from the S1a facade (estimator.cpp): ingest checks, IMU path, health/transition/event
@@ -25,12 +27,6 @@ constexpr double kImuPeriodEmaWeight = 0.1;
 constexpr DegeneracyReport kNoReport{0.0, 0.0, true, 0};
 /// LioInputRejected / LioQueueOverflow "stream" value.
 enum Stream : int { kStreamImu = 0, kStreamScan = 1, kStreamRestart = LioFrontend::kRestartStream };
-
-double seconds(time::SensorTime t) { return static_cast<double>(t.ns) / 1e9; }
-
-double yaw_of(const Eigen::Matrix3d& r) { return std::atan2(r(1, 0), r(0, 0)); }
-
-bool usable(const Eigen::Quaterniond& q) { return q.coeffs().allFinite() && q.norm() > 1e-9; }
 
 bool is_scan_result(BackendResultKind k) {
   return k == BackendResultKind::kScanGood || k == BackendResultKind::kScanDegenerate ||
@@ -94,7 +90,7 @@ EstimatorReason LioFrontend::reject(EstimatorReason r, int stream, time::SensorT
     emit(event("LioInputRejected", now)
              .reason(r)
              .value("stream", stream)
-             .value("sensor_time_s", seconds(t))
+             .value("sensor_time_s", time::to_seconds(t))
              .value("count", static_cast<double>(spam_[slot].count)));
   }
   return r;
@@ -107,7 +103,7 @@ void LioFrontend::request_queue_full(int stream, time::SensorTime t,
   emit(event("LioQueueOverflow", now)
            .reason(EstimatorEventReason::kRequestQueueFull)
            .value("stream", stream)
-           .value("sensor_time_s", seconds(t))
+           .value("sensor_time_s", time::to_seconds(t))
            .value("count", static_cast<double>(spam_[kQueueFullSlot].count)));
 }
 
@@ -131,7 +127,7 @@ void LioFrontend::on_transition(const Transition& tr, time::SensorTime t,
   if (!tr.changed) return;
   last_reason_ = tr.reason;
   EventBuilder b = event("StateTransition", now);
-  b.states(tr.before, tr.after).reason(tr.reason).value("sensor_time_s", seconds(t));
+  b.states(tr.before, tr.after).reason(tr.reason).value("sensor_time_s", time::to_seconds(t));
   b.value("position_sigma_m", position_sigma_m_);
   if (report) {
     b.value("quality", report->quality)
@@ -179,7 +175,7 @@ void LioFrontend::discard(const BackendResult& r, EstimatorEventReason why,
            .value("kind", static_cast<double>(r.kind))
            .value("seq", static_cast<double>(r.seq))
            .value("result_epoch", r.epoch)
-           .value("sensor_time_s", seconds(r.t)));
+           .value("sensor_time_s", time::to_seconds(r.t)));
 }
 
 void LioFrontend::apply(const BackendResult& r, StepOutputs& out,
@@ -234,7 +230,7 @@ void LioFrontend::apply_scan(const BackendResult& r, StepOutputs& out,
     // Too old: a rejected correction, never offered to the predictor (fail closed).
     emit(event("ScanResultTooOld", now)
              .reason(EstimatorEventReason::kResultTooOld)
-             .value("sensor_time_s", seconds(r.t))
+             .value("sensor_time_s", time::to_seconds(r.t))
              .value("age_s", time::to_seconds(age))
              .value("gap_degraded_s", time::to_seconds(cfg_.lifecycle.gap_degraded)));
     kind = LioEvent::Kind::kScanCorrectionRejected;
@@ -250,7 +246,7 @@ void LioFrontend::apply_scan(const BackendResult& r, StepOutputs& out,
     } else {
       emit(event("PredictorCorrectionRejected", now)
                .reason(c.error())
-               .value("sensor_time_s", seconds(r.t)));
+               .value("sensor_time_s", time::to_seconds(r.t)));
       kind = LioEvent::Kind::kScanCorrectionRejected;  // like degenerate; gap reference stays
     }
   }
@@ -280,7 +276,7 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
     EventBuilder b = event("LioRestartRejected", now);
     b.reason(stale ? EstimatorEventReason::kRestartAnswerStale
                    : EstimatorEventReason::kRestartRejected);
-    b.value("new_epoch", r.epoch).value("sensor_time_s", seconds(r.t));
+    b.value("new_epoch", r.epoch).value("sensor_time_s", time::to_seconds(r.t));
     emit(stale ? b.value("seed_age_s", seed_age_s) : b);
     out.restart =
         std::unexpected(stale ? EstimatorReason::kStaleAnswer : EstimatorReason::kNotFinite);
@@ -296,6 +292,7 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
   position_sigma_m_ = r.position_sigma_m;
   const Transition tr =
       lifecycle_.on(LioEvent{LioEvent::Kind::kRestartSeeded, r.t, position_sigma_m_});
+  const Eigen::Matrix3d seed_r = seed.q_world_base.toRotationMatrix();
   emit(event("LioRestart", now)
            .reason(LioReason::kRestartSeeded)
            .value("old_epoch", old_epoch)
@@ -303,7 +300,7 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
            .value("seed_x_m", seed.p_world_m.x())
            .value("seed_y_m", seed.p_world_m.y())
            .value("seed_z_m", seed.p_world_m.z())
-           .value("seed_yaw_rad", yaw_of(seed.q_world_base.toRotationMatrix()))
+           .value("seed_yaw_rad", angles::yaw_from_rotation(seed_r(1, 0), seed_r(0, 0)))
            .value("delta_x_m", delta.position_m.x())
            .value("delta_y_m", delta.position_m.y())
            .value("delta_z_m", delta.position_m.z())
@@ -331,7 +328,7 @@ Result<StepOutputs, EstimatorReason> LioFrontend::push_imu(const ImuInput& imu,
     if (spam_due(kDuplicateSlot)) {
       emit(event("ImuDuplicate", now)
                .reason(EstimatorEventReason::kImuDuplicate)
-               .value("sensor_time_s", seconds(imu.t))
+               .value("sensor_time_s", time::to_seconds(imu.t))
                .value("count", static_cast<double>(spam_[kDuplicateSlot].count)));
     }
   } else {

@@ -22,8 +22,6 @@ constexpr double kExtrinsicToleranceM = 1e-6;
 /// used by InitialStatePriorApplicator for the in-flight context.
 constexpr double kUnusedTiltLimitRad = 0.0;
 
-bool usable(const Eigen::Quaterniond& q) { return q.coeffs().allFinite() && q.norm() > 1e-9; }
-
 }  // namespace
 
 BackendResultKind kind_of(EstimatorEventReason r) {

@@ -36,7 +36,6 @@ namespace fl = uav::nav::lio;
 namespace bm = backend_math;
 using bm::kind_of;
 using bm::ScanOutcome;
-using bm::seconds;
 using bm::snapshot;
 using bm::stamp;
 using events::Component;
@@ -95,7 +94,7 @@ struct LioBackend::Impl {
              .reason(Reason::kResultQueueFull)
              .value("kind", static_cast<double>(kind))
              .value("seq", static_cast<double>(seq))
-             .value("sensor_time_s", seconds(t)));
+             .value("sensor_time_s", time::to_seconds(t)));
   }
 
   void refresh_sigma() {
@@ -111,7 +110,7 @@ struct LioBackend::Impl {
     refresh_sigma();
     emit(event("EskfRebased", now)
              .reason(Reason::kEskfRebased)
-             .value("sensor_time_s", seconds(end))
+             .value("sensor_time_s", time::to_seconds(end))
              .value("skipped_s", time::to_seconds(end - start))
              .value("position_sigma_m", position_sigma_m));
   }
@@ -142,7 +141,7 @@ struct LioBackend::Impl {
       if (!init.ok()) {
         if (!init_rejection_reported) {
           init_rejection_reported = true;  // once, not per sample (only epoch 1 initialises from the IMU)
-          emit(event("ImuInitRejected", now).reason(Reason::kImuInitRejected).value("sensor_time_s", seconds(t)));
+          emit(event("ImuInitRejected", now).reason(Reason::kImuInitRejected).value("sensor_time_s", time::to_seconds(t)));
         }
         return;
       }
@@ -161,7 +160,7 @@ struct LioBackend::Impl {
       trim_history(t);
       emit(event("ImuInitialized", now)
                .reason(Reason::kImuInitialized)
-               .value("sensor_time_s", seconds(t))
+               .value("sensor_time_s", time::to_seconds(t))
                .value("gyro_bias_norm_rad_s", init.value().gyro_bias_rad_s.norm())
                .value("accel_bias_norm_mps2", init.value().accel_bias_m_s2.norm()));
       BackendResult r = result(BackendResultKind::kImuInitialized, epoch, 0, t);
@@ -251,7 +250,7 @@ struct LioBackend::Impl {
       if (auto o = bm::base_odometry(converter, projector, est, omega)) return o;
     } catch (...) {
     }
-    emit(event("OdometryInvalid", now).reason(Reason::kOdometryInvalid).value("sensor_time_s", seconds(t)));
+    emit(event("OdometryInvalid", now).reason(Reason::kOdometryInvalid).value("sensor_time_s", time::to_seconds(t)));
     return std::nullopt;
   }
 
@@ -266,7 +265,7 @@ struct LioBackend::Impl {
                                             : Reason::kBeforeImuInit;
       emit(event("LioScan", now)
                .reason(why)
-               .value("sensor_time_s", seconds(t))
+               .value("sensor_time_s", time::to_seconds(t))
                .value("scan_epoch", static_cast<double>(job.epoch)));
       publish(std::move(r), now);
       return;
@@ -290,7 +289,7 @@ struct LioBackend::Impl {
 
     EventBuilder scan_event = event("LioScan", now);
     scan_event.reason(o.reason)
-        .value("sensor_time_s", seconds(t))
+        .value("sensor_time_s", time::to_seconds(t))
         .value("input_points", static_cast<double>(input_points))
         .value("points", static_cast<double>(o.points.size()));
     if (o.report) {
@@ -348,7 +347,7 @@ struct LioBackend::Impl {
     if (refused) {  // one event at the decision point; the frontend's LioRestartRejected follows the result
       emit(event("RestartSeedRejected", now)
                .reason(*refused)
-               .value("sensor_time_s", seconds(c.t))
+               .value("sensor_time_s", time::to_seconds(c.t))
                .value("new_epoch", c.new_epoch)
                .value("exception", threw ? 1.0 : 0.0));
     }

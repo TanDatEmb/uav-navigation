@@ -3,16 +3,15 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
-#include <numbers>
 
+#include "uavnav/core/angles.hpp"
 #include "uavnav/px4bridge/config.hpp"
 
 namespace uavnav::px4bridge {
 
 namespace {
 
-/// Shortest-arc representative in [-pi, pi]. std::remainder is exact for every finite input.
-double wrap(double a) { return std::remainder(a, 2.0 * std::numbers::pi); }
+using angles::wrap_pi;
 
 /// Rz(yaw) * v about the down axis: [c x - s y, s x + c y].
 Eigen::Vector2d rz(double yaw, const Eigen::Vector2d& v) {
@@ -52,10 +51,10 @@ bool valid_config(const AlignmentConfig& c) {
          within_spec("alignment_frozen_max_s", time::to_seconds(c.frozen_max)) && c.tau >= limits::kFilterDtMax;
 }
 
-/// Instant T of one pair (header comment): yaw = wrap(yaw_px4 - yaw_lio), t_xy = p_px4_xy - Rz(yaw) p_lio_xy,
+/// Instant T of one pair (header comment): yaw = wrap_pi(yaw_px4 - yaw_lio), t_xy = p_px4_xy - Rz(yaw) p_lio_xy,
 /// z = z_px4 - z_lio.
 Pose4 instant(const Eigen::Vector3d& p_px4, double yaw_px4, const Eigen::Vector3d& p_lio, double yaw_lio) {
-  const double yaw = wrap(yaw_px4 - yaw_lio);
+  const double yaw = wrap_pi(yaw_px4 - yaw_lio);
   const Eigen::Vector2d t_xy = p_px4.head<2>() - rz(yaw, p_lio.head<2>());
   return Pose4{t_xy.x(), t_xy.y(), p_px4.z() - p_lio.z(), yaw};
 }
@@ -73,14 +72,14 @@ Eigen::Vector3d frame_change(const Eigen::Vector3d& p, const Eigen::Vector3d& pi
 struct AtVehicle {
   Eigen::Vector3d q;  // T(p_lio): where the reference T puts the vehicle
   Eigen::Vector3d e;  // p_px4 - q
-  double e_yaw;       // wrap(yaw_inst - yaw_T)
+  double e_yaw;       // wrap_pi(yaw_inst - yaw_T)
 };
 
 AtVehicle at_vehicle(const Pose4& T, const Pose4& inst, const Eigen::Vector3d& p_lio,
                      const Eigen::Vector3d& p_px4) {
   const Eigen::Vector2d q_xy = rz(T.yaw_rad, p_lio.head<2>()) + Eigen::Vector2d{T.x_m, T.y_m};
   const Eigen::Vector3d q{q_xy.x(), q_xy.y(), p_lio.z() + T.z_m};
-  return AtVehicle{q, p_px4 - q, wrap(inst.yaw_rad - T.yaw_rad)};
+  return AtVehicle{q, p_px4 - q, wrap_pi(inst.yaw_rad - T.yaw_rad)};
 }
 
 }  // namespace
@@ -142,7 +141,7 @@ AlignmentOutput AlignmentEstimator::output(AlignmentReason reason, const std::op
 
 void AlignmentEstimator::push(const Px4PoseSample& s) noexcept {
   ring_[ring_head_] = s;
-  ring_[ring_head_].yaw_rad = wrap(s.yaw_rad);
+  ring_[ring_head_].yaw_rad = wrap_pi(s.yaw_rad);
   ring_head_ = (ring_head_ + 1) % ring_.size();
   ring_size_ = std::min(ring_size_ + 1, ring_.size());
 }
@@ -165,7 +164,7 @@ std::optional<AlignmentEstimator::Interpolated> AlignmentEstimator::px4_at(time:
     const Px4PoseSample& b = sample(k + 1);
     if (t - a.t > limits::kPairingWindow || b.t - t > limits::kPairingWindow) return std::nullopt;
     const double w = static_cast<double>((t - a.t).ns) / static_cast<double>((b.t - a.t).ns);
-    return Interpolated{a.p_ned_m + w * (b.p_ned_m - a.p_ned_m), wrap(a.yaw_rad + w * wrap(b.yaw_rad - a.yaw_rad))};
+    return Interpolated{a.p_ned_m + w * (b.p_ned_m - a.p_ned_m), wrap_pi(a.yaw_rad + w * wrap_pi(b.yaw_rad - a.yaw_rad))};
   }
   return std::nullopt;
 }
@@ -191,16 +190,16 @@ AlignmentOutput AlignmentEstimator::on_px4(const Px4PoseSample& s) noexcept {
   }
 
   const Eigen::Vector3d d{xy ? s.delta_xy_m.x() : 0.0, xy ? s.delta_xy_m.y() : 0.0, z ? s.delta_z_m : 0.0};
-  const double dh = heading ? wrap(s.delta_heading_rad) : 0.0;
+  const double dh = heading ? wrap_pi(s.delta_heading_rad) : 0.0;
   const Eigen::Vector3d pivot = s.p_ned_m - d;  // vehicle position just before the reset, old frame
 
   for (std::size_t k = 0; k < ring_size_; ++k) {
     Px4PoseSample& b = ring_[(ring_head_ + ring_.size() - ring_size_ + k) % ring_.size()];
     b.p_ned_m = frame_change(b.p_ned_m, pivot, d, dh);
-    b.yaw_rad = wrap(b.yaw_rad + dh);
+    b.yaw_rad = wrap_pi(b.yaw_rad + dh);
   }
   const Eigen::Vector3d t = frame_change(translation(filtered_), pivot, d, dh);
-  filtered_ = Pose4{t.x(), t.y(), t.z(), wrap(filtered_.yaw_rad + dh)};
+  filtered_ = Pose4{t.x(), t.y(), t.z(), wrap_pi(filtered_.yaw_rad + dh)};
   push(s);
 
   switch (state_) {
@@ -312,7 +311,7 @@ AlignmentReason AlignmentEstimator::filter(const Pair& pair, time::SensorTime t)
   // No separate rate limiter (D30): |e| <= jump_position_m and |e_yaw| <= jump_yaw_rad already bound a step.
   const double dh = alpha * m.e_yaw;
   const Eigen::Vector3d new_t = frame_change(translation(filtered_), m.q, alpha * m.e, dh);
-  filtered_ = Pose4{new_t.x(), new_t.y(), new_t.z(), wrap(filtered_.yaw_rad + dh)};
+  filtered_ = Pose4{new_t.x(), new_t.y(), new_t.z(), wrap_pi(filtered_.yaw_rad + dh)};
   last_accepted_ = t;
   stale_since_ = t;
   return AlignmentReason::kPairAccepted;

@@ -90,3 +90,13 @@ TEST(Time, SteadyNowIsMonotonic) {
   const SteadyTime t1 = steady_now();
   EXPECT_LE(t0, t1);
 }
+
+TEST(Time, ToSecondsOfTimePoint) {
+  EXPECT_DOUBLE_EQ(to_seconds(SensorTime{1'500'000'000}), 1.5);
+  EXPECT_DOUBLE_EQ(to_seconds(RosTime{-2'000'000'000}), -2.0);
+  EXPECT_DOUBLE_EQ(to_seconds(SteadyTime{}), 0.0);
+  EXPECT_DOUBLE_EQ(to_seconds(Px4Time{1}), 1e-9);
+  static_assert(to_seconds(SensorTime{3'000'000'000}) == 3.0);
+  // Same value as the Duration overload for the same count.
+  EXPECT_DOUBLE_EQ(to_seconds(SensorTime{123'456'789}), to_seconds(nanoseconds(123'456'789)));
+}

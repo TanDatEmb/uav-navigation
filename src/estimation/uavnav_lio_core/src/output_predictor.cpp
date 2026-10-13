@@ -2,7 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <numbers>
+
+#include "uavnav/core/angles.hpp"
 
 namespace uavnav::lio {
 
@@ -21,19 +22,12 @@ constexpr double kMaxTauS = 10.0;             // gain = dt / constrain(tau, dt, 
 // Remaining hold time at or below this counts as expired (absorbs rounding of the clamped-dt countdown).
 constexpr double kHoldExpiredS = 1e-9;
 
-// A quaternion with a norm below this carries no rotation that can be recovered by normalising.
-constexpr double kMinQuaternionNorm = 1e-9;
-
 double clamp_dt(double dt_s) noexcept {
   return std::clamp(dt_s, time::to_seconds(limits::kPredictorDtMin), time::to_seconds(limits::kPredictorDtMax));
 }
 
-bool usable_quaternion(const Eigen::Quaterniond& q) noexcept {
-  return q.coeffs().allFinite() && q.norm() > kMinQuaternionNorm;
-}
-
 bool finite(const EstimatorSnapshot& s) noexcept {
-  return usable_quaternion(s.q_world_imu) && s.v_world_mps.allFinite() && s.p_world_m.allFinite() &&
+  return usable(s.q_world_imu) && s.v_world_mps.allFinite() && s.p_world_m.allFinite() &&
          s.gyro_bias.allFinite() && s.accel_bias.allFinite() && s.gravity_world.allFinite();
 }
 
@@ -46,10 +40,8 @@ Eigen::Quaterniond exp_rotation(const Eigen::Vector3d& rv) noexcept {
 
 double yaw_of(const Eigen::Quaterniond& q) noexcept {
   const Eigen::Matrix3d r = q.toRotationMatrix();
-  return std::atan2(r(1, 0), r(0, 0));
+  return angles::yaw_from_rotation(r(1, 0), r(0, 0));
 }
-
-double wrap_pi(double a) noexcept { return std::remainder(a, 2.0 * std::numbers::pi); }
 
 time::Duration seconds_to_duration(double s) noexcept {
   // Only called with clamped dts (<= kPredictorDtMax), so the conversion cannot overflow.
@@ -283,7 +275,7 @@ ResetDelta OutputPredictor::reset_to(const EstimatorSnapshot& s) noexcept {
 
   const OutputSample& now = newest().out;
   return ResetDelta{now.p_world_m - old.p_world_m, now.v_world_mps - old.v_world_mps,
-                    wrap_pi(yaw_of(now.q_world_imu) - yaw_of(old.q_world_imu))};
+                    angles::wrap_pi(yaw_of(now.q_world_imu) - yaw_of(old.q_world_imu))};
 }
 
 double OutputPredictor::vertical_velocity_mps() const noexcept { return size_ == 0 ? 0.0 : newest().vert_vel; }

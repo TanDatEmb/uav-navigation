@@ -27,7 +27,6 @@ namespace uavnav::lio::backend_math {
 namespace fl = uav::nav::lio;
 
 inline fl::Timestamp stamp(time::SensorTime t) { return fl::Timestamp(t.ns); }
-inline double seconds(time::SensorTime t) { return static_cast<double>(t.ns) / 1e9; }
 
 /// What one processed scan amounted to.
 struct ScanOutcome {

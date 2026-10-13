@@ -26,6 +26,7 @@ set(UAVNAV_CORE_SOURCES
   src/time_convert.cpp
   src/event_recorder.cpp
   src/jsonl_sink.cpp
+  src/tee_sink.cpp
   src/config.cpp)
 
 add_library(uavnav_core STATIC ${UAVNAV_CORE_SOURCES})
@@ -87,6 +88,14 @@ if(BUILD_TESTING)
   target_link_libraries(test_spsc_queue uavnav_core::uavnav_core)
   target_compile_options(test_spsc_queue PRIVATE ${UAVNAV_CORE_STRICT_WARNINGS})
   uavnav_core_sanitize(test_spsc_queue)
+  ament_add_gtest(test_angles test/test_angles.cpp)
+  target_link_libraries(test_angles uavnav_core::uavnav_core)
+  target_compile_options(test_angles PRIVATE ${UAVNAV_CORE_STRICT_WARNINGS})
+  uavnav_core_sanitize(test_angles)
+  ament_add_gtest(test_tee_sink test/test_tee_sink.cpp)
+  target_link_libraries(test_tee_sink uavnav_core::uavnav_core)
+  target_compile_options(test_tee_sink PRIVATE ${UAVNAV_CORE_STRICT_WARNINGS})
+  uavnav_core_sanitize(test_tee_sink)
 endif()
 
 ament_package()
