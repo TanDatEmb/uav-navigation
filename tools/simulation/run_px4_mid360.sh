@@ -2,10 +2,27 @@
 # Start Gazebo with the project-owned x500_mid360 model, then attach standard
 # PX4 x500 SITL (autostart 4001) to the existing Gazebo entity.
 # No PX4 source patch, custom airframe, or copy into the PX4 submodule is needed.
+#
+# Environment:
+#   UAVNAV_PX4_PROFILE    required: PX4 localization profile file (config/px4/profiles/{gps,no_gps}.yaml),
+#                         validated by tools/uavnav/px4_profile.py (D20, D28, D33/O23); invalid -> exit 2
+#   UAVNAV_SPAWN_YAW_RAD  optional: ENU spawn yaw of x500_mid360 [rad], applied with the world's
+#                         set_pose service before PX4 attaches (F34 check, D33/O24)
+#   GZ_GUI=0              headless Gazebo server (the SITL harness always sets it)
+#   SESSION_DIR           run directory; Gazebo log in $SESSION_DIR/logs, PX4 working directory
+#                         (fresh parameters, PX4 logs) in $SESSION_DIR/px4
+# Started and torn down by tools/uavnav/sitl_hover.sh, which owns the process groups.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PYTHON="${PYTHON:-/usr/bin/python3}"
+CHECK_ONLY=0
+case "${1:-}" in
+  "") ;;
+  --check-only) CHECK_ONLY=1 ;;  # validate paths, Gazebo, profile and spawn yaw; start nothing
+  *) echo "usage: $0 [--check-only]" >&2; exit 2 ;;
+esac
 
 detect_px4_dir() {
   if [[ -n "${PX4_DIR:-}" ]]; then printf '%s\n' "${PX4_DIR}"
@@ -66,13 +83,13 @@ PX4_BUILD="${PX4_DIR}/build/px4_sitl_default"
 PX4_BIN="${PX4_BUILD}/bin/px4"
 PX4_ROOTFS="${PX4_BUILD}/rootfs"
 PX4_GZ_ENV="${PX4_ROOTFS}/gz_env.sh"
-UAV_MODELS="${WS_DIR}/src/uav_simulation/models"
-UAV_WORLDS="${WS_DIR}/src/uav_simulation/worlds"
+UAV_MODELS="${WS_DIR}/src/sim/uav_simulation/models"
+UAV_WORLDS="${WS_DIR}/src/sim/uav_simulation/worlds"
 WORLD_NAME="${PX4_GZ_WORLD:-px4_lio_smoke}"
 WORLD_FILE="${UAV_WORLDS}/${WORLD_NAME}.sdf"
 MODEL_NAME="${PX4_GZ_MODEL_NAME:-x500_mid360}"
 
-for required in "${PX4_BIN}" "${PX4_ROOTFS}" "${PX4_GZ_ENV}" \
+for required in "${PX4_BIN}" "${PX4_ROOTFS}" "${PX4_GZ_ENV}" "${PX4_BUILD}/etc" \
   "${UAV_MODELS}/x500_mid360/model.sdf" "${UAV_MODELS}/lidar_mid360/model.sdf" \
   "${WORLD_FILE}"; do
   if [[ ! -e "${required}" ]]; then
@@ -87,6 +104,52 @@ if [[ -z "${GZ_COMMAND}" ]]; then
   exit 1
 fi
 echo "Gazebo command : ${GZ_COMMAND}"
+
+# Localization profile (tier c, SYSTEM_DESIGN §0, §4.1, §6.2). Validate it before anything starts.
+if [[ -z "${UAVNAV_PX4_PROFILE:-}" ]]; then
+  echo "ERROR: UAVNAV_PX4_PROFILE is required (config/px4/profiles/gps.yaml or no_gps.yaml)" >&2
+  exit 2
+fi
+if ! PROFILE_ENV="$("${PYTHON}" "${WS_DIR}/tools/uavnav/px4_profile.py" --profile "${UAVNAV_PX4_PROFILE}" --format env)"; then
+  echo "ERROR: invalid PX4 profile ${UAVNAV_PX4_PROFILE} (see the message above)" >&2
+  exit 2
+fi
+if [[ -n "${UAVNAV_SPAWN_YAW_RAD:-}" ]]; then
+  # gz.msgs.Pose request for the world's set_pose service: the include pose of the model in the
+  # world file with its yaw replaced. A non-finite or unparsable yaw refuses start.
+  if ! SPAWN_POSE_REQ="$("${PYTHON}" - "${WORLD_FILE}" "${MODEL_NAME}" "${UAVNAV_SPAWN_YAW_RAD}" <<'PY'
+import math, sys, xml.etree.ElementTree as et
+world, name, yaw_text = sys.argv[1:4]
+yaw = float(yaw_text)
+if not math.isfinite(yaw) or abs(yaw) > 2 * math.pi:
+    sys.exit(f"UAVNAV_SPAWN_YAW_RAD must be finite and within +-2*pi, got {yaw_text}")
+for include in et.parse(world).getroot().iter("include"):
+    if include.findtext("name") == name:
+        x, y, z, roll, pitch, _ = (float(v) for v in (include.findtext("pose") or "0 0 0 0 0 0").split())
+        break
+else:
+    sys.exit(f"model {name} is not included in {world}")
+cr, sr = math.cos(roll / 2), math.sin(roll / 2)
+cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
+cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
+q = (sr * cp * cy - cr * sp * sy, cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy, cr * cp * cy + sr * sp * sy)
+print(f'name: "{name}", position: {{x: {x}, y: {y}, z: {z}}}, '
+      f'orientation: {{x: {q[0]:.9f}, y: {q[1]:.9f}, z: {q[2]:.9f}, w: {q[3]:.9f}}}')
+PY
+)"; then
+    echo "ERROR: invalid UAVNAV_SPAWN_YAW_RAD=${UAVNAV_SPAWN_YAW_RAD}" >&2
+    exit 2
+  fi
+fi
+if [[ "${CHECK_ONLY}" == "1" ]]; then
+  echo "PX4 binary     : ${PX4_BIN} (ok)"
+  echo "PX4 rootfs     : ${PX4_ROOTFS} (ok; gz_env.sh ok; etc ${PX4_BUILD}/etc ok)"
+  echo "World / model  : ${WORLD_FILE} / ${MODEL_NAME} (ok)"
+  echo "PX4 profile    : ${UAVNAV_PX4_PROFILE} (valid)"
+  echo "  ${PROFILE_ENV//$'\n'/$'\n'  }"
+  if [[ -n "${SPAWN_POSE_REQ:-}" ]]; then echo "Spawn pose     : ${SPAWN_POSE_REQ}"; fi
+  exit 0
+fi
 
 # PX4's generated environment supplies its Gazebo plugins/server config and its
 # upstream x500 resources. Initialise variables first because this script uses
@@ -148,6 +211,15 @@ if ! gz_run topic -l 2>/dev/null | grep -qx "/world/${WORLD_NAME}/clock"; then
   echo "ERROR: timed out waiting for Gazebo world ${WORLD_NAME}. See ${GZ_LOG}" >&2; exit 1
 fi
 
+if [[ -n "${SPAWN_POSE_REQ:-}" ]]; then
+  echo "Spawn yaw      : ${UAVNAV_SPAWN_YAW_RAD} rad (ENU) via /world/${WORLD_NAME}/set_pose"
+  if ! gz_run service -s "/world/${WORLD_NAME}/set_pose" --reqtype gz.msgs.Pose \
+      --reptype gz.msgs.Boolean --timeout 5000 --req "${SPAWN_POSE_REQ}" | grep -q "data: true"; then
+    echo "ERROR: set_pose of ${MODEL_NAME} failed (${SPAWN_POSE_REQ})" >&2
+    exit 1
+  fi
+fi
+
 export PX4_GZ_STANDALONE=1
 export PX4_SYS_AUTOSTART="${PX4_SYS_AUTOSTART:-4001}"
 export PX4_SIMULATOR=gz
@@ -155,79 +227,42 @@ export PX4_GZ_WORLD="${WORLD_NAME}"
 export PX4_GZ_MODEL_NAME="${MODEL_NAME}"
 
 ###############################################################################
-# PX4 Parameters
+# PX4 parameters: the profile (EKF2, tier c) plus the harness parameters (D33/O23).
+# Nothing else: every other parameter keeps the PX4 default, because PX4 starts in a
+# fresh working directory each run (no parameters.bson carried over from an earlier run).
 ###############################################################################
 
-# Simulation clock authority
-export PX4_PARAM_UXRCE_DDS_SYNCT=0
+# PX4_PARAM_* inherited from the caller's shell would be applied by rcS too: drop them.
+while IFS= read -r inherited; do
+  echo "WARNING: ignoring inherited ${inherited}" >&2
+  unset "${inherited}"
+done < <(compgen -e | grep '^PX4_PARAM_' || true)
 
-# The headless acceptance profile disables manual control. The interactive
-# runner overrides this to MAVLink-only so QGC/joystick control remains usable.
-export PX4_PARAM_COM_RC_IN_MODE="${PX4_PARAM_COM_RC_IN_MODE:-4}"
+eval "${PROFILE_ENV}"
 
-# Ground-truth model odometry must never compete with ROS LIO external vision.
-export PX4_PARAM_SIM_GZ_EN_ODOM=0
-
-# Use PX4's normal multisensor estimator contract by default and fuse
-# propagated LIO as external vision in addition to GNSS/barometer/range/
-# magnetometer aiding. The explicit GPS-off profile is a non-qualification A/B
-# experiment: GPS simulation remains available for telemetry, but EKF2 GNSS
-# aiding is disabled and EV is selected as the height reference. Other aiding
-# sources remain enabled by the profile's existing values.
-PX4_NAVIGATION_SITL_PROFILE="${PX4_NAVIGATION_SITL_PROFILE:-default}"
-case "${PX4_NAVIGATION_SITL_PROFILE}" in
-  default)
-    export PX4_PARAM_SIM_GZ_EN_GPS=1
-    export PX4_PARAM_EKF2_GPS_CTRL=7
-    export PX4_PARAM_EKF2_EV_CTRL="${PX4_PARAM_EKF2_EV_CTRL:-15}"
-    export PX4_PARAM_EKF2_HGT_REF=1
-    ;;
-  gps_off_ev_12mps)
-    export PX4_PARAM_SIM_GZ_EN_GPS=1
-    export PX4_PARAM_EKF2_GPS_CTRL=0
-    export PX4_PARAM_EKF2_EV_CTRL=15
-    export PX4_PARAM_EKF2_HGT_REF=3
-    echo "WARNING: gps_off_ev_12mps is diagnostic-only; qualification_eligible=false."
-    echo "WARNING: GPS sensor remains simulated, but EKF2 GNSS aiding is disabled."
-    echo "WARNING: PX4 Hold handover may be unavailable in this GPS-off EV A/B profile; Hold rejection is not a mission PASS."
-    ;;
-  *)
-    echo "ERROR: unsupported PX4_NAVIGATION_SITL_PROFILE=${PX4_NAVIGATION_SITL_PROFILE}" >&2
-    exit 2
-    ;;
-esac
-PX4_NAVIGATION_SITL_DYNAMICS_PROFILE="${PX4_NAVIGATION_SITL_DYNAMICS_PROFILE:-off}"
-case "${PX4_NAVIGATION_SITL_DYNAMICS_PROFILE}" in
-  off|baseline_5mps_a2_j4|nominal_5mps_a5_j8)
-    # Planner scalar V/A/J is materialized in the session-owned planner.yaml.
-    # Keep PX4's axis/tilt/thrust limits untouched; the startup script prints
-    # their effective values for post-run attribution.
-    ;;
-  *)
-    echo "ERROR: unsupported PX4_NAVIGATION_SITL_DYNAMICS_PROFILE=${PX4_NAVIGATION_SITL_DYNAMICS_PROFILE}" >&2
-    exit 2
-    ;;
-esac
-export PX4_PARAM_SIM_GZ_EN_BARO=1
-export PX4_PARAM_SIM_GPS_USED=10
-export PX4_PARAM_EKF2_BARO_CTRL=1
-export PX4_PARAM_EKF2_RNG_CTRL=1
-export PX4_PARAM_EKF2_MAG_TYPE=0
-
+# Harness only (O23), never part of a profile:
+export PX4_PARAM_UXRCE_DDS_SYNCT=0   # Gazebo /clock is the only time source (D29 identity)
+export PX4_PARAM_SIM_GZ_EN_ODOM=0    # Gazebo truth odometry must never compete with LIO EV
+export PX4_PARAM_SIM_GZ_EN_GPS=1     # GNSS stays simulated (telemetry in no_gps, aiding in gps)
+export PX4_PARAM_COM_RC_IN_MODE=1    # MAVLink-only manual control: the ROS stick stream (O24)
+# NAV_DLL_ACT=0 and CBRK_SUPPLY_CHK are set by px4_mid360_startup.sh after rcS.
 
 if [[ -v PX4_SIM_MODEL ]]; then unset PX4_SIM_MODEL; fi
 if [[ -v PX4_GZ_MODEL ]]; then unset PX4_GZ_MODEL; fi
 
+PX4_WORK_DIR="${SESSION_DIR:-${WS_DIR}/log/px4_mid360}/px4"
+mkdir -p "${PX4_WORK_DIR}"
+
 echo
 echo "PX4 is attaching to the existing Gazebo model."
-echo "PX4 UXRCE_DDS_SYNCT: ${PX4_PARAM_UXRCE_DDS_SYNCT} (simulation clock authority)"
-echo "PX4 COM_RC_IN_MODE: ${PX4_PARAM_COM_RC_IN_MODE}"
-echo "PX4 estimator profile: ${PX4_NAVIGATION_SITL_PROFILE}; GPS_CTRL=${PX4_PARAM_EKF2_GPS_CTRL}; EV_CTRL=${PX4_PARAM_EKF2_EV_CTRL}; HGT_REF=${PX4_PARAM_EKF2_HGT_REF}"
-echo "PX4 planner dynamics experiment: ${PX4_NAVIGATION_SITL_DYNAMICS_PROFILE} (planner-owned V/A/J; PX4 axis limits unchanged)"
-echo "PX4 estimator: ROS LIO EV + configured baro/range/mag aiding (Gazebo truth odom disabled)"
-echo "Runtime stack is started by tools/runtime/runner.py."
+echo "PX4 profile    : ${UAVNAV_PX4_PROFILE}"
+compgen -e | grep '^PX4_PARAM_' | sort | while IFS= read -r name; do
+  echo "PX4 parameter  : ${name#PX4_PARAM_}=${!name}"
+done
+echo "PX4 working dir: ${PX4_WORK_DIR}"
 echo
-cd "${PX4_ROOTFS}"
+cd "${PX4_WORK_DIR}"
 # A background/headless session must keep stdin open. With immediate EOF the
 # PX4 shell continuously redraws its prompt and can grow px4.log by GB/minute.
-tail -f /dev/null | "${PX4_BIN}" -s "${WS_DIR}/tools/simulation/px4_mid360_startup.sh"
+tail -f /dev/null | "${PX4_BIN}" -w "${PX4_WORK_DIR}" -s "${WS_DIR}/tools/simulation/px4_mid360_startup.sh" \
+  "${PX4_BUILD}/etc"

@@ -27,6 +27,18 @@ virtual environment for normal verification.
   `static|python|ros`, and its last line is `GATE_RESULT=PASS|FAIL`.
 - `make clean` only prints what to remove (`log/`); `build/` and `install/` are
   a shared incremental build and are never deleted.
+- `make sitl-probe PROFILE=gps|no_gps` (optional `HOVER_MODE=hold`, `DRY_RUN=1`)
+  runs `tools/uavnav/sitl_hover.sh --probe`: PX4 SITL + Gazebo (headless) +
+  MicroXRCEAgent (UDP 8888) + gz bridges + `tools/uavnav/sitl_probe.py`, each in
+  its own process group, bounded at 240 s, always torn down (Ctrl-C is safe;
+  never `kill -9` the script). It exits 2 while a `colcon` build or test or
+  another SITL runs, so never start it during a build. The verdict is
+  `log/sitl/<UTC stamp>-<profile>-probe/summary.json` (`sitl_checks.py`). It is
+  owner machine time and never part of `make test` or `make gate`; `DRY_RUN=1`
+  runs only the prechecks and prints the commands.
+- PX4 profiles (`config/px4/profiles/*.yaml`) are validated by
+  `tools/uavnav/px4_profile.py`; an unknown key or a value other than the
+  decided one (D20, D28, D33/O23) refuses start.
 - Machine limit: builds already use `-j3` and 2 colcon workers; do not raise
   them, and run at most 3 agents in parallel.
 

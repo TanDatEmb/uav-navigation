@@ -4,6 +4,8 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+# src/sim/uav_simulation -> repository root (D33/O19 moved the sim packages to src/sim/).
+REPO = ROOT.parents[2]
 
 
 def test_mid360_model_contract():
@@ -59,31 +61,32 @@ def test_px4_lio_smoke_world_and_bridge_contract():
     assert "/sim/mid360/imu" not in lidar_bridge
 
 
-def test_launcher_disables_px4_gazebo_truth_odometry_source():
-    launcher = (ROOT.parents[1] / "tools/simulation/run_px4_mid360.sh").read_text()
+def test_launcher_harness_parameters_and_required_profile():
+    launcher = (REPO / "tools/simulation/run_px4_mid360.sh").read_text()
     active_lines = {
         line.strip()
         for line in launcher.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     }
-    # PX4's GZ bridge otherwise republishes this model's odometry as internal
-    # vehicle_visual_odometry, competing with the ROS LIO external-vision path.
-    assert "export PX4_PARAM_SIM_GZ_EN_ODOM=0" in active_lines
-    assert 'export PX4_PARAM_EKF2_EV_CTRL="${PX4_PARAM_EKF2_EV_CTRL:-15}"' in launcher
-    assert "export PX4_PARAM_SIM_GZ_EN_GPS=1" in launcher
-    assert "export PX4_PARAM_SIM_GPS_USED=10" in launcher
-    assert "export PX4_PARAM_EKF2_GPS_CTRL=7" in launcher
-    assert 'PX4_NAVIGATION_SITL_PROFILE="${PX4_NAVIGATION_SITL_PROFILE:-default}"' in launcher
-    assert "gps_off_ev_12mps" in launcher
-    assert "export PX4_PARAM_EKF2_GPS_CTRL=0" in launcher
-    assert "export PX4_PARAM_EKF2_HGT_REF=3" in launcher
-    assert "export PX4_PARAM_EKF2_EV_CTRL=15" in launcher
-    assert 'export PX4_PARAM_COM_RC_IN_MODE="${PX4_PARAM_COM_RC_IN_MODE:-4}"' in launcher
-    # EKF2 must not fuse barometer data into the LIO external-vision estimate.
-    assert "export PX4_PARAM_EKF2_BARO_CTRL=1" in launcher
-    assert "export PX4_PARAM_EKF2_RNG_CTRL=1" in launcher
-    assert "export PX4_PARAM_EKF2_MAG_TYPE=0" in launcher
-    assert "export PX4_PARAM_EKF2_HGT_REF=1" in launcher
+    # Harness parameters (D33/O23). PX4's GZ bridge otherwise republishes this
+    # model's odometry as internal vehicle_visual_odometry, competing with LIO EV.
+    for line in (
+        "export PX4_PARAM_UXRCE_DDS_SYNCT=0",
+        "export PX4_PARAM_SIM_GZ_EN_ODOM=0",
+        "export PX4_PARAM_SIM_GZ_EN_GPS=1",
+        "export PX4_PARAM_COM_RC_IN_MODE=1",
+    ):
+        assert any(active.startswith(line) for active in active_lines), line
+    # The EKF2 values come only from the validated profile (tier c), never from the launcher.
+    assert not any(active.startswith("export PX4_PARAM_EKF2_") for active in active_lines)
+    assert "tools/uavnav/px4_profile.py" in launcher
+    assert "UAVNAV_PX4_PROFILE is required" in launcher
+    assert 'eval "${PROFILE_ENV}"' in active_lines
+    assert "PX4_NAVIGATION_SITL_PROFILE" not in launcher
+    assert "src/sim/uav_simulation/models" in launcher
+    startup = (REPO / "tools/simulation/px4_mid360_startup.sh").read_text()
+    assert "param set NAV_DLL_ACT 0" in startup
+    assert "param set CBRK_SUPPLY_CHK 894281" in startup
 
 
 def test_safety_map_profiles_have_lio_geometry_and_unique_worlds():
@@ -111,7 +114,7 @@ def test_long_featured_low_altitude_corridor_has_roadside_features():
     assert all(4.0 <= abs(value) <= 4.5 for value in tree_y)
     texture_y = [float(models[f"long_featured_texture_{index:02d}"].findtext("pose").split()[1]) for index in range(1, 7)]
     assert all(4.8 <= abs(value) <= 5.6 for value in texture_y)
-    mission = yaml.safe_load((ROOT.parent.parent / "config/runtime/missions/long_featured.yaml").read_text())
+    mission = yaml.safe_load((REPO / "config/runtime/missions/long_featured.yaml").read_text())
     altitudes = [waypoint["position"][2] for waypoint in mission["mission"]["waypoints"]]
     assert min(altitudes) >= 2.0 and max(altitudes) <= 3.1
 
@@ -152,7 +155,7 @@ def test_long_three_pillars_speed_has_long_two_waypoint_geometry():
         pose = model.findtext("pose").split()
         assert abs(float(pose[1])) >= 7.5, name
     mission = yaml.safe_load(
-        (ROOT.parent.parent / "config/runtime/missions/long_three_pillars_speed.yaml").read_text()
+        (REPO / "config/runtime/missions/long_three_pillars_speed.yaml").read_text()
     )["mission"]
     assert [waypoint["position"] for waypoint in mission["waypoints"]] == [
         [0.0, 0.0, 3.0],

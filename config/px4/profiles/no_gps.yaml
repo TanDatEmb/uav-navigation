@@ -1,0 +1,13 @@
+# PX4 localization profile "no_gps" (tier c, SYSTEM_DESIGN §0, §4.1, §6.2).
+# Only where LIO holds; EV is sent FRD with EV yaw on (D20); quality is logged only (D28);
+# EV delay, horizon, noise mode, no GNSS aiding and EV height reference per D33/O23. Every other
+# EKF2 value stays at the PX4 default. Validated by tools/uavnav/px4_profile.py.
+localization: no_gps
+px4_params:
+  EKF2_EV_CTRL: 15
+  EKF2_EV_QMIN: 0
+  EKF2_EV_DELAY: 0
+  EKF2_DELAY_MAX: 200
+  EKF2_EV_NOISE_MD: 0
+  EKF2_GPS_CTRL: 0
+  EKF2_HGT_REF: 3

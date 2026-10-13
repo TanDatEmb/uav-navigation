@@ -8,7 +8,7 @@ COLCON_EXTRA ?=
 
 ROS_ENV = source /opt/ros/jazzy/setup.bash;
 
-.PHONY: help setup build test sanitize gate clean
+.PHONY: help setup build test sanitize gate clean sitl-probe
 
 help:
 	@echo "uav-navigation (rebuild/v2) commands"
@@ -18,6 +18,9 @@ help:
 	@echo "  make sanitize  ThreadSanitizer build + test of $(SANITIZE_PKGS), then rebuild normally"
 	@echo "                 (a 2nd Ctrl-C during its restore leaves a sanitized cache: run make sanitize again)"
 	@echo "  make gate    tools/uavnav/gate.sh all (static, python, ros)"
+	@echo "  make sitl-probe PROFILE=gps|no_gps [HOVER_MODE=posctl|hold] [DRY_RUN=1]"
+	@echo "                SITL probe of the S1b assumptions (tools/uavnav/sitl_hover.sh --probe), <= 240 s;"
+	@echo "                headless, refuses while colcon runs, artifacts in log/sitl/; not part of test or gate"
 	@echo "  make clean   print what would be removed (log/); deletes nothing"
 	@echo "Machine limit: builds use -j3 and 2 colcon workers (15 GB RAM)."
 
@@ -73,6 +76,16 @@ sanitize:
 
 gate:
 	@PYTHON="$(PYTHON)" tools/uavnav/gate.sh all
+
+# SITL probe (S1b Task 3; D33 O20, O23, O24; D29): PX4 SITL + Gazebo + MicroXRCEAgent + gz bridges + the rclpy
+# probe, each in its own process group, bounded at 240 s and always torn down; verdict in
+# log/sitl/<UTC stamp>-<profile>-probe/summary.json. Refuses (exit 2) while a colcon build or test runs or
+# another SITL runs. Needs `make build PKGS="uav_simulation uav_description px4_msgs"`. Never part of test/gate.
+PROFILE ?=
+HOVER_MODE ?= posctl
+sitl-probe:
+	@test -n "$(PROFILE)" || { echo "usage: make sitl-probe PROFILE=gps|no_gps [HOVER_MODE=posctl|hold] [DRY_RUN=1]"; exit 2; }
+	@PYTHON="$(PYTHON)" tools/uavnav/sitl_hover.sh --probe --profile "$(PROFILE)" --hover-mode "$(HOVER_MODE)" $(if $(filter 1,$(DRY_RUN)),--dry-run)
 
 # build/ and install/ are a shared incremental build (CLAUDE.local.md); never removed here.
 clean:
