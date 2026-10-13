@@ -47,7 +47,8 @@ virtual environment for normal verification.
   `ros2 launch uavnav_bringup s1_estimation.launch.py` (gz bridges, `lio`,
   `px4_bridge`) and `tools/uavnav/sitl_hover.py` (wait for TRACKING, VALID,
   EV fused; arm; climb 2.5 m; 60 s hover; land), bounded at 300 s, same
-  refusals and teardown as the probe. Verdict:
+  refusals and teardown as the probe (both hold `log/sitl/.lock`: a second
+  harness exits 2). Verdict:
   `log/sitl/<UTC stamp>-<profile>-hover[-yaw<rad>]/summary.json`
   (`sitl_checks.evaluate_hover`, fourteen checks plus every phase ok). On a
   failure read `python3 -m tools.uavnav.events <run>/events_lio.jsonl

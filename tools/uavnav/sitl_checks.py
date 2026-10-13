@@ -135,16 +135,20 @@ class _Loader:
         self.meta_name = meta_name
         self._cache = {}
 
-    def jsonl(self, name: str) -> list:
-        if name not in self._cache:
+    def cached(self, key: str, load):
+        """load() once per key; a MissingData it raises is remembered and re-raised for every later use."""
+        if key not in self._cache:
             try:
-                self._cache[name] = _read_jsonl(self.run_dir / name)
+                self._cache[key] = load()
             except MissingData as exc:
-                self._cache[name] = exc
-        value = self._cache[name]
+                self._cache[key] = exc
+        value = self._cache[key]
         if isinstance(value, MissingData):
             raise value
         return value
+
+    def jsonl(self, name: str) -> list:
+        return self.cached(name, lambda: _read_jsonl(self.run_dir / name))
 
     def meta(self) -> dict:
         if "meta" not in self._cache:
@@ -379,7 +383,13 @@ def evaluate_probe(run_dir) -> dict:
 
 # --- the S1 hover (Task 11) -------------------------------------------------------------------------------------
 
-LIO_TRACKING, ALIGNMENT_VALID = 1, 1             # LioHealth.TRACKING, Alignment.VALID
+LIO_TRACKING, LIO_LOST, ALIGNMENT_VALID = 1, 3, 1  # LioHealth.TRACKING, LioHealth.LOST, Alignment.VALID
+HOVER_WINDOW_MIN_S = 60.0                        # the evaluation window: 60 s of /clock time (the driver's hover)
+CLOCK_STEP_S = 0.004                             # one Gazebo /clock step: the window ends are quantised to it
+COVERAGE_EDGE_MAX_S = 2.0                        # a stream's first/last window record within 2 s of the window ends
+COVERAGE_MAX_GAP_S = 2.0                         # and no hole above 2 s (flags ~1 Hz; the others 10-100 Hz)
+XY_VALID_MIN_FRACTION = 0.99                     # vehicle_local_position xy_valid in >= 99 % of the window
+TRUTH_MATCH_MIN_FRACTION = 0.95                  # >= 95 % of the PX4 samples paired with ground truth (drift)
 EV_POS_MIN_FRACTION = 0.95                       # cs_ev_pos in >= 95 % of the window's samples
 EV_YAW_NO_GPS_MIN_FRACTION = 0.95                # no_gps: cs_ev_yaw in >= 95 % (D20); gps: never
 LIO_MAX_TRACKING_ENTRIES = 2                     # TRACKING entered at most twice in the run
@@ -415,42 +425,46 @@ def _window(data: _Loader):
     end = _field(window, "end_ns", int, "hover_window")
     if end <= start:
         raise MissingData(f"empty hover window {start}..{end}")
+    if (end - start) / 1e9 < HOVER_WINDOW_MIN_S - CLOCK_STEP_S:
+        raise MissingData(f"hover window of {(end - start) / 1e9:.3f} s is shorter than {HOVER_WINDOW_MIN_S} s")
     return start, end
 
 
 def _windowed(data: _Loader, name: str, key: str = "arrival_ns") -> list:
-    """The records of name whose key (ROS ns) lies in the hover window; none is missing data."""
+    """The records of name whose key (ROS ns) lies in the hover window. They must cover it: none, a first or last
+    record farther than COVERAGE_EDGE_MAX_S from the window ends, or a hole above COVERAGE_MAX_GAP_S is missing
+    data (one sample never stands for the window)."""
     start, end = _window(data)
     records = [r for r in data.jsonl(name) if start <= _field(r, key, int, name) <= end]
     if not records:
         raise MissingData(f"no {name} record in the hover window")
+    times = [r[key] for r in records]
+    holes = [start, *times, end]
+    worst_edge = max(times[0] - start, end - times[-1]) / 1e9
+    worst_gap = max((b - a for a, b in zip(holes[1:-1], holes[2:-1])), default=0) / 1e9
+    if worst_edge > COVERAGE_EDGE_MAX_S or worst_gap > COVERAGE_MAX_GAP_S:
+        raise MissingData(f"{name} does not cover the hover window: {len(records)} record(s), first/last "
+                          f"{worst_edge:.3f} s from an end (max {COVERAGE_EDGE_MAX_S}), largest hole "
+                          f"{worst_gap:.3f} s (max {COVERAGE_MAX_GAP_S})")
     return records
 
 
 def _events(data: _Loader, name: str) -> list:
     """A node's event log; a missing file, a torn line or a log without records is missing data."""
-    key = "events:" + name
-    if key not in data._cache:
-        path = data.run_dir / name
+    def load():
         skipped = []
         try:
-            records = event_log.load(path, skip_malformed=True, skipped=skipped)
-            if skipped:
-                data._cache[key] = MissingData(f"{name}: {len(skipped)} malformed line(s), first {skipped[0]}")
-            elif not records:
-                data._cache[key] = MissingData(f"no records in {name}")
-            else:
-                for r in records:
-                    _field(r, "t_ros_ns", int, name)
-                data._cache[key] = records
+            records = event_log.load(data.run_dir / name, skip_malformed=True, skipped=skipped)
         except OSError as exc:
-            data._cache[key] = MissingData(f"missing {name}: {exc.strerror}")
-        except MissingData as exc:
-            data._cache[key] = exc
-    value = data._cache[key]
-    if isinstance(value, MissingData):
-        raise value
-    return value
+            raise MissingData(f"missing {name}: {exc.strerror}") from None
+        if skipped:
+            raise MissingData(f"{name}: {len(skipped)} malformed line(s), first {skipped[0]}")
+        if not records:
+            raise MissingData(f"no records in {name}")
+        for r in records:
+            _field(r, "t_ros_ns", int, name)
+        return records
+    return data.cached("events:" + name, load)
 
 
 def _named(records: list, event: str, reason=None) -> list:
@@ -522,7 +536,7 @@ def _check_lio_tracking(data: _Loader) -> dict:
     transitions = _transitions(data)
     in_window = _in_window(data, transitions)
     lost = sum(1 for r in transitions if r["state_after"] == "LOST")
-    lost_health = sum(1 for r in data.jsonl("lio_health.jsonl") if r.get("state") == 3)
+    lost_health = sum(1 for r in data.jsonl("lio_health.jsonl") if r.get("state") == LIO_LOST)
     entries = sum(1 for r in transitions if r["state_after"] == "TRACKING")
     passed = (states == [LIO_TRACKING] and not in_window and lost == 0 and lost_health == 0
               and entries <= LIO_MAX_TRACKING_ENTRIES)
@@ -572,16 +586,19 @@ def _check_alignment_valid(data: _Loader) -> dict:
     stale = [r for r in bridge if r["reason"] == "STALE"]
     changes = _in_window(data, _named(bridge, "AlignmentTransition"))
     resets = _named(bridge, "Px4ResetApplied")
-    start, end = _window(data)
-    bad_resets = [r for r in resets
-                  if (start <= r["t_ros_ns"] <= end or r["state_before"] == "VALID") and r["state_after"] != "VALID"]
+    # A reset is judged once the alignment has been VALID in the run; one while still INIT cannot leave it VALID.
+    first_valid = min((r["t_ros_ns"] for r in bridge if r["state_after"] == "VALID"), default=None)
+    judged = [r for r in resets if first_valid is not None and r["t_ros_ns"] >= first_valid]
+    bad_resets = [r for r in judged if r["state_after"] != "VALID"]
     passed = states == [ALIGNMENT_VALID] and not stale and not changes and not bad_resets
     return {"pass": passed,
             "value": {"window_states": states, "samples": len(records), "stale_events": len(stale),
                       "window_transitions": [f"{r['state_before']}->{r['state_after']} {r['reason']}"
                                              for r in changes],
-                      "px4_resets": len(resets), "resets_not_valid_after": len(bad_resets)},
-            "detail": "VALID throughout the window; no STALE in the run; VALID after each Px4ResetApplied"}
+                      "px4_resets": len(resets), "resets_before_first_valid": len(resets) - len(judged),
+                      "resets_not_valid_after": len(bad_resets)},
+            "detail": "VALID throughout the window; no STALE in the run; once the alignment has been VALID in the "
+                      "run, VALID after every Px4ResetApplied (a reset before the first VALID is reported only)"}
 
 
 def _check_alignment_rate(data: _Loader) -> dict:
@@ -610,10 +627,12 @@ def _check_drift(data: _Loader) -> dict:
                      _field(r, "x", float, "ground_truth.jsonl"))    # ENU x = east = NED y
                     for r in data.jsonl("ground_truth.jsonl")))
     stamps = [t for t, _, _ in truth]
+    valid = [r for r in px4 if _field(r, "xy_valid", bool, "vehicle_local_position.jsonl") is True]
+    if len(valid) < XY_VALID_MIN_FRACTION * len(px4):
+        raise MissingData(f"xy_valid in {len(valid)} of {len(px4)} PX4 samples of the window "
+                          f"(< {XY_VALID_MIN_FRACTION:.0%})")
     pairs = []
-    for r in px4:
-        if _field(r, "xy_valid", bool, "vehicle_local_position.jsonl") is not True:
-            continue
+    for r in valid:
         t = _field(r, "timestamp_sample_us", int, "vehicle_local_position.jsonl") * 1000
         i = bisect.bisect_left(stamps, t)
         near = min((j for j in (i - 1, i) if 0 <= j < len(stamps)), key=lambda j: abs(stamps[j] - t), default=None)
@@ -621,12 +640,13 @@ def _check_drift(data: _Loader) -> dict:
             continue
         pairs.append((_field(r, "x", float, "vehicle_local_position.jsonl"),
                       _field(r, "y", float, "vehicle_local_position.jsonl"), truth[near][1], truth[near][2]))
-    if len(pairs) < len(px4) / 2:
-        raise MissingData(f"only {len(pairs)} of {len(px4)} PX4 samples have ground truth within 50 ms")
+    if len(pairs) < TRUTH_MATCH_MIN_FRACTION * len(px4):
+        raise MissingData(f"only {len(pairs)} of {len(px4)} PX4 samples have ground truth within 50 ms "
+                          f"(< {TRUTH_MATCH_MIN_FRACTION:.0%})")
     x0, y0, n0, e0 = pairs[0]
     drift = [math.hypot((x - x0) - (n - n0), (y - y0) - (e - e0)) for x, y, n, e in pairs]
     return {"pass": max(drift) <= DRIFT_MAX_M,
-            "value": {"max_m": max(drift), "final_m": drift[-1], "samples": len(pairs)},
+            "value": {"max_m": max(drift), "final_m": drift[-1], "samples": len(pairs), "window_samples": len(px4)},
             "detail": f"|PX4 xy displacement - ground truth displacement (ENU->NED)| <= {DRIFT_MAX_M} m from the "
                       "window start"}
 
@@ -772,10 +792,18 @@ def evaluate_hover(run_dir, profile: str, spawn_yaw_rad: float) -> dict:
         "pattern": meta.get("pattern"), "hover_mode": mode}, meta, checks)
 
 
+def _required_phases(kind: str, mode: str) -> set:
+    """The phases a complete run records: the probe at least hover and land; the hover driver all of its own."""
+    if kind == "probe":
+        return {"hover", "land"}
+    return {"wait_ready", mode, "arm", "climb", "hover", "land"}
+
+
 def _write_summary(run_dir: pathlib.Path, head: dict, meta: dict, checks: dict) -> dict:
     phases = meta.get("phases")
     phases_ok = (isinstance(phases, list) and bool(phases)
                  and all(isinstance(ph, dict) and ph.get("ok") is True for ph in phases)
+                 and _required_phases(head["kind"], head["hover_mode"]) <= {ph.get("name") for ph in phases}
                  and meta.get("interrupted") is not True)
     summary = dict(head, phases=phases, phases_ok=phases_ok,
                    result="PASS" if phases_ok and all(c["pass"] for c in checks.values()) else "FAIL",

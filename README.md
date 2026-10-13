@@ -74,7 +74,8 @@ bridges, `lio` and `px4_bridge`, all on `/clock` time) and the rclpy driver
 `tools/uavnav/sitl_hover.py`. The driver waits for LIO TRACKING, `/alignment`
 VALID, EKF2 fusing EV and `xy_valid`, then arms in Position mode, climbs to
 2.5 m, hovers for 60 s of `/clock` time and lands. The run is bounded at 300 s,
-always torn down, and refused under the same conditions as the probe. Run
+always torn down, and refused under the same conditions as the probe; both
+modes also hold `log/sitl/.lock`, so a second harness started meanwhile exits 2. Run
 `make sitl-build` first. The verdict is
 `log/sitl/<UTC stamp>-<profile>-hover[-yaw<rad>]/summary.json`
 (`sitl_checks.evaluate_hover`): EKF2 EV fusion, LIO TRACKING and its

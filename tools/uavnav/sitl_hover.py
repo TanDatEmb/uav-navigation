@@ -8,7 +8,7 @@ Started by tools/uavnav/sitl_hover.sh --hover once PX4 SITL, MicroXRCEAgent and
    /fmu/out/estimator_status_flags and xy_valid/z_valid on vehicle_local_position; then the ground z.
 2. mode + arm, as the Task 3 probe fixed it (POSCTL with centred sticks on /fmu/in/manual_control_input,
    SOURCE_MAVLINK_0, 20 Hz of /clock time; DO_SET_MODE only when PX4 is not in POSCTL already). With
-   --hover-mode hold (the approved O24 fallback): arm, NAV_TAKEOFF, Hold.
+   --hover-mode hold (the approved O24 fallback): arm, NAV_TAKEOFF (climb), then the "hold" phase.
 3. climb (<= 20 s of /clock) to 2.5 m above the ground z (posctl: throttle stick).
 4. hover for 60 s of /clock time with centred sticks: the evaluation window of sitl_checks.evaluate_hover.
 5. land (NAV_LAND once, again only if PX4 is not in AUTO_LAND), <= 30 s to the auto-disarm.
@@ -257,9 +257,6 @@ class HoverFlight(sitl_probe.Flight):
         self.node.set_throttle(0.0)
         h = self.height()
         ok = ok and h is not None and h >= target
-        if ok and self.mode == "hold":
-            p1, p2, p3 = sitl_probe.MODE_PARAMS["hold"]
-            self.node.command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, p1, p2, p3)
         sim_s = (self.node.snapshot()[0] - start) / 1e9
         return ok, f"height {h if h is None else round(h, 3)} m after {sim_s:.2f} s of /clock time"
 
@@ -289,9 +286,10 @@ class HoverFlight(sitl_probe.Flight):
         if ok:
             if self.mode == "posctl":
                 ok = self.phase("posctl", self.set_mode) and self.phase("arm", self.arm)
-            else:
-                ok = self.phase("arm", self.arm)
-            ok = ok and self.phase("climb", self.climb)
+                ok = ok and self.phase("climb", self.climb)
+            else:  # takeoff, then Hold (DO_SET_MODE 1/4/3, the probe's set_mode)
+                ok = self.phase("arm", self.arm) and self.phase("climb", self.climb)
+                ok = ok and self.phase("hold", self.set_mode)
             flown = self.armed()
             ok = ok and self.phase("hover", self.hover)
         if self.arm_sent and not flown and not self.armed():

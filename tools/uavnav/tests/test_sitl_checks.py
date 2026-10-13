@@ -204,13 +204,14 @@ def make_hover_run(run_dir, profile="gps", spawn_yaw_rad=0.0, lio_transitions=()
                           ("estimator_status_flags", flags), ("vehicle_status", status),
                           ("events_lio", events_lio), ("events_px4_bridge", events_bridge)):
         write_jsonl(run_dir / f"{name}.jsonl", records)
+    phases = [{"name": name, "ok": True, "detail": "", "start_ns": start, "end_ns": end}
+              for name, start, end in (("wait_ready", 20 * S, 30 * S), ("posctl", 30 * S, 30 * S),
+                                       ("arm", 30 * S, 35 * S), ("climb", 35 * S, H_START_NS),
+                                       ("hover", H_START_NS, H_END_NS), ("land", H_END_NS, H_END_NS + 5 * S))]
+    phases[-1]["ok"] = phase_ok
     meta = {"profile": profile, "spawn_yaw_rad": spawn_yaw_rad, "pattern": "hover", "hover_mode": "posctl",
             "target_height_m": TARGET_HEIGHT_M, "ground_z_m": 0.0,
-            "hover_window": {"start_ns": H_START_NS, "end_ns": H_END_NS},
-            "phases": [{"name": "hover", "ok": True, "detail": "", "start_ns": H_START_NS, "end_ns": H_END_NS},
-                       {"name": "land", "ok": phase_ok, "detail": "", "start_ns": H_END_NS,
-                        "end_ns": H_END_NS + 5 * S}],
-            "interrupted": False}
+            "hover_window": {"start_ns": H_START_NS, "end_ns": H_END_NS}, "phases": phases, "interrupted": False}
     (run_dir / "hover_meta.json").write_text(json.dumps(meta), encoding="utf-8")
     return run_dir
 
@@ -393,6 +394,15 @@ class SitlChecksTest(unittest.TestCase):
         # LOST after the window still fails (no LOST in the run), and so do too many TRACKING entries.
         summary = self.hover(lio_transitions=[(116 * S, "TRACKING", "LOST")])
         self.assertIn("lio_tracking", self.failing(summary))
+        # A LOST health sample after the window, without its transition event, fails too.
+        make_hover_run(self.run_dir)
+        health = [json.loads(line) for line in
+                  (self.run_dir / "lio_health.jsonl").read_text(encoding="utf-8").splitlines()]
+        health[-1]["state"] = 3
+        write_jsonl(self.run_dir / "lio_health.jsonl", health)
+        summary = sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)
+        self.assertEqual(self.failing(summary), {"lio_tracking"})
+        self.assertEqual(summary["checks"]["lio_tracking"]["value"]["lost_health_samples"], 1)
         lost_after_health = event(119 * S, "lio", "StateTransition", "TRACKING", "LOST", "GAP_LOST")
         summary = self.hover(lio_events=[lost_after_health])  # the transition alone, no LOST health sample
         self.assertEqual(self.failing(summary), {"lio_tracking"})
@@ -576,6 +586,105 @@ class SitlChecksTest(unittest.TestCase):
         summary = sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)
         self.assertEqual(self.failing(summary), {"events", "lio_tracking", "lio_flap_rate"})
         self.assertIn("malformed", summary["checks"]["events"]["detail"])
+
+    def read(self, name):
+        return [json.loads(line) for line in (self.run_dir / name).read_text(encoding="utf-8").splitlines()]
+
+    def edit_meta(self, **changes):
+        meta = json.loads((self.run_dir / "hover_meta.json").read_text(encoding="utf-8"))
+        meta.update(changes)
+        (self.run_dir / "hover_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        return meta
+
+    def test_hover_window_shorter_than_60_s_fails(self):
+        windowed = {"ekf2_ev_pos", "ekf2_ev_yaw", "lio_tracking", "lio_flap_rate",
+                    "alignment_valid", "alignment_rate", "alignment_jump_rejections", "drift", "lio_state_rate",
+                    "ev_age", "px4_time_identity", "f34_values"}
+        for end_ns in (H_START_NS + 2 * S, H_END_NS - 100 * MS):  # healthy data, but 2 s and 59.9 s windows
+            make_hover_run(self.run_dir)
+            self.edit_meta(hover_window={"start_ns": H_START_NS, "end_ns": end_ns})
+            summary = sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)
+            self.assertTrue(windowed <= self.failing(summary), (end_ns, windowed - self.failing(summary)))
+            self.assertIn("shorter than", summary["checks"]["ekf2_ev_pos"]["detail"])
+            self.assertEqual(summary["result"], "FAIL")
+
+    def test_hover_streams_must_cover_the_window(self):
+        # One sample cannot stand for 60 s: a single flags, health or alignment record in the window fails.
+        for name, checks in (("estimator_status_flags.jsonl", {"ekf2_ev_pos", "ekf2_ev_yaw"}),
+                             ("lio_health.jsonl", {"lio_tracking"}),
+                             ("alignment.jsonl", {"alignment_valid", "alignment_rate", "f34_values"})):
+            make_hover_run(self.run_dir)
+            records = self.read(name)
+            inside = [r for r in records if H_START_NS <= r["arrival_ns"] <= H_END_NS]
+            kept = [r for r in records if not H_START_NS <= r["arrival_ns"] <= H_END_NS] + [inside[len(inside) // 2]]
+            write_jsonl(self.run_dir / name, sorted(kept, key=lambda r: r["arrival_ns"]))
+            summary = sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)
+            self.assertTrue(checks <= self.failing(summary), (name, self.failing(summary)))
+            self.assertIn("cover", summary["checks"][sorted(checks)[0]]["detail"])
+        # A 3 s hole in the 5 Hz flags fails; a 1.8 s hole passes.
+        for hole_s, fails in ((3.0, True), (1.8, False)):
+            make_hover_run(self.run_dir)
+            records = [r for r in self.read("estimator_status_flags.jsonl")
+                       if not 70 * S < r["arrival_ns"] < 70 * S + int(hole_s * S)]
+            write_jsonl(self.run_dir / "estimator_status_flags.jsonl", records)
+            failing = self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0))
+            self.assertEqual(failing, {"ekf2_ev_pos", "ekf2_ev_yaw"} if fails else set(), hole_s)
+
+    def test_phases_ok_requires_every_named_phase(self):
+        make_hover_run(self.run_dir)
+        meta = self.edit_meta()
+        self.edit_meta(phases=[ph for ph in meta["phases"] if ph["name"] != "land"])  # ends at hover, all ok
+        summary = sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)
+        self.assertEqual(self.failing(summary), set())
+        self.assertFalse(summary["phases_ok"])
+        self.assertEqual(summary["result"], "FAIL")
+        for missing in ("wait_ready", "posctl", "arm", "climb", "hover"):
+            self.edit_meta(phases=[ph for ph in meta["phases"] if ph["name"] != missing])
+            self.assertFalse(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)["phases_ok"], missing)
+        # Hold mode needs its "hold" phase instead of "posctl".
+        hold = [dict(ph, name="hold") if ph["name"] == "posctl" else ph for ph in meta["phases"]]
+        self.edit_meta(hover_mode="hold", phases=hold)
+        self.assertTrue(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)["phases_ok"])
+        self.edit_meta(hover_mode="hold", phases=meta["phases"])
+        self.assertFalse(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)["phases_ok"])
+        # The probe needs at least its hover and land phases.
+        make_run(self.run_dir)
+        probe_meta = json.loads((self.run_dir / "probe_meta.json").read_text(encoding="utf-8"))
+        probe_meta["phases"] = probe_meta["phases"][:1]
+        (self.run_dir / "probe_meta.json").write_text(json.dumps(probe_meta), encoding="utf-8")
+        self.assertFalse(sitl_checks.evaluate_probe(self.run_dir)["phases_ok"])
+
+    def test_drift_needs_valid_and_matched_px4_samples(self):
+        def edit(name, predicate, change):
+            records = self.read(name)
+            for r in records:
+                if predicate(r["arrival_ns"]):
+                    change(r)
+            write_jsonl(self.run_dir / name, records)
+        # xy_valid false on 2 % of the window's PX4 samples (1.2 s) fails; 0.5 % (0.3 s) passes.
+        for span_ms, fails in ((1200, True), (300, False)):
+            make_hover_run(self.run_dir)
+            edit("vehicle_local_position.jsonl", lambda t: 70 * S < t <= 70 * S + span_ms * MS,
+                 lambda r: r.update(xy_valid=False))
+            self.assertEqual(self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)),
+                             {"drift"} if fails else set(), span_ms)
+        # Ground truth missing for 10 % of the window (6 s) fails; 3 % (1.8 s) passes.
+        for gap_s, fails in ((6.0, True), (1.8, False)):
+            make_hover_run(self.run_dir)
+            truth = [r for r in self.read("ground_truth.jsonl")
+                     if not 70 * S < r["stamp_ns"] <= 70 * S + int(gap_s * S)]
+            write_jsonl(self.run_dir / "ground_truth.jsonl", truth)
+            summary = sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)
+            self.assertEqual(self.failing(summary), {"drift"} if fails else set(), gap_s)
+
+    def test_resets_are_judged_once_alignment_was_valid(self):
+        before_valid = event(20 * S, "px4_bridge", "Px4ResetApplied", "INIT", "INIT", "PX4_RESET_APPLIED")
+        summary = self.hover(bridge_events=[before_valid])  # alignment VALID only from 25 s: reported, not judged
+        self.assertEqual(self.failing(summary), set())
+        self.assertEqual(summary["checks"]["alignment_valid"]["value"]["resets_before_first_valid"], 1)
+        after_window = event(116 * S, "px4_bridge", "Px4ResetApplied", "FROZEN", "INVALID",
+                             "PX4_RESET_WHILE_FROZEN")
+        self.assertEqual(self.failing(self.hover(bridge_events=[after_window])), {"alignment_valid"})
 
     def test_hover_drift_against_ground_truth(self):
         # PX4 and the truth (ENU y = north = NED x) both move 1 m north: no drift.

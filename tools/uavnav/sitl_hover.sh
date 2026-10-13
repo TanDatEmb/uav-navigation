@@ -25,7 +25,7 @@
 #
 # Artifacts: log/sitl/<UTC stamp>-<profile>-probe/ or log/sitl/<UTC stamp>-<profile>-<pattern>[-yaw<RAD>]/ only
 # (process logs, ROS logs, PX4 working directory, records, event logs, *_meta.json, summary.json, harness.log).
-# Before anything starts: tools/uavnav/sitl_guard.py (colcon build/test or another SITL process, matched on
+# Before anything starts: log/sitl/.lock (flock; a second harness exits 2), tools/uavnav/sitl_guard.py (colcon build/test or another SITL process, matched on
 # argv, own ancestors excluded), UDP 8888 free, no Gazebo world clock on GZ_IP, no SITL topic on the ROS graph.
 # Exit: 0 PASS (every check and every driver phase); 1 FAIL (a check, a phase, a process or the teardown);
 # 2 refused (usage, a colcon build or test is running, another SITL is running, a prerequisite is missing);
@@ -81,6 +81,12 @@ BRIDGE_CONFIG="${WS_DIR}/config/px4_bridge/sim.yaml"
 DDS_PROFILE="${WS_DIR}/config/ros/fastdds_sitl.xml"
 
 refuse() { echo "sitl_hover: REFUSED: $*" >&2; exit 2; }
+
+# One harness at a time: log/sitl/.lock is held (flock, fd 9, non-blocking) until this script exits; the processes
+# it starts do not inherit it. This closes the race of two starts that both pass the read-only prechecks below.
+mkdir -p "${WS_DIR}/log/sitl"
+exec 9>>"${WS_DIR}/log/sitl/.lock"
+flock -n 9 || refuse "another sitl_hover.sh holds log/sitl/.lock (one SITL run at a time)"
 [[ -f "${DDS_PROFILE}" ]] || refuse "missing ${DDS_PROFILE}"
 
 ###############################################################################
@@ -241,7 +247,7 @@ start_group() {  # $1 = name, rest = command; the child becomes leader of its ow
   printf '%s\n' "$*" >>"${RUN_DIR}/commands.txt"
   # A background job of a non-interactive shell starts with SIGINT ignored; env restores the default so
   # the SIGINT step of the teardown reaches the process (ROS nodes and PX4 shut down cleanly on it).
-  setsid env --default-signal=INT "$@" >"${RUN_DIR}/${name}.log" 2>&1 </dev/null &
+  setsid env --default-signal=INT "$@" >"${RUN_DIR}/${name}.log" 2>&1 </dev/null 9>&- &
   local pid=$!
   STARTED_NAMES+=("${name}") STARTED_PIDS+=("${pid}")
   # Until setsid has run, the child is still in this script's session: poll up to 2 s for sid == pid.

@@ -5,11 +5,14 @@
   that use rmw_fastrtps_cpp (the Jazzy default): the gz bridges, lio, px4_bridge and the rclpy driver. Not for
   MicroXRCEAgent or PX4.
 
-  Why: a Gazebo MID-360 cloud is 645289 bytes (20160 points x 32 B + header), larger than the default shared-memory
-  segment of a participant (512 KB). Such a cloud was sent in fragments through the full segment / UDP and, best
-  effort (SensorDataQoS, D33/O21), about 15 % of the clouds never reached lio (hover 20261013T151158Z-gps-hover: 775
-  of 913) and two in a row tripped the LiDAR gap rule (DEGRADED). A 16 MB segment carries a whole cloud in shared
-  memory: a 60 s bridge-only count went from 286 of 476 delivered to 477 of 477.
+  Why (measured): with the default profile about 15 % of the best-effort clouds (SensorDataQoS, D33/O21) never reached
+  lio (hover 20261013T151158Z-gps-hover: 775 of 913), and two in a row tripped the LiDAR gap rule (DEGRADED). With
+  this profile a 60 s bridge-only count went from 286 of 476 delivered to 477 of 477, and the next hover received
+  898 of 898.
+  Most likely mechanism (inferred, Fast DDS was not instrumented): a Gazebo MID-360 cloud is 645289 bytes (20160
+  points x 32 B + header), larger than the default shared-memory segment of a participant (512 KB), so it travelled
+  in fragments that best effort lost under load; a 16 MB segment holds a whole cloud.
+  SITL only: the hardware Livox path (S2) has its own transport and is not configured here.
   Both transports stay: SHM for same-host peers, UDPv4 for any peer that cannot use it.
 -->
 <profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
