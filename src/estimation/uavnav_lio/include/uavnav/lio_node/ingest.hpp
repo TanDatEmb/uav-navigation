@@ -39,7 +39,9 @@
 // core (kScanAheadOfImu, F22). It waits instead, without blocking: ONE scan is held, and every call (on_imu and
 // on_scan) first drops it once it has waited MORE than limits::kScanImuWaitMax of ROS time (now.ros - arrival ros;
 // exactly kScanImuWaitMax still waits), then pushes it as soon as the newest accepted IMU stamp is >= its end.
-// A newer scan arriving while one waits drops the waiting one (kSuperseded). Either drop is a "LioScanDropped"
+// A scan arriving while one waits supersedes it only when its end is NEWER than the waiting scan's end: the
+// waiting one is dropped (kSuperseded). An arriving scan whose end is not newer (out-of-order arrival) is dropped
+// instead, with the same reason (waited_s 0), and the waiting one is kept. Every drop is a "LioScanDropped"
 // event. The expiry is checked before the IMU sample of the same call is pushed, so a scan that expired is never
 // pushed even by the sample that would have covered it. A ROS clock that jumps back cannot expire a scan (the
 // wait reads as negative); the next scan supersedes it. A runner refusal of a pushed waiting scan drops it (the
@@ -49,6 +51,11 @@
 // core (rate-limited "LioInputRejected", reason STAMP_IN_FUTURE). Sensor and ROS time are compared directly:
 // in SITL sensor time is ROS (sim) time (D29). For a scan the end stamp is checked (start > end is the core's
 // kOutOfOrder).
+// ROS time zero. With use_sim_time before the first /clock (or a snapshot whose ROS time could not be converted)
+// now.ros is 0, so every sensor stamp above 0.5 s is refused kStampInFuture: fail closed, transient, rate-limited.
+// Each entered call also stores now.ros into SharedRosTime, so a ros{0} call rewinds the backend clock's ROS value
+// to 0 (it stamps the backend's events only). Intended node behaviour (Task 8): the node does not call on_imu or
+// on_scan before it has its first valid ROS time.
 //
 // Outputs (O21). Each runner output passes through OutputCollector: an Ok restart answer latches last_reset; each
 // state passes StateDecimator(limits::kStatePeriod) (one per 10 ms sensor-time cell) and is mapped to base_link
@@ -135,7 +142,9 @@ struct IngestStats {
   std::uint64_t scans_waited;           ///< scans held for IMU coverage
   std::uint64_t scans_dropped_timeout;  ///< waiting scans dropped after kScanImuWaitMax
   std::uint64_t scans_superseded;       ///< waiting scans dropped for a newer scan
-  std::uint64_t odometry_overwritten;   ///< odometry replaced by a later one within one call (last wins)
+  /// Ingest-level merges only (two runner calls in one ingest call, or carried outputs); merges inside one
+  /// LioRunner call (the frontend's last wins) are not counted.
+  std::uint64_t odometry_overwritten;
   std::uint64_t reentered;              ///< overlapping calls refused
 };
 
@@ -178,7 +187,9 @@ class OutputCollector {
 };
 
 /// The latest ROS time, shared lock-free between the ingest thread (store) and the estimator thread (the backend
-/// clock: LioClock = [&shared] { return shared.snapshot(); }), so the backend never touches the node.
+/// clock: LioClock = [&shared] { return shared.snapshot(); }), so the backend never touches the node. Its ROS part
+/// is the time of the latest callback, so it lags real ROS time by up to one callback period, and it freezes when
+/// the callbacks stop (no timer updates it). It only stamps the backend's events.
 class SharedRosTime {
  public:
   void store(time::RosTime t) noexcept { ros_ns_.store(t.ns, std::memory_order_relaxed); }
@@ -209,12 +220,15 @@ class LioIngest {
   /// kRunnerRejected), then pushes the waiting scan if this sample covers it.
   Result<IngestOutputs, IngestReason> on_imu(const lio::ImuInput& imu, const time::TimeSnapshot& now);
 
-  /// One scan: as on_imu up to the stamp check; then the waiting scan (if any, still uncovered) is superseded,
-  /// and this scan is pushed when covered (a runner refusal is kRunnerRejected) or held (Ok, no outputs).
+  /// One scan: as on_imu up to the stamp check; then, when a scan still waits, the one with the older end is
+  /// dropped (kSuperseded: the waiting one if this scan's end is newer, else this scan, Ok); a kept arriving scan is
+  /// pushed when covered (a runner refusal is kRunnerRejected) or held (Ok, no outputs).
   Result<IngestOutputs, IngestReason> on_scan(lio::ScanInput&& scan, const time::TimeSnapshot& now);
 
   /// LioRunner::stop() (joins the estimator thread), then one "IngestSummary". Idempotent; never throws. After it
-  /// the calls keep working on the frontend alone (LioRunner).
+  /// the calls keep working on the frontend alone (LioRunner). Call it only after the executor has stopped: it
+  /// reads the ingest-thread state without the try-enter guard, so it must never run concurrently with on_imu or
+  /// on_scan.
   void stop() noexcept;
 
   /// Any thread.
@@ -238,6 +252,8 @@ class LioIngest {
   void expire_pending(const time::TimeSnapshot& now) noexcept;
   void push_pending_if_covered(const time::TimeSnapshot& now);
   void drop_pending(IngestReason why, const time::TimeSnapshot& now) noexcept;
+  void report_drop(IngestReason why, time::SensorTime scan_end, time::Duration waited,
+                   const time::TimeSnapshot& now) noexcept;
   bool covered(time::SensorTime end) const noexcept { return newest_imu_ && *newest_imu_ >= end; }
   void collect(lio::StepOutputs&& out);
   IngestOutputs take_outputs() noexcept { return std::exchange(outputs_, IngestOutputs{}); }

@@ -158,9 +158,16 @@ Result<IngestOutputs, IngestReason> LioIngest::on_scan(lio::ScanInput&& scan, co
   expire_pending(now);
   if (in_future(scan.end, now)) return refuse_future(kStreamScan, scan.end, now);
   // The rule of every call. Coverage changes only in on_imu, which already retried, so this pushes nothing in
-  // practice; a scan still waiting here is uncovered and the newer one supersedes it.
+  // practice; a scan still waiting here is uncovered. The newer end wins; an arriving scan that is not newer is
+  // dropped and the waiting one kept.
   push_pending_if_covered(now);
-  if (pending_) drop_pending(IngestReason::kSuperseded, now);
+  if (pending_) {
+    if (scan.end <= pending_->scan.end) {
+      report_drop(IngestReason::kSuperseded, scan.end, time::Duration{}, now);
+      return take_outputs();
+    }
+    drop_pending(IngestReason::kSuperseded, now);
+  }
   if (!covered(scan.end)) {
     pending_.emplace(Pending{std::move(scan), now.ros});
     bump(scans_waited_);
@@ -249,12 +256,17 @@ void LioIngest::push_pending_if_covered(const time::TimeSnapshot& now) {
 }
 
 void LioIngest::drop_pending(IngestReason why, const time::TimeSnapshot& now) noexcept {
+  report_drop(why, pending_->scan.end, now.ros - pending_->arrived, now);
+  pending_.reset();
+}
+
+void LioIngest::report_drop(IngestReason why, time::SensorTime scan_end, time::Duration waited,
+                            const time::TimeSnapshot& now) noexcept {
   emit(event("LioScanDropped", now)
            .reason(why)
-           .value("scan_end_s", time::to_seconds(pending_->scan.end))
-           .value("waited_s", time::to_seconds(now.ros - pending_->arrived)));
+           .value("scan_end_s", time::to_seconds(scan_end))
+           .value("waited_s", time::to_seconds(waited)));
   bump(why == IngestReason::kSuperseded ? scans_superseded_ : scans_dropped_timeout_);
-  pending_.reset();
 }
 
 void LioIngest::collect(lio::StepOutputs&& out) {

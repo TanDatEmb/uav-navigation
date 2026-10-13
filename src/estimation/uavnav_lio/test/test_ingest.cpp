@@ -19,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <numbers>
 #include <optional>
 #include <span>
 #include <string>
@@ -328,6 +329,43 @@ TEST(LioIngest, NewerScanSupersedesTheWaitingOne) {
   EXPECT_DOUBLE_EQ(Value(scans[0], "sensor_time_s"), time::to_seconds(second_end));
 }
 
+TEST(LioIngest, OlderArrivingScanIsDroppedAndTheWaitingOneKept) {
+  Rig rig;
+  rig.Imu(0, 11);
+  const time::SensorTime t = room::imu_time(kT0, 10);
+  const Eigen::Isometry3d imu_T_lidar = lio_node::imu_T_lidar(SimLioConfig());
+  const time::SensorTime waiting_end = t + time::milliseconds(4);
+  const time::SensorTime older_end = t + time::milliseconds(3);  // arrives later, ends earlier (out of order)
+
+  ASSERT_TRUE(Bounded([&] { return rig.ingest().on_scan(room::scan(waiting_end, imu_T_lidar), At(t)); }));
+  const auto older = Bounded([&] {
+    return rig.ingest().on_scan(room::scan(older_end, imu_T_lidar), At(t + time::milliseconds(1)));
+  });
+  ASSERT_TRUE(older.has_value()) << "dropped with an event, not refused";
+  EXPECT_EQ(rig.ingest().stats().scans_superseded, 1U);
+  EXPECT_EQ(rig.ingest().stats().scans_waited, 1U) << "the older arriving scan never waits";
+  const auto dropped = rig.Events("LioScanDropped");
+  ASSERT_EQ(dropped.size(), 1U);
+  EXPECT_EQ(dropped[0].reason, "SUPERSEDED");
+  EXPECT_DOUBLE_EQ(Value(dropped[0], "scan_end_s"), time::to_seconds(older_end)) << "the ARRIVING scan is dropped";
+  EXPECT_DOUBLE_EQ(Value(dropped[0], "waited_s"), 0.0);
+
+  // An arriving scan with the SAME end is not newer either: dropped, the waiting one kept.
+  ASSERT_TRUE(Bounded([&] {
+    return rig.ingest().on_scan(room::scan(waiting_end, imu_T_lidar), At(t + time::milliseconds(2)));
+  }));
+  EXPECT_EQ(rig.ingest().stats().scans_superseded, 2U);
+  EXPECT_EQ(rig.ingest().stats().scans_waited, 1U);
+
+  const time::SensorTime cover = t + time::milliseconds(5);
+  ASSERT_TRUE(Bounded([&] { return rig.ingest().on_imu(room::imu(cover), At(cover)); }));
+  EXPECT_EQ(rig.Frontend().scans_admitted, 1U);
+  ASSERT_TRUE(Eventually([&] { return !rig.Events("LioScan").empty(); }));
+  const auto scans = rig.Events("LioScan");
+  ASSERT_EQ(scans.size(), 1U);
+  EXPECT_DOUBLE_EQ(Value(scans[0], "sensor_time_s"), time::to_seconds(waiting_end)) << "the waiting scan was kept";
+}
+
 TEST(LioIngest, FutureStampIsRefused) {
   Rig rig;
   rig.Imu(0, 11);
@@ -425,31 +463,46 @@ TEST(LioIngest, StateIsBaseLinkPoseAndBodyVelocity) {
   ASSERT_TRUE(w_cross_r.isApprox(Eigen::Vector3d(0.0, -0.25, 0.0), 1e-12));
 
   // (1) The mapping against an independent calculation: pose by composing isometries, velocity by a central
-  // finite difference of the base origin's world position while the IMU moves at v and turns at gyro.
-  {
-    OutputCollector collector(base_T_imu, node_limits::kStatePeriod);
+  // finite difference of the base origin's world position while the IMU moves at v and turns at gyro (body rates:
+  // angle |gyro| dt about gyro / |gyro|, applied on the IMU side). Two mounts: the yaw-only one above, where
+  // R_bi gyro == gyro, and one whose R_bi moves the gyro axis (pins w_b = R_bi gyro, not gyro or R_bi^T gyro).
+  struct Case {
+    Eigen::Isometry3d base_T_imu;
+    Eigen::Vector3d gyro;
+  };
+  Eigen::Isometry3d tilted = Eigen::Isometry3d::Identity();
+  tilted.linear() = (Eigen::AngleAxisd(std::numbers::pi / 2.0, Eigen::Vector3d::UnitX()) *
+                     Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitZ()))
+                        .toRotationMatrix();
+  tilted.translation() = Eigen::Vector3d(0.12, -0.07, 0.31);
+  const Case cases[] = {{base_T_imu, gyro}, {tilted, Eigen::Vector3d(0.3, -0.2, 1.0)}};
+  for (const Case& c : cases) {
+    OutputCollector collector(c.base_T_imu, node_limits::kStatePeriod);
+    const Eigen::Vector3d w_expected = c.base_T_imu.linear() * c.gyro;
     const Eigen::Quaterniond q_world_imu(Eigen::AngleAxisd(0.7, Eigen::Vector3d::UnitZ()) *
                                          Eigen::AngleAxisd(0.1, Eigen::Vector3d::UnitX()));
     const Eigen::Vector3d p_world_imu(1.0, 2.0, 3.0);
     for (const Eigen::Vector3d& v_world_imu : {Eigen::Vector3d(0.0, 0.0, 0.0), Eigen::Vector3d(0.4, -1.2, 0.3)}) {
       const LioStateOut out =
-          collector.map(MakeState(kT0, 0, q_world_imu, p_world_imu, v_world_imu), gyro);
-      const Eigen::Isometry3d world_T_base = Pose(q_world_imu, p_world_imu) * base_T_imu.inverse();
+          collector.map(MakeState(kT0, 0, q_world_imu, p_world_imu, v_world_imu), c.gyro);
+      const Eigen::Isometry3d world_T_base = Pose(q_world_imu, p_world_imu) * c.base_T_imu.inverse();
       EXPECT_LT((out.p_world_base - world_T_base.translation()).norm(), 1e-12);
       EXPECT_TRUE(out.q_world_base.toRotationMatrix().isApprox(world_T_base.linear(), 1e-12));
-      EXPECT_LT((out.w_base_rad_s - w_base).norm(), 1e-12);
+      EXPECT_LT((out.w_base_rad_s - w_expected).norm(), 1e-9) << out.w_base_rad_s.transpose() << " vs "
+                                                               << w_expected.transpose();
 
       const double h = 1e-6;
       const auto base_at = [&](double dt) -> Eigen::Vector3d {  // a value: translation() of a temporary dangles
-        const Eigen::Quaterniond q = q_world_imu * Eigen::Quaterniond(Eigen::AngleAxisd(dt, gyro.normalized()));
-        return (Pose(q, p_world_imu + v_world_imu * dt) * base_T_imu.inverse()).translation();
+        const Eigen::Quaterniond turn(Eigen::AngleAxisd(c.gyro.norm() * dt, c.gyro.normalized()));
+        return (Pose(q_world_imu * turn, p_world_imu + v_world_imu * dt) * c.base_T_imu.inverse()).translation();
       };
       const Eigen::Vector3d v_world_base = (base_at(h) - base_at(-h)) / (2.0 * h);
       const Eigen::Vector3d v_base_expected = world_T_base.linear().transpose() * v_world_base;
       EXPECT_LT((out.v_base_mps - v_base_expected).norm(), 1e-6) << out.v_base_mps.transpose() << " vs "
                                                                   << v_base_expected.transpose();
       if (v_world_imu.isZero()) {
-        EXPECT_LT((out.v_base_mps - w_cross_r).norm(), 1e-6) << "IMU still, body turning: v_base == w x r";
+        const Eigen::Vector3d w_cross_r_case = w_expected.cross(-c.base_T_imu.translation());
+        EXPECT_LT((out.v_base_mps - w_cross_r_case).norm(), 1e-6) << "IMU still, body turning: v_base == w x r";
       }
     }
   }
