@@ -204,6 +204,17 @@ AlignmentOutput LastOdometryAlignment(const std::vector<Step>& steps) {
 std::vector<Step> RunToValid(Rig& rig, const World& w) {
   auto steps = Stream(rig, w, 1000, 3600);
   EXPECT_EQ(rig.bridge.alignment_state(), AlignmentState::kValid);
+  // VALID exactly at the 20th consistent pair (alignment_consistent_pairs).
+  int pairs = 0;
+  for (const Step& s : steps) {
+    if (s.kind != Kind::kOdometry) continue;
+    ++pairs;
+    if (s.out.alignment->state == AlignmentState::kValid) {
+      EXPECT_EQ(pairs, 20);
+      EXPECT_EQ(s.out.alignment->reason, AlignmentReason::kPairsConsistent);
+      break;
+    }
+  }
   return steps;
 }
 
@@ -292,10 +303,121 @@ TEST(Px4Bridge, PerInputRejectionEventsAreRateLimited) {
   for (std::int64_t i = 0; i < 1000; ++i) {
     EXPECT_FALSE(rig.bridge.on_lio_odometry(w.Odom(Ms(1'000 + i)), Snap(Ms(100'000))).ev);
   }
-  const auto gated = rig.Events("EvGated");
-  ASSERT_EQ(gated.size(), 2U);  // the 1st and the kEventSummaryEvery-th
+  auto gated = rig.Events("EvGated");
+  ASSERT_EQ(gated.size(), 2U);  // the 1st and the kEventSummaryEvery-th (safety net inside one episode)
   EXPECT_DOUBLE_EQ(Value(gated[0], "count"), 1.0);
   EXPECT_DOUBLE_EQ(Value(gated[1], "count"), static_cast<double>(px4bridge::limits::kEventSummaryEvery));
+
+  // Two more, then flush() (the node's shutdown): one summary with the unreported ones, nothing lost.
+  rig.bridge.on_lio_odometry(w.Odom(Ms(2'000)), Snap(Ms(100'000)));
+  rig.bridge.on_lio_odometry(w.Odom(Ms(2'001)), Snap(Ms(100'000)));
+  rig.bridge.flush(Snap(Ms(100'000)));
+  gated = rig.Events("EvGated");
+  ASSERT_EQ(gated.size(), 3U);
+  EXPECT_DOUBLE_EQ(Value(gated[2], "count"), 1002.0);
+  EXPECT_DOUBLE_EQ(Value(gated[2], "suppressed"), 2.0);
+  EXPECT_DOUBLE_EQ(Value(gated[2], "summary"), 1.0);
+  EXPECT_EQ(gated[2].reason, "HEALTH_NOT_TRACKING");
+  rig.bridge.flush(Snap(Ms(100'000)));  // nothing open: no record
+  EXPECT_EQ(rig.Events("EvGated").size(), 3U);
+}
+
+// Two separate fault episodes on one stream are both reported: an accepted sample ends the first (with a summary
+// of what it suppressed) and re-arms the slot.
+TEST(Px4Bridge, EachFaultEpisodeIsReported) {
+  Rig rig;
+  World w;
+  Px4LocalPositionIn bad = w.Px4(Ms(1'000));
+  bad.xy_valid = false;
+  rig.bridge.on_px4_local_position(bad, Snap(Ms(1'000)));
+  bad = w.Px4(Ms(1'020));
+  bad.xy_valid = false;
+  rig.bridge.on_px4_local_position(bad, Snap(Ms(1'020)));
+  rig.bridge.on_px4_local_position(w.Px4(Ms(1'040)), Snap(Ms(1'040)));  // accepted: the episode ends
+  rig.bridge.on_px4_local_position(w.Px4(Ms(1'060)), Snap(Ms(1'060)));
+  bad = w.Px4(Ms(1'080));
+  bad.xy_valid = false;
+  rig.bridge.on_px4_local_position(bad, Snap(Ms(1'080)));  // a new episode: reported at once
+
+  const auto rejected = rig.Events("Px4SampleRejected");
+  ASSERT_EQ(rejected.size(), 3U);
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "count"), 1.0);
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "sensor_time_s"), 1.0);
+  EXPECT_DOUBLE_EQ(Value(rejected[1], "count"), 2.0);  // the summary of the first episode
+  EXPECT_DOUBLE_EQ(Value(rejected[1], "suppressed"), 1.0);
+  EXPECT_DOUBLE_EQ(Value(rejected[1], "summary"), 1.0);
+  EXPECT_EQ(rejected[1].reason, "PX4_POSITION_INVALID");
+  EXPECT_DOUBLE_EQ(Value(rejected[2], "count"), 1.0);
+  EXPECT_DOUBLE_EQ(Value(rejected[2], "sensor_time_s"), 1.08);
+  EXPECT_TRUE(std::isnan(Value(rejected[2], "summary")));
+}
+
+// The routine LIO kInputRejected of a DEGRADED -> TRACKING edge (odometry stamped before the DEGRADED health fed to
+// the alignment) is its own slot: it does not silence a later PX4 stamp regression.
+TEST(Px4Bridge, LioRejectionsDoNotSilencePx4Rejections) {
+  Rig rig;
+  World w;
+  RunToValid(rig, w);
+  ASSERT_EQ(rig.bridge.on_lio_health(w.Health(Ms(3'560), LioHealthCode::kDegraded), Snap(Ms(3'560)))
+                .alignment->state,
+            AlignmentState::kFrozen);
+  EXPECT_FALSE(rig.bridge.on_lio_health(w.Health(Ms(3'570), LioHealthCode::kTracking), Snap(Ms(3'570))).alignment);
+  for (const std::int64_t t : {3'553, 3'555}) {
+    const BridgeOutputs out = rig.bridge.on_lio_odometry(w.Odom(Ms(t)), Snap(Ms(3'575)));
+    EXPECT_TRUE(out.ev);  // not gated: the newest health is TRACKING
+    ASSERT_TRUE(out.alignment);
+    EXPECT_EQ(out.alignment->reason, AlignmentReason::kInputRejected);  // before the DEGRADED health's stamp
+  }
+  const BridgeOutputs px4 = rig.bridge.on_px4_local_position(w.Px4(Ms(3'400)), Snap(Ms(3'580)));
+  ASSERT_TRUE(px4.alignment);
+  EXPECT_EQ(px4.alignment->reason, AlignmentReason::kInputRejected);
+
+  const auto rejected = rig.Events("AlignmentPairRejected");
+  ASSERT_EQ(rejected.size(), 2U);
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "input"), 0.0);
+  EXPECT_DOUBLE_EQ(Value(rejected[1], "input"), 2.0);
+  EXPECT_EQ(rejected[1].reason, "INPUT_REJECTED");
+  EXPECT_TRUE(std::isnan(Value(rejected[1], "residual_position_m")));  // a PX4 sample forms no pair
+}
+
+// A health stamped before the newest health of the same epoch is refused and changes neither the gate nor T.
+TEST(Px4Bridge, OutOfOrderHealthIsRefused) {
+  Rig rig;
+  World w;
+  EXPECT_FALSE(rig.bridge.on_lio_health(w.Health(Ms(10'000), LioHealthCode::kTracking), Snap(Ms(10'000))).alignment);
+  const BridgeOutputs out = rig.bridge.on_lio_health(w.Health(Ms(9'900), LioHealthCode::kLost), Snap(Ms(10'010)));
+  EXPECT_FALSE(out.alignment);  // not fed to the alignment
+  EXPECT_TRUE(rig.bridge.on_lio_odometry(w.Odom(Ms(9'800)), Snap(Ms(10'020))).ev);  // the gate still says TRACKING
+  const auto rejected = rig.Events("LioInputRejected");
+  ASSERT_EQ(rejected.size(), 1U);
+  EXPECT_EQ(rejected[0].reason, "OUT_OF_ORDER");
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "stream"), 1.0);
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "newest_health_s"), 10.0);
+  // Another epoch is not compared.
+  EXPECT_TRUE(rig.bridge.on_lio_health(LioHealthIn{Ms(9'950), LioHealthCode::kLost, 2}, Snap(Ms(10'030))).alignment);
+}
+
+// A non-TRACKING health in INIT throws the accumulation away: one event per episode, re-armed by an accepted pair.
+TEST(Px4Bridge, InitAccumulationRestartIsReported) {
+  Rig rig;
+  World w;
+  Stream(rig, w, 1'000, 1'600);  // 6 pairs accumulated, still INIT
+  ASSERT_EQ(rig.bridge.alignment_state(), AlignmentState::kInit);
+  for (const std::int64_t t : {1'600, 1'610, 1'620}) {
+    const BridgeOutputs out = rig.bridge.on_lio_health(w.Health(Ms(t), LioHealthCode::kDegraded), Snap(Ms(t)));
+    ASSERT_TRUE(out.alignment);
+    EXPECT_EQ(out.alignment->reason, AlignmentReason::kLioLost);
+  }
+  auto restarts = rig.Events("AlignmentAccumulationRestarted");
+  ASSERT_EQ(restarts.size(), 1U);
+  EXPECT_EQ(restarts[0].reason, "LIO_LOST");
+  EXPECT_DOUBLE_EQ(Value(restarts[0], "input"), 1.0);
+  EXPECT_FALSE(rig.bridge.on_lio_health(w.Health(Ms(1'630), LioHealthCode::kTracking), Snap(Ms(1'630))).alignment);
+  Stream(rig, w, 1'640, 1'760);  // the 1.603 s scan is older than the DEGRADED health; 1.703 s is accepted
+  restarts = rig.Events("AlignmentAccumulationRestarted");
+  ASSERT_EQ(restarts.size(), 2U);
+  EXPECT_DOUBLE_EQ(Value(restarts[1], "count"), 3.0);
+  EXPECT_DOUBLE_EQ(Value(restarts[1], "suppressed"), 2.0);
 }
 
 TEST(Px4Bridge, LioLostStopsEvAndFreezesAlignment) {  // Review Focus 3
@@ -491,29 +613,41 @@ TEST(Px4Bridge, GarbageInputsAreRejectedWithEvents) {  // Review Focus 5
   EXPECT_FALSE(out.ev || out.alignment);
   valid_state();
   const auto lio_rejected = rig.Events("LioInputRejected");
-  ASSERT_EQ(lio_rejected.size(), 1U);  // rate-limited per reason: the health refusal is counted (count 2)
-  EXPECT_EQ(lio_rejected[0].reason, "STAMP_IN_FUTURE");
-  EXPECT_DOUBLE_EQ(Value(lio_rejected[0], "stream"), 0.0);
-  EXPECT_DOUBLE_EQ(Value(lio_rejected[0], "newest_tick_s"), 3.5);
+  ASSERT_EQ(lio_rejected.size(), 2U);  // one slot per stream
+  for (std::size_t k = 0; k < 2; ++k) {
+    EXPECT_EQ(lio_rejected[k].reason, "STAMP_IN_FUTURE");
+    EXPECT_DOUBLE_EQ(Value(lio_rejected[k], "stream"), static_cast<double>(k));  // 0 odometry, 1 health
+    EXPECT_DOUBLE_EQ(Value(lio_rejected[k], "newest_tick_s"), 3.5);
+  }
   const auto px4_rejected = rig.Events("Px4SampleRejected");
   ASSERT_EQ(px4_rejected.size(), 1U);
   EXPECT_EQ(px4_rejected[0].reason, "STAMP_IN_FUTURE");
   // Exactly at the bound is not ahead.
   EXPECT_FALSE(rig.bridge.on_lio_health(w.Health(Ms(4'000), LioHealthCode::kTracking), now).alignment);
-  EXPECT_EQ(rig.Events("LioInputRejected").size(), 1U);
+  EXPECT_EQ(rig.Events("LioInputRejected").size(), 2U);
 
   // A regressing PX4 stamp: the alignment refuses it (kInputRejected), with an event.
   out = rig.bridge.on_px4_local_position(w.Px4(Ms(3'400)), now);
   ASSERT_TRUE(out.alignment);
   EXPECT_EQ(out.alignment->reason, AlignmentReason::kInputRejected);
   pair_rejected = rig.Events("AlignmentPairRejected");
-  ASSERT_EQ(pair_rejected.size(), 1U);  // rate-limited per reason (INPUT_REJECTED was already reported)
-  // A non-finite PX4 heading: refused the same way.
+  ASSERT_EQ(pair_rejected.size(), 2U);  // its own slot (PX4 stream), not silenced by the odometry one
+  EXPECT_EQ(pair_rejected[1].reason, "INPUT_REJECTED");
+  EXPECT_DOUBLE_EQ(Value(pair_rejected[1], "input"), 2.0);
+  // A non-finite PX4 heading: refused the same way (same episode: counted).
   Px4LocalPositionIn nan_px4 = w.Px4(Ms(3'580));
   nan_px4.sample.yaw_rad = std::numeric_limits<double>::infinity();
   out = rig.bridge.on_px4_local_position(nan_px4, now);
   ASSERT_TRUE(out.alignment);
   EXPECT_EQ(out.alignment->reason, AlignmentReason::kInputRejected);
+  EXPECT_EQ(rig.Events("AlignmentPairRejected").size(), 2U);
+  // The next accepted PX4 sample ends the episode: one summary, the suppressed refusal is not lost.
+  ASSERT_TRUE(rig.bridge.on_px4_local_position(w.Px4(Ms(3'600)), now).alignment == std::nullopt);
+  pair_rejected = rig.Events("AlignmentPairRejected");
+  ASSERT_EQ(pair_rejected.size(), 3U);
+  EXPECT_DOUBLE_EQ(Value(pair_rejected[2], "input"), 2.0);
+  EXPECT_DOUBLE_EQ(Value(pair_rejected[2], "count"), 2.0);
+  EXPECT_DOUBLE_EQ(Value(pair_rejected[2], "suppressed"), 1.0);
 
   valid_state();
   EXPECT_EQ(rig.Events("AlignmentTransition").size(), 1U);  // INIT -> VALID only
@@ -588,6 +722,8 @@ TEST(Px4Bridge, EveryAlignmentStateChangeIsOneEvent) {
   std::int64_t m = 1'000;
   std::int64_t last_px4 = 0;
   std::int64_t last_odom = 0;
+  std::optional<LioHealthIn> latest_health;  // the newest health the bridge accepted (the gate's reference)
+  std::optional<time::SensorTime> newest_tick;
   std::int64_t outage_until = 0;  // a LIO outage: no odometry, LOST health (so FROZEN can time out or see a reset)
   for (int i = 0; i < 5000; ++i) {
     m += step_ms(rng);
@@ -625,13 +761,22 @@ TEST(Px4Bridge, EveryAlignmentStateChangeIsOneEvent) {
       if (u(rng) < 0.01) ++w.epoch;
       if (u(rng) < 0.01) o.t = Ms(m + 2'000);
       o.epoch = w.epoch;
-      rig.bridge.on_lio_odometry(o, Snap(now));
+      const BridgeOutputs out = rig.bridge.on_lio_odometry(o, Snap(now));
+      // Gate invariant (O22): no EV while the newest same-epoch health is not TRACKING and not older.
+      if (out.ev && latest_health) {
+        EXPECT_FALSE(latest_health->epoch == o.epoch && latest_health->state != LioHealthCode::kTracking &&
+                     latest_health->t >= o.t)
+            << i;
+      }
     } else if (r < 0.75) {  // health: mostly TRACKING
       auto code = static_cast<LioHealthCode>(u(rng) < 0.75 ? 1 : static_cast<int>(5 * u(rng)));
       if (outage) code = LioHealthCode::kLost;
+      // Stamps increase (never out of order); a health more than kMaxStampAhead after the newest tick is refused.
+      if (!newest_tick || now <= *newest_tick + px4bridge::limits::kMaxStampAhead) latest_health = w.Health(now, code);
       rig.bridge.on_lio_health(w.Health(now, code), Snap(now));
     } else if (r < 0.9) {
       rig.bridge.on_tick(now, Snap(now));
+      newest_tick = now;
     } else {
       m += 200;  // a gap
     }

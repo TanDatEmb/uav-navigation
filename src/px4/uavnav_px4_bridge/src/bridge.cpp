@@ -20,7 +20,7 @@ static_assert(find_alignment_spec("alignment_valid_stale_s")->min * 1e9 >= 2.0 *
 static_assert(find_alignment_spec("alignment_frozen_max_s")->min * 1e9 >= 2.0 * limits::kTickPeriod.ns);
 
 template <class E>
-constexpr std::size_t slot(E e) noexcept {
+constexpr std::size_t index(E e) noexcept {
   return static_cast<std::size_t>(e);
 }
 
@@ -51,16 +51,14 @@ double step(std::uint8_t now, std::uint8_t before) noexcept {
 
 Px4Bridge::Px4Bridge(const AlignmentConfig& cfg, events::EventRecorder& events) noexcept
     : events_(events), alignment_(cfg) {
-  static_assert(slot(EvReason::kBadQuaternion) < std::tuple_size_v<decltype(ev_rejected_)>);
-  static_assert(slot(AlignmentReason::kInputRejected) < std::tuple_size_v<decltype(pair_rejected_)>);
-  static_assert(slot(BridgeReason::kNotFinite) < std::tuple_size_v<decltype(px4_rejected_)>);
+  static_assert(index(Input::kTick) + 1 == kInputs, "one rate-limit stream per Input");
 }
 
 // ---- inputs ------------------------------------------------------------------------------------------------
 
 BridgeOutputs Px4Bridge::on_lio_odometry(const LioOdometryIn& in, const time::TimeSnapshot& now) {
   if (in_future(in.t)) {
-    refuse_lio_future(Input::kOdometry, in.t, in.epoch, now);
+    refuse_lio(BridgeReason::kStampInFuture, Input::kOdometry, in.t, in.epoch, now);
     return {};
   }
   lio_epoch_ = in.epoch;
@@ -68,13 +66,14 @@ BridgeOutputs Px4Bridge::on_lio_odometry(const LioOdometryIn& in, const time::Ti
   // EV gate (O22): the newest health of the same epoch is not TRACKING and not older than this sample.
   if (latest_health_ && latest_health_->epoch == in.epoch && latest_health_->state != LioHealthCode::kTracking &&
       latest_health_->t >= in.t) {
-    if (due(ev_gated_[0])) {
+    const std::size_t s = slot(Spam::kEvGated, Input::kOdometry, index(BridgeReason::kHealthNotTracking));
+    if (due(s)) {
       emit(event("EvGated", in.epoch, now)
                .reason(BridgeReason::kHealthNotTracking)
                .value("odometry_time_s", time::to_seconds(in.t))
                .value("health_time_s", time::to_seconds(latest_health_->t))
                .value("health_state", static_cast<double>(static_cast<std::uint8_t>(latest_health_->state)))
-               .value("count", static_cast<double>(ev_gated_[0])));
+               .value("count", static_cast<double>(spam_[s].count)));
     }
     return {};
   }
@@ -84,33 +83,45 @@ BridgeOutputs Px4Bridge::on_lio_odometry(const LioOdometryIn& in, const time::Ti
   const EvInput ev_in{in.t, in.epoch, true, in.p_flu_m, in.q_flu, in.v_flu_mps, in.pose_cov, in.vel_cov, in.quality};
   if (auto ev = encode_ev(ev_in, limits::kClockMode)) {
     out.ev = *ev;
-  } else if (due(ev_rejected_[slot(ev.error())])) {
-    emit(event("EvRejected", in.epoch, now)
-             .reason(ev.error())
-             .value("sensor_time_s", time::to_seconds(in.t))
-             .value("count", static_cast<double>(ev_rejected_[slot(ev.error())])));
+  } else {
+    const std::size_t s = slot(Spam::kEvRejected, Input::kOdometry, index(ev.error()));
+    if (due(s)) {
+      emit(event("EvRejected", in.epoch, now)
+               .reason(ev.error())
+               .value("sensor_time_s", time::to_seconds(in.t))
+               .value("count", static_cast<double>(spam_[s].count)));
+    }
   }
 
   const AlignmentState before = alignment_.state();
   const LioPoseSample pose{in.t, flu_to_frd(in.p_flu_m), frd_yaw(in.q_flu), true};
   out.alignment = report(before, alignment_.on_lio(pose), Input::kOdometry, in.t, in.epoch, now);
+  if (out.ev && !is_pair_rejection(out.alignment->reason)) accepted(Input::kOdometry, now);
   return out;
 }
 
 BridgeOutputs Px4Bridge::on_lio_health(const LioHealthIn& in, const time::TimeSnapshot& now) {
   if (in_future(in.t)) {
-    refuse_lio_future(Input::kHealth, in.t, in.epoch, now);
+    refuse_lio(BridgeReason::kStampInFuture, Input::kHealth, in.t, in.epoch, now);
+    return {};
+  }
+  if (latest_health_ && latest_health_->epoch == in.epoch && in.t < latest_health_->t) {
+    refuse_lio(BridgeReason::kOutOfOrder, Input::kHealth, in.t, in.epoch, now);
     return {};
   }
   lio_epoch_ = in.epoch;
   latest_health_ = in;
-  if (in.state == LioHealthCode::kTracking) return {};
+  if (in.state == LioHealthCode::kTracking) {
+    accepted(Input::kHealth, now);
+    return {};
+  }
 
   // Every non-TRACKING health (an unknown code too) freezes T (O22); the pose of a lost sample is never used.
   const AlignmentState before = alignment_.state();
   const LioPoseSample lost{in.t, Eigen::Vector3d::Zero(), 0.0, false};
-  return BridgeOutputs{std::nullopt,
-                       report(before, alignment_.on_lio(lost), Input::kHealth, in.t, in.epoch, now)};
+  const AlignmentOutput out = report(before, alignment_.on_lio(lost), Input::kHealth, in.t, in.epoch, now);
+  if (out.reason != AlignmentReason::kInputRejected) accepted(Input::kHealth, now);
+  return BridgeOutputs{std::nullopt, out};
 }
 
 BridgeOutputs Px4Bridge::on_px4_local_position(const Px4LocalPositionIn& in, const time::TimeSnapshot& now) {
@@ -125,10 +136,11 @@ BridgeOutputs Px4Bridge::on_px4_local_position(const Px4LocalPositionIn& in, con
   const AlignmentState before = alignment_.state();
   const AlignmentOutput out = alignment_.on_px4(in.sample);
   if (is_reset(out.reason)) report_reset(before, out, in.sample, now);
+  report(before, out, Input::kPx4, in.sample.t, lio_epoch_, now);
   if (out.reason != AlignmentReason::kInputRejected) {
     px4_counters_ = Counters{in.sample.xy_reset_counter, in.sample.z_reset_counter, in.sample.heading_reset_counter};
+    accepted(Input::kPx4, now);
   }
-  report(before, out, Input::kPx4, in.sample.t, lio_epoch_, now);
   if (out.reason == AlignmentReason::kNone) return {};  // O21: on_px4 is published only with a reason
   return BridgeOutputs{std::nullopt, out};
 }
@@ -136,8 +148,13 @@ BridgeOutputs Px4Bridge::on_px4_local_position(const Px4LocalPositionIn& in, con
 BridgeOutputs Px4Bridge::on_tick(time::SensorTime now_sensor, const time::TimeSnapshot& now) {
   if (!newest_tick_ || now_sensor > *newest_tick_) newest_tick_ = now_sensor;
   const AlignmentState before = alignment_.state();
-  return BridgeOutputs{std::nullopt,
-                       report(before, alignment_.on_tick(now_sensor), Input::kTick, now_sensor, lio_epoch_, now)};
+  const AlignmentOutput out = report(before, alignment_.on_tick(now_sensor), Input::kTick, now_sensor, lio_epoch_, now);
+  if (out.reason != AlignmentReason::kInputRejected) accepted(Input::kTick, now);
+  return BridgeOutputs{std::nullopt, out};
+}
+
+void Px4Bridge::flush(const time::TimeSnapshot& now) noexcept {
+  for (std::size_t s = 0; s < spam_.size(); ++s) summarise(s, now);
 }
 
 // ---- private -----------------------------------------------------------------------------------------------
@@ -164,15 +181,34 @@ AlignmentOutput Px4Bridge::report(AlignmentState before, const AlignmentOutput& 
              .value("residual_position_m", out.residual_position_m)
              .value("residual_yaw_rad", out.residual_yaw_rad));
   }
-  if (is_pair_rejection(out.reason) && due(pair_rejected_[slot(out.reason)])) {
-    emit(event("AlignmentPairRejected", epoch, now)
-             .states(before, out.state)
-             .reason(out.reason)
-             .value("input", static_cast<double>(input))
-             .value("sensor_time_s", time::to_seconds(t))
-             .value("residual_position_m", out.residual_position_m)
-             .value("residual_yaw_rad", out.residual_yaw_rad)
-             .value("count", static_cast<double>(pair_rejected_[slot(out.reason)])));
+  if (is_pair_rejection(out.reason)) {
+    const std::size_t s = slot(Spam::kPairRejected, input, index(out.reason));
+    if (due(s)) {
+      EventBuilder b = event("AlignmentPairRejected", epoch, now);
+      b.states(before, out.state)
+          .reason(out.reason)
+          .value("input", static_cast<double>(input))
+          .value("sensor_time_s", time::to_seconds(t));
+      // A PX4 sample forms no pair: the residuals in the output are those of the last LIO pair, not of this input.
+      if (input == Input::kOdometry || input == Input::kHealth) {
+        b.value("residual_position_m", out.residual_position_m).value("residual_yaw_rad", out.residual_yaw_rad);
+      }
+      emit(b.value("count", static_cast<double>(spam_[s].count)));
+    }
+  }
+  // A non-TRACKING sample in INIT restarts the accumulation (alignment.hpp on_lio step 4): no state change, but a
+  // decision that throws away INIT progress. Its episode ends at the next accepted odometry (the accumulation grows).
+  if (before == AlignmentState::kInit && out.state == AlignmentState::kInit &&
+      out.reason == AlignmentReason::kLioLost) {
+    const std::size_t s = slot(Spam::kAccumulationRestarted, Input::kOdometry, index(out.reason));
+    if (due(s)) {
+      emit(event("AlignmentAccumulationRestarted", epoch, now)
+               .states(before, out.state)
+               .reason(out.reason)
+               .value("input", static_cast<double>(input))
+               .value("sensor_time_s", time::to_seconds(t))
+               .value("count", static_cast<double>(spam_[s].count)));
+    }
   }
   return out;
 }
@@ -198,23 +234,27 @@ void Px4Bridge::report_reset(AlignmentState before, const AlignmentOutput& out, 
            .value("delta_heading_rad", s.delta_heading_rad)
            .value("x_m", out.filtered.x_m)
            .value("y_m", out.filtered.y_m)
+           .value("z_m", out.filtered.z_m)
            .value("yaw_rad", out.filtered.yaw_rad));
 }
 
-void Px4Bridge::refuse_lio_future(Input input, time::SensorTime t, std::uint32_t epoch,
-                                  const time::TimeSnapshot& now) noexcept {
-  if (!due(lio_future_[0])) return;
-  emit(event("LioInputRejected", epoch, now)
-           .reason(BridgeReason::kStampInFuture)
-           .value("stream", static_cast<double>(input))
-           .value("sensor_time_s", time::to_seconds(t))
-           .value("newest_tick_s", time::to_seconds(*newest_tick_))
-           .value("count", static_cast<double>(lio_future_[0])));
+void Px4Bridge::refuse_lio(BridgeReason why, Input input, time::SensorTime t, std::uint32_t epoch,
+                           const time::TimeSnapshot& now) noexcept {
+  const std::size_t s = slot(Spam::kLioInputRejected, input, index(why));
+  if (!due(s)) return;
+  EventBuilder b = event("LioInputRejected", epoch, now);
+  b.reason(why).value("stream", static_cast<double>(input)).value("sensor_time_s", time::to_seconds(t));
+  if (why == BridgeReason::kStampInFuture) {
+    b.value("newest_tick_s", time::to_seconds(*newest_tick_));
+  } else {
+    b.value("newest_health_s", time::to_seconds(latest_health_->t));
+  }
+  emit(b.value("count", static_cast<double>(spam_[s].count)));
 }
 
 void Px4Bridge::refuse_px4(BridgeReason why, const Px4LocalPositionIn& in, const time::TimeSnapshot& now) noexcept {
-  std::uint64_t& count = px4_rejected_[slot(why)];
-  if (!due(count)) return;
+  const std::size_t s = slot(Spam::kPx4SampleRejected, Input::kPx4, index(why));
+  if (!due(s)) return;
   EventBuilder b = event("Px4SampleRejected", lio_epoch_, now);
   b.reason(why).value("sensor_time_s", time::to_seconds(in.sample.t));
   if (why == BridgeReason::kStampInFuture) {
@@ -222,7 +262,7 @@ void Px4Bridge::refuse_px4(BridgeReason why, const Px4LocalPositionIn& in, const
   } else {
     b.value("xy_valid", in.xy_valid ? 1.0 : 0.0).value("z_valid", in.z_valid ? 1.0 : 0.0);
   }
-  emit(b.value("count", static_cast<double>(count)));
+  emit(b.value("count", static_cast<double>(spam_[s].count)));
 }
 
 events::EventBuilder Px4Bridge::event(std::string_view name, std::uint32_t epoch,
@@ -234,9 +274,59 @@ events::EventBuilder Px4Bridge::event(std::string_view name, std::uint32_t epoch
 
 void Px4Bridge::emit(const events::EventBuilder& b) noexcept { (void)events_.emit(b.build()); }
 
-bool Px4Bridge::due(std::uint64_t& count) noexcept {
-  ++count;
-  return count == 1 || count % limits::kEventSummaryEvery == 0;
+// ---- rate limit (bridge.hpp "Rate limit of the per-input events") ------------------------------------------
+
+std::size_t Px4Bridge::slot(Spam e, Input stream, std::size_t reason) noexcept {
+  // reason < kReasonSlots by construction: kReasonSlots is the largest enumerator count of the reason enums, and
+  // every caller passes a valid enumerator of one of them.
+  return (index(e) * kInputs + index(stream)) * kReasonSlots + reason;
+}
+
+bool Px4Bridge::due(std::size_t s) noexcept {
+  SpamCount& c = spam_[s];
+  ++c.count;
+  if (c.count != 1 && c.count % limits::kEventSummaryEvery != 0) return false;
+  c.reported = c.count;
+  return true;
+}
+
+void Px4Bridge::accepted(Input stream, const time::TimeSnapshot& now) noexcept {
+  for (std::size_t e = 0; e < kSpamEvents; ++e) {
+    for (std::size_t r = 0; r < kReasonSlots; ++r) summarise(slot(static_cast<Spam>(e), stream, r), now);
+  }
+}
+
+void Px4Bridge::summarise(std::size_t s, const time::TimeSnapshot& now) noexcept {
+  SpamCount& c = spam_[s];
+  if (c.count > c.reported) {
+    const auto e = static_cast<Spam>(s / (kInputs * kReasonSlots));
+    const std::size_t stream = (s / kReasonSlots) % kInputs;
+    const std::size_t r = s % kReasonSlots;
+    auto summary = [&](std::string_view name) { return event(name, lio_epoch_, now); };
+    EventBuilder b = summary("");
+    switch (e) {
+      case Spam::kEvGated: b = summary("EvGated").reason(static_cast<BridgeReason>(r)); break;
+      case Spam::kEvRejected: b = summary("EvRejected").reason(static_cast<EvReason>(r)); break;
+      case Spam::kPairRejected:
+        b = summary("AlignmentPairRejected").reason(static_cast<AlignmentReason>(r));
+        b.value("input", static_cast<double>(stream));
+        break;
+      case Spam::kAccumulationRestarted:
+        b = summary("AlignmentAccumulationRestarted").reason(static_cast<AlignmentReason>(r));
+        b.value("input", static_cast<double>(Input::kHealth));
+        break;
+      case Spam::kPx4SampleRejected: b = summary("Px4SampleRejected").reason(static_cast<BridgeReason>(r)); break;
+      case Spam::kLioInputRejected:
+        b = summary("LioInputRejected").reason(static_cast<BridgeReason>(r));
+        b.value("stream", static_cast<double>(stream));
+        break;
+      case Spam::kCount: break;
+    }
+    emit(b.value("count", static_cast<double>(c.count))
+             .value("suppressed", static_cast<double>(c.count - c.reported))
+             .value("summary", 1.0));
+  }
+  c = SpamCount{};
 }
 
 }  // namespace uavnav::px4bridge
