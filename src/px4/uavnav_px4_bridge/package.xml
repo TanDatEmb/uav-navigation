@@ -4,12 +4,16 @@
 <package format="3">
   <name>uavnav_px4_bridge</name>
   <version>0.1.0</version>
-  <description>PX4 bridge core for uav-navigation: FLU to FRD frame conversion, the external-vision (EV) encoder, SITL PX4 time conversion and the alignment estimator T_px4&lt;-lio. ROS-free library; the node is added separately.</description>
+  <description>PX4 bridge core for uav-navigation: FLU to FRD frame conversion, the external-vision (EV) encoder, SITL PX4 time conversion and the alignment estimator T_px4&lt;-lio. The core library is ROS-free; the px4_bridge ROS node (message conversion, one callback group, recorder, ordered shutdown) is a second target.</description>
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>uavnav_core</depend>
   <depend>eigen3_cmake_module</depend>
+  <depend>px4_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>uavnav_interfaces</depend>
+  <depend>uavnav_ros</depend>
   <test_depend>ament_cmake_gtest</test_depend>
   <export><build_type>ament_cmake</build_type></export>
 </package>
