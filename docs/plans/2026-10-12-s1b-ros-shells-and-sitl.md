@@ -88,7 +88,7 @@ The remaining spec-sync items are for the architect, not this plan:
 | Backend clock | `LioClock` returns `{time::steady_now(), latest ROS time}`. The ROS time is an atomic the ingest thread stores at every callback, so the clock never blocks (`stop()` joins the backend). |
 | `px4_bridge` threads | One `SingleThreadedExecutor` and one callback group: three subscriptions plus the 100 ms tick, calling the single-threaded `Px4Bridge`. The recorder writer is the events thread. |
 | `/events` | `RosEventSink::write` runs on the recorder writer (§6.1) and publishes one `EventRecord.msg` per record, with no lock held. |
-| Shutdown | SIGINT: the executor stops; then `LioIngest::stop()` (`LioRunner::stop`, which joins the backend before the channels go); then the recorder is destroyed (drain and flush); then the publishers and the node. |
+| Shutdown | SIGINT: the pre-shutdown hook closes the node's callback gate (waits for any in-flight callback; later callbacks return at once), so no callback can overlap the next step; then `LioIngest::stop()` (`LioRunner::stop`, which joins the backend before the channels go); then the recorder is destroyed (drain and flush); then the publishers and the node. |
 | Topics | `lio` in: `/lidar/imu`, `/lidar/points`; out: `/lio/state`, `/lio/health`, `/lio/odometry`, `/events`. `px4_bridge` in: `/lio/odometry`, `/lio/health`, `/fmu/out/vehicle_local_position_v1`; out: `/fmu/in/vehicle_visual_odometry`, `/alignment`, `/events`. A PX4 topic gets the suffix `_v<N>` when its message has `MESSAGE_VERSION` > 0. |
 | Config files | `config/lio/sim.yaml` (unchanged schema); new `config/lio/node_sim.yaml`, `config/px4_bridge/sim.yaml`, `config/px4/profiles/{gps,no_gps}.yaml`. |
 | Tier (a) | `uavnav/lio_node/limits.hpp`: `kStatePeriod` 10 ms, `kScanImuWaitMax` 100 ms, `kMaxStampAhead` 500 ms, frame ids. The bridge `limits.hpp` gains `kTickPeriod` 100 ms, `kMaxStampAhead` 500 ms and `kClockMode = kSimulationIdentity` (D29). |
@@ -414,11 +414,11 @@ Spec §6.1, §6.3, §6.5; O19, O21.
 
 ```cpp
 template <class Tag> Result<time::TimePoint<Tag>, time::TimeError> from_msg(const builtin_interfaces::msg::Time&);  // via from_stamp
-Result<builtin_interfaces::msg::Time, time::TimeError> to_msg(time::SensorTime t);  // kNegativeSeconds for t.ns < 0
+template <class Tag> Result<builtin_interfaces::msg::Time, time::TimeError> to_msg(time::TimePoint<Tag> t);  // kNegativeSeconds for t.ns < 0; kOutOfRange above int32 seconds
 time::TimeSnapshot snapshot(const rclcpp::Clock& clock) noexcept;                    // steady_now() + clock.now(); ros{0} if unconvertible
 class RosEventSink final : public events::EventSink {                                // uavnav_interfaces/msg/EventRecord on /events
  public:
-  static std::unique_ptr<RosEventSink> create(rclcpp::Node& node);                  // publisher created on the node's thread
+  static Result<std::unique_ptr<RosEventSink>, RosSinkError> create(rclcpp::Node& node);  // kPublisherCreateFailed; created on the node's thread
   Result<void, events::SinkError> write(std::span<const events::EventRecord> batch) override;  // kIo if publish threw
 };
 namespace qos { rclcpp::QoS sensor_input(); rclcpp::QoS state_output(); rclcpp::QoS reliable_output();
