@@ -29,10 +29,11 @@ Profile là tham số tầng (c) theo D22. Profile được chọn khi chạy; k
 |---|---|---|---|
 | Bay | **mặc định** | MAIN được đi vào UNKNOWN; BACKUP bắt buộc known-free | D1, D2 |
 | Bay | **khéo léo** | Cả MAIN và BACKUP được đi vào UNKNOWN. Đây là chế độ **chấp nhận rủi ro do owner phê duyệt**: phải chọn tường minh, ghi vào metadata của mỗi lần chạy, không bao giờ là mặc định | D1, D2 |
-| Định vị | **có GPS** | EKF2 luôn fuse GNSS. EV gửi FRD, tắt EV yaw (`EKF2_EV_CTRL=7`). Frame mission là toạ độ GPS | D3, D19, D20 |
-| Định vị | **không GPS** | Chỉ dùng ở môi trường LIO duy trì được. EV gửi FRD; `EKF2_EV_CTRL` theo nguồn heading. Frame mission là toạ độ local của PX4 | D3, D19, D20, D37 |
-| Nguồn heading | **compass** (mặc định; có GPS luôn dùng compass) / **ev_yaw** (chỉ với không GPS, khi xe không có compass) | compass: heading tham chiếu hướng bắc, `EKF2_EV_CTRL=7`, `yaw_T` ≈ π/2 − yaw lúc LIO khởi động (ENU). ev_yaw: `EKF2_EV_CTRL=15`, frame local PX4 trùng frame bắt đầu của LIO, `yaw_T` ≈ 0, yaw trôi được chấp nhận. Cách tắt compass trong SITL cho ev_yaw: O32 | D35, D37 |
+| Định vị | **có GPS** | EKF2 luôn fuse GNSS. Frame mission là toạ độ GPS | D3, D19, D20, D42 |
+| Định vị | **không GPS** | Chỉ dùng ở môi trường LIO duy trì được. Frame mission là toạ độ local của PX4 | D3, D19, D20, D42 |
 | Yaw | **Y1 khoá heading** (mặc định) / **Y3a theo hướng đoạn bay** | Xem §2.5 | D24 |
+
+Cả hai profile (D42): xe luôn có compass (`SYS_HAS_MAG` bật, không có profile không compass); EV gửi FRD và được fuse đầy đủ nhất có thể (vị trí, vận tốc, yaw), PX4 tự chọn nguồn heading. `T` hấp thụ mọi lệch heading PX4 chọn (§4.1), nên không có kỳ vọng về một giá trị `yaw_T` tuyệt đối. Profile có GPS từng tắt EV yaw (D20) vì lo cạnh tranh heading; S1c đo lại cấu hình EV đầy đủ trong SITL, và chỉ giữ ngoại lệ theo profile khi số đo cho thấy cấu hình đầy đủ hỏng, kèm bằng chứng để owner duyệt.
 
 ### Hành vi an toàn không được nới
 
@@ -93,7 +94,7 @@ NavAvailability:  AVAILABLE ──LIO LOST──► LOST(since) ──LIO TRACKI
   - chính sách của một thành phần.
 
   Thêm trạng thái mới bắt buộc phải review thiết kế.
-- **Chuỗi khôi phục LIO (D38, §3.4).** Supervisor không gọi restart LIO; nó chỉ quan sát `/lio/health` và `/alignment` và đổi NavAvailability theo §2.3. Chuỗi không thêm trạng thái. Đề xuất O30 (chờ owner): thêm cạnh REACQUIRING ──LIO LOST──► LOST, và `since` giữ mốc LOST đầu tiên của episode qua mọi lần thử lại, để `lio_recovery_timeout_s` là ngân sách của cả chuỗi chứ không được kéo dài bởi mỗi lần restart.
+- **Chuỗi khôi phục LIO (D38, D41, §3.4).** LIO tự khởi động lại và không bao giờ bỏ cuộc. Supervisor không gọi restart; nó chỉ quan sát `/lio/health` và `/alignment` và đổi NavAvailability theo §2.3. Giới hạn bỏ cuộc (`lio_recovery_timeout_s`, D11) chỉ thuộc tầng này. Việc của S2 (thiết kế và review ở S2, không ở S1c): khi LIO LOST lại trong lúc REACQUIRING, ngân sách bỏ cuộc phải tính từ LOST đầu tiên của episode, để các lần restart của LIO không kéo dài nó.
 
 ### §2.3 Quy tắc trong RUNNING
 
@@ -163,21 +164,25 @@ NavAvailability:  AVAILABLE ──LIO LOST──► LOST(since) ──LIO TRACKI
 
 ### §3.1 State machine
 
+Sơ đồ đích theo D41 (không thêm trạng thái; chi tiết và kiểm chứng ở AR3, chờ owner xác nhận trước khi code; tới lúc đó code giữ sơ đồ S1b, trong đó LOST → RESTARTING khi một scan tốt trên map đóng băng và RESTARTING chờ lệnh restart từ ngoài):
+
 ```text
 INITIALIZING ──map đủ ∧ 5 scan tốt liên tiếp──► TRACKING ◄──5 scan tốt──┐
-     ▲                                              │ suy biến 3 scan (kể cả CORRECTION_REJECTED), hoặc gap > 0.25 s
-     │                                              ▼                    │
-     │                                           DEGRADED ───────────────┘
-     │ epoch mới, map rỗng, seed                    │ suy biến kéo dài > 1.0 s, gap > 0.5 s,
-     │                                              │ hoặc σ vị trí > 0.5 m
- RESTARTING ◄── scan đủ hình học trở lại ──────── LOST
+  ▲     │                                           │ suy biến 3 scan, hoặc gap > 0.25 s
+  │     │ (chỉ khi vào từ RESTARTING)               ▼                    │
+  │     │ chưa TRACKING sau restart_stable_s,     DEGRADED ──────────────┘
+  │     │ gap > 0.5 s, hoặc suy biến > 1.0 s         │ suy biến kéo dài > 1.0 s, gap > 0.5 s, hoặc σ vị trí > 0.5 m
+  │     └──────────────────────────────────────► LOST ◄── (TRACKING, σ vị trí > 0.5 m)
+  │ epoch mới, map mới, seed                         │ LOST là trạng thái chờ, không có lối ra "bỏ cuộc":
+  │                                                  │ dữ liệu ổn định liên tục restart_stable_s
+ RESTARTING ◄────────────────────────────────────────┘ (lifecycle phát lệnh restart, LIO tự khởi động lại)
 ```
 
 - **LiDAR gap** tính theo **sensor time trên mỗi mẫu IMU** (stamp IMU − điểm cuối scan gần nhất).
 - Mọi lối vào TRACKING đều qua bước xác nhận.
-- **Hiệu chỉnh bị từ chối (D31, D33/O15):** kết quả `kScanGood` mà predictor không áp dụng, hoặc có tuổi lúc áp dụng (IMU mới nhất − scan end) lớn hơn `gap_degraded`, vào lifecycle dưới dạng input `kScanCorrectionRejected`. Input này đếm như scan suy biến (3 lần liên tiếp: TRACKING→DEGRADED, reason `CORRECTION_REJECTED`) và không đẩy mốc scan cuối. Kết quả quá tuổi không được đưa vào predictor.
+- **LOST là chờ, không bỏ cuộc (D41).** Mốc chờ đặt lại mỗi khi dữ liệu mất ổn định. Dữ liệu "ổn định" ở mỗi mẫu IMU và mỗi scan khi: (1) không có LiDAR gap (gap ≤ `gap_degraded`); (2) mỗi scan có **thông tin tự thân** đủ: ma trận 6×6 của scan đối với chính các mặt phẳng nó tạo ra (không dùng map đóng băng, vì prior IMU đã trôi), cả khối tịnh tiến và khối xoay ≥ ngưỡng §3.2. Ổn định liên tục `restart_stable_s` (tầng b, beta 2.0 s, khoảng [0.5, 30]) thì LOST → RESTARTING (reason `STABLE_DATA_DWELL`). Một lần thử hỏng (INITIALIZING sau restart không xác nhận được) quay về LOST, và mốc chờ bắt đầu lại từ đó: khoảng cách tối thiểu giữa hai lần thử chính là thời gian chờ này. Không có bộ đếm số lần thử. Giới hạn bỏ cuộc thuộc Supervisor (§2.2).
+- **Hiệu chỉnh và quy tắc nhận/từ chối (D31, D33/O15, D40).** Hiện tại: kết quả `kScanGood` mà predictor không áp dụng, hoặc có tuổi lúc áp dụng lớn hơn `gap_degraded`, thành `kScanCorrectionRejected`, đếm như scan suy biến và không đẩy mốc scan cuối. D40 thay quy tắc tuổi bằng quy tắc theo hậu quả, gom vào một hàm kết luận có kiểu `CorrectionVerdict` (thiết kế ở AR3, chờ owner xác nhận): dữ liệu không bị bỏ vì tuổi; chỉ bị từ chối khi bất khả kỹ thuật (predictor không khớp được stamp trong buffer 300 ms, epoch hay restart không khớp) hoặc khi đưa vào sẽ gây hại đo được (innovation vượt cổng hợp lý). Kết quả được áp dụng nhưng không còn "tươi" (sau khi áp dụng, gap vẫn > `gap_degraded`) vẫn hiệu chỉnh output và đẩy mốc scan cuối về scan end của nó, nhưng không được tính vào bước xác nhận TRACKING.
 - Scan rỗng là một event, không phải exception.
-- **Thử lại sau restart (đề xuất O30, chờ owner):** INITIALIZING vào từ RESTARTING chuyển sang LOST khi chưa xác nhận được TRACKING trong `reinit_timeout_s` (tầng b, đề xuất 3.0 s) hoặc khi gap > `gap_lost`. Không có cạnh này thì một restart rơi vào lúc hình học lại mất sẽ đứng ở INITIALIZING mãi và chuỗi §3.4 không thử lại. Lần khởi động đầu (chưa restart) giữ nguyên: chờ map và xác nhận, không có timeout.
 - `/lio/scan` chỉ được phát khi TRACKING.
 - Các con số trong sơ đồ là giá trị beta, thuộc tầng (b), sẽ chỉnh từ log.
 
@@ -212,31 +217,34 @@ Làm theo đủ cơ chế của EKF2 (F35):
 
 ### §3.4 Khởi động lại
 
-- Seed = `T⁻¹ × pose PX4`, với `T` đang FROZEN.
-- Bắt đầu epoch mới; map được reset ở `navigation`.
+- **LIO tự khởi động lại (D41).** Lệnh restart là effect của cạnh LOST → RESTARTING (§3.1), do frontend phát; không có bên gọi từ ngoài.
+- **Seed (D38, D41).** Frontend giữ **offer seed mới nhất** của bên đồng bộ (`T⁻¹ × pose PX4`: vị trí và yaw trong frame LIO, kèm stamp SensorTime của mẫu PX4 và `T` đã dùng; cách truyền chờ O29). Khi phát lệnh:
+  - nếu predictor khớp được stamp của offer (cùng quy tắc `covers()` của buffer 300 ms, §3.3), seed = offer đẩy tới thời điểm lệnh bằng chuyển động của predictor giữa hai thời điểm đó; roll/pitch lấy từ predictor (nguồn `SYNC`);
+  - nếu không có offer khớp được (`T` INIT hay INVALID, PX4 không có vị trí, hay offer quá cũ so với buffer), seed = pose mới nhất của predictor (nguồn `SELF`). Frame LIO mới khi đó chỉ liên tục với frame cũ trong giới hạn trôi IMU của lúc mất; bên đồng bộ tự quyết theo số đo (§4.1).
+- Bắt đầu epoch mới; map LIO mới; map của `navigation` được reset.
 - **Luôn** tăng `reset_counter` theo epoch của chính mẫu dữ liệu.
-- Phát event `LioRestart` gồm: epoch cũ, epoch mới, seed, `T`.
-- **Câu trả lời restart tới muộn (D33/O16):** nếu buffer predictor không còn khớp được thời điểm của lệnh (backend trả lời sau hơn 300 ms), frontend từ chối câu trả lời. Khi đó frontend phát `LioRestartRejected` với lý do stale, ở lại RESTARTING, và không kéo lùi output. Bên gọi restart lại với seed mới.
+- Phát event `LioRestart` gồm: epoch cũ, epoch mới, reason, nguồn seed, seed, tuổi của offer, `T` đã dùng (khi nguồn `SYNC`). Event này cùng epoch mới trên `/lio/health` và `/lio/odometry` là tín hiệu để đồng bộ lại; **đồng bộ lại thế nào do bên đồng bộ quyết** (D41, §4.1).
+- **Câu trả lời restart tới muộn (D33/O16):** nếu buffer predictor không còn khớp được thời điểm của lệnh (backend trả lời sau hơn 300 ms), frontend từ chối câu trả lời, phát `LioRestartRejected` với lý do stale, ở lại RESTARTING, không kéo lùi output, và tự phát lại lệnh với seed mới nhất.
 - Khi đang chờ câu trả lời restart, frontend chỉ áp dụng chính câu trả lời đó; kết quả scan mang epoch của một câu trả lời đã bị từ chối bị bỏ (`kStaleEpoch`).
 
-**Chuỗi khôi phục (D38).** LOST không phải điểm cuối. Bảng dưới đây là toàn bộ chuỗi, trên các state machine sẵn có. Không thêm trạng thái. Dòng có dấu ★ là đề xuất đang chờ owner (O29, O30, O31), chưa được triển khai.
+**Chuỗi khôi phục (D38, D41).** LOST không phải điểm cuối và LIO không bỏ cuộc. Bảng dưới đây là toàn bộ chuỗi, trên các state machine sẵn có, không thêm trạng thái. Dòng có dấu ★ còn chờ owner (O29 cách truyền seed, O33 cạnh mới của đồng bộ). Các dòng của `LioLifecycle` chờ AR3 được xác nhận trước khi code.
 
-| # | Bước của D38 | Nơi ghi | Cạnh hoặc hành động | Điều kiện | Event |
+| # | Bước | Nơi ghi | Cạnh hoặc hành động | Điều kiện | Event |
 |---|---|---|---|---|---|
-| 1 | Khôi phục tracking | `LioLifecycle` | DEGRADED → TRACKING | 5 scan tốt liên tiếp trước khi hết hạn của bước 1 | `StateTransition` CONFIRMATION_REACHED |
-| 1→2 | Bước 1 hết hạn | `LioLifecycle` | DEGRADED/TRACKING → LOST | suy biến > `degeneracy_lost`, gap > `gap_lost`, hoặc σ > ngưỡng (§3.1) | `StateTransition` |
-| 2a | Hình học trở lại | `LioLifecycle` | LOST → RESTARTING | một scan tốt trên map đóng băng | `StateTransition` GEOMETRY_RETURNED |
-| 2b ★ | Seed (O29) | `px4_bridge` (không đổi trạng thái) | phát `/lio/restart_seed` = `T⁻¹ × pose PX4` (vị trí và yaw, frame LIO) | health mới nhất RESTARTING; `T` FROZEN; mẫu PX4 `xy_valid` ∧ `z_valid`, tuổi ≤ 0.2 s | `RestartSeedOffered` hoặc `RestartSeedRefused(reason)` |
-| 2c | Khởi động lại | `LioLifecycle` (lệnh do node `lio` gửi khi nhận seed) | RESTARTING → INITIALIZING, epoch + 1, map mới | `restart(seed)` được backend xác nhận và predictor còn khớp (O16) | `LioRestart` (epoch cũ, mới, seed, `T`) hoặc `LioRestartRejected` |
-| 2d ★ | Thử lại (O30) | `LioLifecycle` | INITIALIZING (sau restart) → LOST | chưa TRACKING sau `reinit_timeout_s`, hoặc gap > `gap_lost` | `StateTransition` REINIT_TIMEOUT / LIDAR_GAP_LOST |
+| 1 | Khôi phục tracking | `LioLifecycle` | DEGRADED → TRACKING | 5 scan tốt liên tiếp trước khi bước 1 hết hạn | `StateTransition` CONFIRMATION_REACHED |
+| 1→2 | Bước 1 hết hạn | `LioLifecycle` | TRACKING/DEGRADED → LOST | suy biến > `degeneracy_lost`, gap > `gap_lost`, hoặc σ > ngưỡng (§3.1) | `StateTransition` |
+| 2 | Chờ dữ liệu ổn định | `LioLifecycle` | ở LOST | dữ liệu mất ổn định (gap, thông tin tự thân thấp) đặt lại mốc chờ | `LioStabilityReset` (giới hạn tần suất; reason, giá trị) |
+| 2a | Khởi động lại | `LioLifecycle`; effect do frontend phát | LOST → RESTARTING | ổn định liên tục `restart_stable_s` | `StateTransition` STABLE_DATA_DWELL |
+| 2b ★ | Seed | bên đồng bộ cung cấp offer (O29); frontend chọn | offer `SYNC` khớp được predictor, nếu không thì `SELF` | xem "Seed" ở trên | trong `LioRestart` |
+| 2c | Epoch mới | `LioLifecycle` | RESTARTING → INITIALIZING, epoch + 1, map mới | backend xác nhận và predictor còn khớp (O16) | `LioRestart` hoặc `LioRestartRejected` (frontend tự phát lại lệnh) |
+| 2d | Lần thử hỏng | `LioLifecycle` | INITIALIZING (vào từ RESTARTING) → LOST, quay lại bước 2 | chưa TRACKING sau `restart_stable_s`, gap > `gap_lost`, hoặc suy biến > `degeneracy_lost` | `StateTransition` REINIT_NOT_CONFIRMED / LIDAR_GAP_LOST / DEGENERACY_PERSISTED |
 | 3a | Tracking lại | `LioLifecycle` | INITIALIZING → TRACKING | map sẵn sàng và 5 scan tốt | `StateTransition` CONFIRMATION_REACHED |
-| 3b | Đồng bộ lại `T` | `AlignmentEstimator` | FROZEN → VALID | cặp đầu tiên của epoch mới qua cổng nhảy (0.5 m, 5°) | `AlignmentTransition` |
-| 3b ★ | EV chờ `T` (O31) | `px4_bridge` | chặn EV của epoch mới khi `T` còn FROZEN | tránh để chính EV mới làm EKF2 reset (F33c) trong lúc FROZEN, vốn dẫn tới INVALID | `EvGated` ALIGNMENT_FROZEN |
+| 3b ★ | Đồng bộ lại `T` | `AlignmentEstimator` | §4.1 "Đồng bộ lại sau epoch mới" | EV epoch mới luôn được gửi (D42); PX4 tự xử lý | `AlignmentTransition` |
 | 3c | Navigation | Supervisor (S2) | LOST → REACQUIRING → AVAILABLE | §2.3 | `StateTransition` |
-| 4 | Hết chuỗi | `AlignmentEstimator`, Supervisor | FROZEN → INVALID; HANDED_OVER | FROZEN quá `lio_recovery_timeout_s`, PX4 reset khi FROZEN, hoặc PX4 mất vị trí (không GPS) | `AlignmentTransition`; reason bàn giao §2.3 |
+| 4 | Bỏ cuộc | chỉ Supervisor (S2) | HANDED_OVER | §2.3 (`lio_recovery_timeout_s` của D11, PX4 mất vị trí ở không GPS, `T` INVALID) | reason bàn giao §2.3 |
 
-- Không có seed khi `T` INVALID: chuỗi đã hết, và bàn giao theo D4/D11 là việc của Supervisor (S2). Trước S2 (bay POSCTL) kết quả này chỉ được ghi log.
-- Ở profile không GPS, PX4 mất vị trí sau `EKF2_NOAID_TOUT` (mặc định 5 s) khi không có EV, nên ngân sách thực tế của chuỗi ngắn hơn `lio_recovery_timeout_s`.
+- Trước S2 (bay POSCTL), bước 4 không có ai thực hiện: LIO tiếp tục chờ và thử lại, và hệ chỉ ghi log.
+- Ở profile không GPS, PX4 mất vị trí sau `EKF2_NOAID_TOUT` (mặc định 5 s) khi không có EV; offer seed khi đó dừng và restart dùng nguồn `SELF`.
 
 ### §3.5 Thread (D30)
 
@@ -278,7 +286,8 @@ Hàng đợi tràn là một event có reason, và không bao giờ chặn threa
 - Mount base_link←LiDAR là bảng tầng (b) riêng của node.
 - Một scan chưa được IMU phủ thì chờ không chặn, tối đa 100 ms thời gian ROS. Hết thời gian, hoặc có scan mới hơn, thì scan bị bỏ kèm event.
 - `/lio/state` lấy một mẫu cho mỗi ô 10 ms sensor time. Covariance của nó là NaN (predictor không có covariance), và reset delta giữ theo lần reset cuối.
-- `/lio/scan` hoãn sang S3 (D33/O25). Bên gọi restart (seed `T⁻¹ × pose PX4`) được kéo lên lát S1c (D38); cách truyền seed chờ O29.
+- `/lio/scan` hoãn sang S3 (D33/O25). Khởi động lại do chính LIO phát (D41, §3.4), làm ở lát S1c; cách nhận offer seed của bên đồng bộ chờ O29.
+- **Ngưỡng stamp tương lai (O20, D40).** Mục đích: một mẫu IMU có stamp đi trước thời gian thật δ sẽ thành mốc IMU mới nhất, làm mọi mẫu thật sau nó bị từ chối là sai thứ tự trong δ, và làm quy tắc gap của lifecycle thấy một LiDAR gap giả dài thêm δ. Đây là bất khả kỹ thuật (hỏng trục thời gian), không phải quy tắc tuổi. Thiết kế lại ở AR3: ngưỡng theo chế độ đồng hồ (`kClockMode`), bằng sai lệch đồng hồ lớn nhất có thể giữa nơi đóng stamp và nơi nhận (mô phỏng: một trục thời gian), và phải nhỏ hơn biên của quy tắc gap (`gap_degraded` − chu kỳ scan) để δ không thể tự gây DEGRADED; node kiểm điều kiện này khi khởi động. Tới khi AR3 được xác nhận, giá trị 0.5 s của O20 giữ nguyên.
 
 Thread khác:
 - **events writer.**
@@ -300,7 +309,9 @@ Thread khác:
 - **Tham số EKF2 theo profile (D20, D28, D33/O23):**
   - cả hai profile: `EKF2_EV_DELAY=0` (vì `timestamp_sample` đã là thời điểm đo), `EKF2_DELAY_MAX=200`, `EKF2_EV_NOISE_MD=0`, `EKF2_EV_QMIN=0`;
   - có GPS: `EKF2_EV_CTRL=7`, `EKF2_GPS_CTRL=7`, `EKF2_HGT_REF=1`;
-  - không GPS: `EKF2_GPS_CTRL=0`, `EKF2_HGT_REF=3`; `EKF2_EV_CTRL=7` với nguồn heading compass, `15` với ev_yaw (D37). Không có GNSS thì EKF2 không có bảng địa từ: với compass nó fuse declination `EKF2_MAG_DECL` (mặc định 0), nên heading lệch đúng declination của nơi bay (SITL: +0.75°); giá trị theo nơi bay thuộc giai đoạn phần cứng.
+  - không GPS: `EKF2_GPS_CTRL=0`, `EKF2_HGT_REF=3`;
+  - `EKF2_EV_CTRL=15` ở cả hai profile (D42; trước đây có GPS là 7 theo D20). Còn chờ lần đo SITL của S1c; nếu cấu hình đầy đủ hỏng ở một profile thì đề xuất ngoại lệ kèm số đo, owner quyết.
+  - Đọc code PX4 v1.17 (`ev_yaw_control.cpp`) để biết trước điều cần đo: EV yaw với frame FRD bắt đầu bằng một reset heading về EV và đặt `yaw_align` = false; khi GNSS đang fuse và `yaw_align` đúng thì EV yaw FRD không được bắt đầu hay tiếp tục; khi EV yaw đang fuse thì compass không được fuse (`mag_control.cpp`). Vì vậy nguồn heading cuối cùng và các lần reset heading phụ thuộc thứ tự GNSS, compass và EV lúc khởi động và khi mất GNSS.
 
 **Alignment `T_px4←lio`, 4-DoF (x, y, z, yaw)**
 
@@ -327,7 +338,13 @@ INIT ──20 cặp nhất quán liên tiếp──► VALID ──LIO LOST─�
 ```
 
 - Cạnh INVALID → INIT (LIO TRACKING) có trong `kAlignmentTransitions` từ S1a; sơ đồ ghi lại cho khớp code. Sau INIT, `T` là một phép biến đổi mới: frame LIO cũ và mới không còn liên tục qua `T`.
-- "LIO LOST" ở trên nghĩa là mọi health không TRACKING (D33/O22). Sau khi LIO khởi động lại (§3.4), FROZEN → VALID xảy ra ở cặp đầu tiên của epoch mới qua cổng nhảy.
+- "LIO LOST" ở trên nghĩa là mọi health không TRACKING (D33/O22).
+- **Đồng bộ lại sau epoch mới (D41, D42; các điểm có ★ chờ O33).** Bên đồng bộ tự quyết cách đồng bộ lại. Cửa sổ đồng bộ lại bắt đầu ở health TRACKING đầu tiên của một epoch mới hơn epoch lúc `T` đóng băng, và kết thúc khi `T` VALID hoặc INIT.
+  - Giữ nguyên: VALID → FROZEN khi health không TRACKING; FROZEN → INVALID sau `alignment_frozen_max_s` (tuổi của `T`, không phải LIO bỏ cuộc); INVALID → INIT khi LIO TRACKING; cổng nhảy và bước lọc đo tại xe; reset PX4 khi VALID áp tất định theo G.
+  - Cặp đầu tiên của epoch mới qua cổng nhảy: FROZEN → VALID (cạnh sẵn có). Thường gặp khi seed có nguồn `SYNC`.
+  - ★ Reset PX4 trong cửa sổ (ví dụ EKF2 reset vị trí hay heading vì EV epoch mới, F33c; EV không bị giữ lại, D42) được áp tất định như khi VALID, `T` ở lại FROZEN để cặp kế tiếp quyết. Ngoài cửa sổ (LIO còn mất), quy tắc cũ được giữ: reset PX4 khi FROZEN → INVALID, vì không còn cặp nào kiểm lại được `T`.
+  - ★ Cặp của epoch mới bị cổng nhảy từ chối liên tục `alignment_resync_window_s` (tầng b, beta 2.0 s ≈ 20 cặp, khoảng [0.5, 10]) thì FROZEN → INIT (cạnh mới, reason `RESYNC_DISCONTINUITY`), không chờ tới `alignment_frozen_max_s`. Thường gặp khi seed có nguồn `SELF`: frame LIO mới, `T` mới.
+  - Bên đồng bộ cung cấp offer seed (§3.4) khi `T` VALID hoặc FROZEN và mẫu PX4 có `xy_valid` ∧ `z_valid`; cách truyền chờ O29.
 
 - Xuất `/alignment` gồm: `T`, trạng thái, tuổi, residual. Topic được phát ở mỗi output của `on_lio`/`on_tick` và ở output `on_px4` có lý do (D33/O21).
 
@@ -512,8 +529,8 @@ Node `px4_bridge` là target thứ hai của package `uavnav_px4_bridge`, còn t
 | Lát | Nội dung | Kiểm tra |
 |---|---|---|
 | S0 | `uavnav_core`, `uavnav_interfaces`, khung build, gate tối giản (thay `gate.sh` và các validator của `main`) | Unit test |
-| S1 | `uavnav_lio` và `uavnav_px4_bridge`, tham số PX4 theo profile | Hover ở mode Position của PX4, EKF2 fuse EV, log `T`. Kiểm giả thuyết F34. Cách kiểm (D33/O24): stick giữa qua `/fmu/in/manual_control_input`, dự phòng Hold; F34 kiểm ở heading khởi động khác hướng đông, cả hai profile. Kết quả (D35): có GPS thì `yaw_T` ≈ π/2 − yaw spawn (lệch ≤ 3°); không GPS thì EKF2 lấy heading từ EV yaw nên `yaw_T` ≈ 0 và frame PX4 trùng frame bắt đầu của LIO. D37 giới hạn kết quả này cho nguồn heading ev_yaw; không GPS có compass được kiểm lại ở S1c |
-| S1c | Nguồn heading là trục profile (D37); chuỗi khôi phục LIO §3.4: bên gọi restart, seed `T⁻¹ × pose PX4`, đồng bộ lại `T` (D38); benchmark drift theo vận tốc và đối chiếu datasheet (D39). Chạy trước S2, bay POSCTL | Hover F34 theo nguồn heading; cắt LiDAR và leo mất hình học trong sim (fault injection); bay đoạn dài 1–5 m/s, drift LIO và EKF2 so ground truth |
+| S1 | `uavnav_lio` và `uavnav_px4_bridge`, tham số PX4 theo profile | Hover ở mode Position của PX4, EKF2 fuse EV, log `T`. Kiểm giả thuyết F34. Cách kiểm (D33/O24): stick giữa qua `/fmu/in/manual_control_input`, dự phòng Hold; F34 kiểm ở heading khởi động khác hướng đông, cả hai profile. Kết quả (D35): có GPS thì `yaw_T` ≈ π/2 − yaw spawn (lệch ≤ 3°); không GPS thì EKF2 lấy heading từ EV yaw nên `yaw_T` ≈ 0 và frame PX4 trùng frame bắt đầu của LIO. D42 thay kỳ vọng này: `T` hấp thụ mọi lệch heading PX4 chọn, kiểm bằng độ ổn định của `T` và drift, không bằng giá trị `yaw_T` |
+| S1c | Cấu hình EV đầy đủ với compass ở cả hai profile, đo trong SITL (D42); quy tắc nhận/từ chối theo hậu quả, một hàm `CorrectionVerdict` (D40, AR3); LIO không bỏ cuộc và tự khởi động lại, seed từ bên đồng bộ, đồng bộ lại `T` (D38, D41); benchmark drift theo vận tốc và đối chiếu datasheet (D39). Chạy trước S2, bay POSCTL | Hover với EV đầy đủ ở hai profile; cắt LiDAR và leo mất hình học trong sim (fault injection), không có restart lặp ở vùng không ổn định; bay đoạn dài 1–5 m/s, drift LIO và EKF2 so ground truth |
 | S2 | `uavnav_px4_mode`, Supervisor tối giản, quỹ đạo thẳng, yaw Y1/Y3a, reason bàn giao | Bay tới waypoint trong môi trường trống |
 | S3 | `uavnav_world`, `uavnav_planning`, commit timeline, R1–R5 | Scene có vật cản |
 | S4 | NavAvailability LOST/REACQUIRING trong Supervisor khi bay mission, phanh, guard bỏ cuộc (khởi động lại LIO đã ở S1c) | Fault injection khi bay mission |
