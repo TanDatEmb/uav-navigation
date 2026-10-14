@@ -140,3 +140,17 @@ stress:
 # The governance tools quote the marker words in their own source and messages; they are not product code.
 workaround_exclude_globs: [tools/uavnav/arch_*, tools/uavnav/archlib.py, tools/uavnav/check_change.py]
 workaround_regex: '(?i)\b(workaround|hack|temporary|temporarily|for now|FIXME|XXX|kludge)\b'
+
+# docs/architecture/AS_BUILT.md: one section per product package, written by whoever built it, once the
+# part is tested and stable. Each section carries a Mermaid diagram and "Verified at: `<sha>`" (the commit
+# whose code the diagram describes). A section more than as_built_stale_commits behind its package is a WARN.
+as_built_stale_commits: 5
+as_built_packages:
+  uavnav_core: src/core/uavnav_core
+  uavnav_interfaces: src/core/uavnav_interfaces
+  uavnav_ros: src/core/uavnav_ros
+  fast_lio_core: src/estimation/fast_lio_core
+  uavnav_lio_core: src/estimation/uavnav_lio_core
+  uavnav_lio: src/estimation/uavnav_lio
+  uavnav_px4_bridge: src/px4/uavnav_px4_bridge
+  uavnav_bringup: src/uavnav_bringup

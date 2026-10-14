@@ -19,6 +19,7 @@ thiết kế vẫn ở [SYSTEM_DESIGN.md](architecture/SYSTEM_DESIGN.md), lý do
 | Plan triển khai theo lát | `docs/plans/*.md` (kế hoạch, không phải nguồn của thiết kế) |
 | Quy tắc cấu trúc code và cách làm việc | [AGENTS.md](../AGENTS.md) |
 | Quy tắc kiểm soát thay đổi (file này) và phần máy đọc được | file này, [arch_rules.yaml](../tools/uavnav/arch_rules.yaml) |
+| Kiến trúc **như đã xây** (sơ đồ và mô tả khớp code đang chạy, do người làm vẽ sau khi phần đó đã kiểm thử ổn định) | [AS_BUILT.md](architecture/AS_BUILT.md) |
 | Bằng chứng chạy (SITL) | `log/sitl/<run>/` (không vào Git); tham chiếu bằng `run:<id>` cộng commit |
 
 Plan không được mâu thuẫn spec. Khi plan và spec khác nhau, spec thắng và plan phải sửa.
@@ -168,6 +169,12 @@ Architecture → Task → Implementation → Discovery → Phân loại tác đ�
 | Verification | Test theo mức: thành phần, tích hợp, nghiệm thu. Chỉ chạy mới tính; không suy diễn PASS |
 | Đối soát | Docs → Code: dòng TRACEABILITY chỉ ở mức đã có bằng chứng. Code → Docs: đổi contract, ngữ nghĩa trạng thái, chủ sở hữu hay ranh giới thì cập nhật spec cùng thay đổi. Test → Docs: kết quả đổi nhận định thì đổi mức |
 | Cuối WP | `make gate` (chạy kiểm tĩnh gồm `arch_check` và `check_change`); xem `arch_health.py` trước khi đóng lát |
+
+**Quy tắc kiến trúc như đã xây (D45).** SYSTEM_DESIGN và plan là bản phác thảo và lộ trình; trong lúc làm, code chạy sẽ phát sinh và sửa đổi. Người trực tiếp làm là người duy nhất nắm đúng thực tại, nên khi một phần đã xong và đã kiểm thử ổn định (mức `COMPONENT_VERIFIED` trở lên, không còn sửa cấu trúc), họ **vừa làm vừa vẽ lại** phần đó vào [AS_BUILT.md](architecture/AS_BUILT.md), cùng lát với việc làm, chậm nhất ở task đóng lát:
+- mỗi package sản phẩm có một mục `## <package>` với sơ đồ Mermaid (process, thread, topic và QoS, hàng đợi, state machine như trong code), mô tả ngắn thứ có thật, bảng trạng thái/cạnh lấy từ code, bằng chứng (test, `run:`), và chỗ lệch so với SYSTEM_DESIGN (trỏ tới D\*/O\*/DV\*). Dòng `Verified at: `<sha>`` ghi commit mà sơ đồ mô tả;
+- chỉ vẽ cái đã chạy được và đã kiểm; phần chưa xây ghi "chưa xây", không vẽ theo thiết kế;
+- khi lệch thiết kế, AS_BUILT thắng về hiện trạng và SYSTEM_DESIGN thắng về ý định; chỗ lệch thành `DV*` hoặc cập nhật spec qua D\*, không để hai bản nói khác nhau mà không ai ghi;
+- `arch_check.py` bắt buộc mỗi package sản phẩm có mục, sơ đồ và commit có thật, và cảnh báo khi mục đã cũ hơn code quá `as_built_stale_commits` commit. Báo cáo task nêu thêm dòng `As-built:` (đã cập nhật mục nào, hay vì sao chưa cần).
 
 Tiến độ báo cáo theo phạm vi: *dự kiến*, *đã code*, *đã kiểm chứng*, *đã nghiệm thu*, *rủi ro mở*, *thêm/bớt phạm vi*,
 *lệch*. Không dùng số commit, số dòng hay tỷ lệ task làm tỷ lệ hoàn thành. Chưa có trọng số hay tiêu chí nghiệm thu rõ thì

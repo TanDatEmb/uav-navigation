@@ -51,6 +51,7 @@ class Repo:
         self.run("config", "user.email", "t@example.com")
         self.run("config", "user.name", "t")
         self.rules = copy.deepcopy(archlib.load_rules())
+        self.rules["as_built_packages"] = {}
         self.write("docs/architecture/SYSTEM_DESIGN.md", DESIGN)
         self.write("docs/architecture/DECISIONS.md", DECISIONS)
         self.write("docs/TRACEABILITY.md", TRACE_HEAD + DV_HEAD)

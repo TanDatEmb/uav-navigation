@@ -281,11 +281,50 @@ def check_invariants(root: pathlib.Path, rules: dict) -> list[Finding]:
     return out
 
 
+def check_as_built(root: pathlib.Path, rules: dict) -> list[Finding]:
+    """Every product package needs an as-built section with a diagram and the commit it was verified at."""
+    path = root / "docs/architecture/AS_BUILT.md"
+    where = "docs/architecture/AS_BUILT.md"
+    if not rules.get("as_built_packages"):
+        return []
+    if not path.exists():
+        return [Finding("ERROR", where, "missing: write the as-built architecture (docs/CHANGE_CONTROL.md section 7)")]
+    text = path.read_text(encoding="utf-8")
+    sections = {m.group(1).strip(): body for m, body in _split_sections(text)}
+    index = archlib.EvidenceIndex(root)
+    out: list[Finding] = []
+    for package, directory in rules.get("as_built_packages", {}).items():
+        body = sections.get(package)
+        if body is None:
+            out.append(Finding("ERROR", where, f"no '## {package}' section"))
+            continue
+        if "```mermaid" not in body:
+            out.append(Finding("ERROR", where, f"section {package} has no Mermaid diagram"))
+        m = re.search(r"Verified at: `([0-9a-f]{7,40})`", body)
+        if not m:
+            out.append(Finding("ERROR", where, f"section {package} has no 'Verified at: `<sha>`'"))
+        elif not index.commit_exists(m.group(1)):
+            out.append(Finding("ERROR", where, f"section {package}: commit {m.group(1)} not found"))
+        else:
+            behind = int(archlib.git(root, "rev-list", "--count", f"{m.group(1)}..HEAD", "--", directory).strip() or 0)
+            if behind > rules.get("as_built_stale_commits", 5):
+                out.append(Finding("WARN", where, f"section {package} is {behind} commits behind its code: re-draw it"))
+    return out
+
+
+def _split_sections(text: str):
+    parts = list(re.finditer(r"^## (.+)$", text, re.M))
+    for i, m in enumerate(parts):
+        end = parts[i + 1].start() if i + 1 < len(parts) else len(text)
+        yield m, text[m.end():end]
+
+
 def run_checks(root: pathlib.Path, rules: dict, today: datetime.date | None = None,
                strict_dates: bool = False) -> list[Finding]:
     today = today or datetime.date.today()
     return (check_traceability(root) + check_deviations(root, today, strict_dates)
-            + check_dependencies(root, rules) + check_invariants(root, rules))
+            + check_dependencies(root, rules) + check_invariants(root, rules)
+            + check_as_built(root, rules))
 
 
 def main(argv: list[str] | None = None) -> int:

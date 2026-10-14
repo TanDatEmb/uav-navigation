@@ -175,5 +175,42 @@ class DependencyTest(unittest.TestCase):
         self.assertEqual(errors(self.repo), [])
 
 
+class AsBuiltTest(unittest.TestCase):
+    def setUp(self):
+        self.repo = Repo()
+        self.repo.write("src/core/pkg/x.cpp", "int x;\n")
+        self.sha = self.repo.commit("feat: pkg")
+        self.repo.rules["as_built_packages"] = {"pkg": "src/core/pkg"}
+        self.repo.rules["as_built_stale_commits"] = 1
+
+    def tearDown(self):
+        self.repo.close()
+
+    def found(self):
+        return [str(f) for f in arch_check.run_checks(self.repo.root, self.repo.rules, today=TODAY)]
+
+    def section(self, body):
+        self.repo.write("docs/architecture/AS_BUILT.md", f"# As built\n\n## pkg\n\n{body}\n")
+
+    def test_missing_file_section_diagram_and_sha_are_errors(self):
+        self.assertTrue(any("AS_BUILT.md: missing" in e for e in self.found()))
+        self.repo.write("docs/architecture/AS_BUILT.md", "# As built\n")
+        self.assertTrue(any("no '## pkg' section" in e for e in self.found()))
+        self.section("text only")
+        found = self.found()
+        self.assertTrue(any("no Mermaid diagram" in e for e in found))
+        self.assertTrue(any("no 'Verified at" in e for e in found))
+        self.section("```mermaid\nflowchart LR\n a-->b\n```\nVerified at: `deadbeef`")
+        self.assertTrue(any("commit deadbeef not found" in e for e in self.found()))
+
+    def test_a_complete_section_passes_and_a_stale_one_warns(self):
+        self.section(f"```mermaid\nflowchart LR\n a-->b\n```\nVerified at: `{self.sha[:8]}`")
+        self.assertEqual([e for e in self.found() if "AS_BUILT" in e], [])
+        for i in range(2):
+            self.repo.write("src/core/pkg/x.cpp", f"int x = {i + 1};\n")
+            self.repo.commit(f"fix: change {i}")
+        self.assertTrue(any("commits behind its code" in e for e in self.found()))
+
+
 if __name__ == "__main__":
     unittest.main()

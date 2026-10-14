@@ -86,7 +86,7 @@ def main() -> int:
             errors.append('retired docs/refactor directory still exists')
         if (root / 'docs/adr').exists():
             errors.append('retired docs/adr directory still exists')
-        extra = [p for p in (root / 'docs/architecture').glob('*.md') if p.name not in ('SYSTEM_DESIGN.md', 'DECISIONS.md')]
+        extra = [p for p in (root / 'docs/architecture').glob('*.md') if p.name not in ('SYSTEM_DESIGN.md', 'DECISIONS.md', 'AS_BUILT.md')]
         errors.extend(f'competing architecture document: {p.relative_to(root)}' for p in extra)
         for required in ['docs/architecture/SYSTEM_DESIGN.md', 'docs/architecture/DECISIONS.md', 'docs/TRACEABILITY.md']:
             if not (root / required).is_file():
