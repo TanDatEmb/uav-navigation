@@ -1,4 +1,4 @@
-"""Tests for tools.uavnav.px4_profile (PX4 localization profiles, D20, D28, D33/O23)."""
+"""Tests for tools.uavnav.px4_profile (PX4 localization profiles, D42, D28, D33/O23)."""
 import contextlib
 import io
 import os
@@ -15,7 +15,7 @@ NO_GPS = ROOT / "config" / "px4" / "profiles" / "no_gps.yaml"
 GPS_TEXT = """\
 localization: gps
 px4_params:
-  EKF2_EV_CTRL: 7
+  EKF2_EV_CTRL: 15
   EKF2_EV_QMIN: 0
   EKF2_EV_DELAY: 0
   EKF2_DELAY_MAX: 200
@@ -39,12 +39,13 @@ class Px4ProfileTest(unittest.TestCase):
         for needle in needles:
             self.assertIn(needle, str(ctx.exception))
 
-    def test_d20_ev_ctrl_per_profile(self):
+    def test_d42_ev_ctrl_is_full_in_both_profiles(self):
         gps = px4_profile.load(GPS)
         no_gps = px4_profile.load(NO_GPS)
         self.assertEqual(gps.localization, "gps")
         self.assertEqual(no_gps.localization, "no_gps")
-        self.assertEqual(gps.px4_params["EKF2_EV_CTRL"], 7)
+        # D42: EV position, velocity and yaw fused in both profiles; PX4 chooses the heading source.
+        self.assertEqual(gps.px4_params["EKF2_EV_CTRL"], 15)
         self.assertEqual(no_gps.px4_params["EKF2_EV_CTRL"], 15)
         # The rest of O23 per profile.
         self.assertEqual((gps.px4_params["EKF2_GPS_CTRL"], gps.px4_params["EKF2_HGT_REF"]), (7, 1))
@@ -53,8 +54,8 @@ class Px4ProfileTest(unittest.TestCase):
             self.assertEqual(profile.px4_params["EKF2_EV_DELAY"], 0)
             self.assertEqual(profile.px4_params["EKF2_DELAY_MAX"], 200)
             self.assertEqual(profile.px4_params["EKF2_EV_NOISE_MD"], 0)
-        # A gps file with EV yaw fused (15) is the no_gps value: refused, naming the key.
-        self.assert_rejected(GPS_TEXT.replace("EKF2_EV_CTRL: 7", "EKF2_EV_CTRL: 15"), "EKF2_EV_CTRL")
+        # The D20 gps value (EV yaw off, 7) is no longer the decided one: refused, naming the key.
+        self.assert_rejected(GPS_TEXT.replace("EKF2_EV_CTRL: 15", "EKF2_EV_CTRL: 7"), "EKF2_EV_CTRL")
 
     def test_ev_qmin_is_zero(self):
         self.assertEqual(px4_profile.load(GPS).px4_params["EKF2_EV_QMIN"], 0)
@@ -70,7 +71,7 @@ class Px4ProfileTest(unittest.TestCase):
         self.assert_rejected(GPS_TEXT.replace("  EKF2_HGT_REF: 1\n", ""), "EKF2_HGT_REF")
         self.assert_rejected(GPS_TEXT + "extra: 1\n", "extra")
         self.assert_rejected(GPS_TEXT.replace("localization: gps", "localization: rtk"), "localization")
-        self.assert_rejected(GPS_TEXT + "  EKF2_EV_CTRL: 7\n", "EKF2_EV_CTRL")
+        self.assert_rejected(GPS_TEXT + "  EKF2_EV_CTRL: 15\n", "EKF2_EV_CTRL")
         self.assert_rejected(GPS_TEXT.replace("EKF2_DELAY_MAX: 200", "EKF2_DELAY_MAX: true"),
                              "EKF2_DELAY_MAX")
         self.assert_rejected("- not a mapping\n")
@@ -84,7 +85,7 @@ class Px4ProfileTest(unittest.TestCase):
         self.assertEqual(lines, sorted(lines))
         self.assertEqual(lines, [
             "export PX4_PARAM_EKF2_DELAY_MAX=200",
-            "export PX4_PARAM_EKF2_EV_CTRL=7",
+            "export PX4_PARAM_EKF2_EV_CTRL=15",
             "export PX4_PARAM_EKF2_EV_DELAY=0",
             "export PX4_PARAM_EKF2_EV_NOISE_MD=0",
             "export PX4_PARAM_EKF2_EV_QMIN=0",

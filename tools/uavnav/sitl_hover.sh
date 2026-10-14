@@ -3,9 +3,10 @@
 #
 #   tools/uavnav/sitl_hover.sh --probe --profile gps|no_gps [--hover-mode posctl|hold] [--dry-run]
 #   tools/uavnav/sitl_hover.sh --hover --profile gps|no_gps [--spawn-yaw-rad RAD] [--pattern hover|altitude_sweep]
-#                              [--hover-mode posctl|hold] [--dry-run]
+#                              [--hover-mode posctl|hold] [--gnss-outage-s S] [--dry-run]
 #   (make sitl-probe PROFILE=gps [HOVER_MODE=hold] [DRY_RUN=1];
-#    make sitl-hover PROFILE=gps [SPAWN_YAW_RAD=1.2] [PATTERN=hover|altitude_sweep] [HOVER_MODE=hold] [DRY_RUN=1])
+#    make sitl-hover PROFILE=gps [SPAWN_YAW_RAD=1.2] [PATTERN=hover|altitude_sweep] [HOVER_MODE=hold]
+#                    [GNSS_OUTAGE_S=10] [DRY_RUN=1])
 #
 # Both start, each in its own session and process group (setsid), with GZ_IP=127.0.0.1 and ROS_LOG_DIR in the
 # run directory: MicroXRCEAgent udp4 -p 8888; tools/simulation/run_px4_mid360.sh (GZ_GUI=0; Gazebo + PX4 SITL;
@@ -16,7 +17,9 @@
 #     px4_bridge, use_sim_time; the event logs in the run directory) and tools/uavnav/sitl_hover.py; bounded at
 #     300 s. --pattern altitude_sweep (S1b Task 13; gps profile and posctl only) flies 2.5 m steps to 20 m, 10 s
 #     each, and is judged by the data checks only (sitl_checks.py --sweep); tools/uavnav/lio_calibration.py
-#     analyses its directory.
+#     analyses its directory. --gnss-outage-s S (S1c Task 1; gps, pattern hover, 0 < S <= 30): the driver injects
+#     a GNSS outage (VEHICLE_CMD_INJECT_FAILURE, unit GPS, OFF then OK S s later) 20 s into the hover, and PX4 is
+#     started with SYS_FAILURE_EN=1 (UAVNAV_SYS_FAILURE_EN=1 to run_px4_mid360.sh), for this run only.
 # The ROS 2 processes (gz bridges, the launch, the driver) get FASTRTPS_DEFAULT_PROFILES_FILE=config/ros/fastdds_sitl.xml:
 # a 16 MB shared-memory segment, so a 645 KB best-effort cloud is not lost in transport (Task 11; without it ~15 %
 # of the clouds never reached lio). MicroXRCEAgent and PX4 keep their own DDS defaults.
@@ -25,7 +28,7 @@
 # the teardown verifies with pgrep that none of its processes remain. It never signals a process it did not
 # start. Then tools/uavnav/sitl_checks.py writes summary.json.
 #
-# Artifacts: log/sitl/<UTC stamp>-<profile>-probe/ or log/sitl/<UTC stamp>-<profile>-<pattern>[-yaw<RAD>]/ only
+# Artifacts: log/sitl/<UTC stamp>-<profile>-probe/ or log/sitl/<UTC stamp>-<profile>-<pattern>[-yaw<RAD>][-gnssout<S>]/ only
 # (process logs, ROS logs, PX4 working directory, records, event logs, *_meta.json, summary.json, harness.log).
 # Before anything starts: log/sitl/.lock (flock; a second harness exits 2), tools/uavnav/sitl_guard.py (colcon build/test or another SITL process, matched on
 # argv, own ancestors excluded), UDP 8888 free, no Gazebo world clock on GZ_IP, no SITL topic on the ROS graph.
@@ -47,11 +50,11 @@ XRCE_PORT=8888
 
 usage() {
   echo "usage: $0 --probe --profile gps|no_gps [--hover-mode posctl|hold] [--dry-run]" >&2
-  echo "       $0 --hover --profile gps|no_gps [--spawn-yaw-rad RAD] [--pattern hover|altitude_sweep] [--hover-mode posctl|hold] [--dry-run]" >&2
+  echo "       $0 --hover --profile gps|no_gps [--spawn-yaw-rad RAD] [--pattern hover|altitude_sweep] [--hover-mode posctl|hold] [--gnss-outage-s S] [--dry-run]" >&2
   exit 2
 }
 
-MODE="" PROFILE="" HOVER_MODE="posctl" DRY_RUN=0 PATTERN="hover" SPAWN_YAW_RAD="${UAVNAV_SPAWN_YAW_RAD:-}"
+MODE="" PROFILE="" HOVER_MODE="posctl" DRY_RUN=0 PATTERN="hover" SPAWN_YAW_RAD="${UAVNAV_SPAWN_YAW_RAD:-}" GNSS_OUTAGE_S=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --probe) [[ -z "${MODE}" ]] || usage; MODE=probe; shift ;;
@@ -60,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     --hover-mode) [[ $# -ge 2 ]] || usage; HOVER_MODE="$2"; shift 2 ;;
     --spawn-yaw-rad) [[ $# -ge 2 ]] || usage; SPAWN_YAW_RAD="$2"; shift 2 ;;
     --pattern) [[ $# -ge 2 ]] || usage; PATTERN="$2"; shift 2 ;;
+    --gnss-outage-s) [[ $# -ge 2 ]] || usage; GNSS_OUTAGE_S="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage ;;
     *) echo "sitl_hover: unknown argument: $1" >&2; usage ;;
@@ -79,6 +83,12 @@ case "${PATTERN}" in
 esac
 if [[ -n "${SPAWN_YAW_RAD}" ]] && ! "${PYTHON}" -c 'import math, sys; v = float(sys.argv[1]); sys.exit(0 if math.isfinite(v) and abs(v) <= 2 * math.pi else 1)' "${SPAWN_YAW_RAD}" 2>/dev/null; then
   echo "sitl_hover: --spawn-yaw-rad must be a finite number of radians in [-2 pi, 2 pi]: ${SPAWN_YAW_RAD}" >&2; usage
+fi
+if [[ -n "${GNSS_OUTAGE_S}" ]]; then
+  [[ "${MODE}" == hover && "${PROFILE}" == gps && "${PATTERN}" == hover ]] \
+    || { echo "sitl_hover: --gnss-outage-s needs --hover --profile gps --pattern hover" >&2; usage; }
+  "${PYTHON}" -c 'import math, sys; v = float(sys.argv[1]); sys.exit(0 if math.isfinite(v) and 0 < v <= 30 else 1)' "${GNSS_OUTAGE_S}" 2>/dev/null \
+    || { echo "sitl_hover: --gnss-outage-s must be a number of seconds in (0, 30]: ${GNSS_OUTAGE_S}" >&2; usage; }
 fi
 PROFILE_FILE="${WS_DIR}/config/px4/profiles/${PROFILE}.yaml"
 LIO_CONFIG="${WS_DIR}/config/lio/sim.yaml"
@@ -171,6 +181,8 @@ fi
 # PX4 binary, rootfs, Gazebo, world and model, the profile (O23 allow-list) and the spawn yaw.
 SPAWN_ENV=()
 if [[ -n "${SPAWN_YAW_RAD}" ]]; then SPAWN_ENV=(UAVNAV_SPAWN_YAW_RAD="${SPAWN_YAW_RAD}"); fi
+# The failure injection is a harness parameter (never a profile one), enabled only for the outage run.
+if [[ -n "${GNSS_OUTAGE_S}" ]]; then SPAWN_ENV+=(UAVNAV_SYS_FAILURE_EN=1); fi
 echo "sitl_hover: run_px4_mid360.sh --check-only"
 env UAVNAV_PX4_PROFILE="${PROFILE_FILE}" PYTHON="${PYTHON}" "${SPAWN_ENV[@]}" \
   tools/simulation/run_px4_mid360.sh --check-only | sed 's/^/  /' || refuse "run_px4_mid360.sh --check-only failed (see above)"
@@ -180,7 +192,7 @@ if [[ "${MODE}" == probe ]]; then
   RUN_DIR="${WS_DIR}/log/sitl/${STAMP}-${PROFILE}-probe"
   TIMEOUT_S="${PROBE_TIMEOUT_S}"
 else
-  RUN_DIR="${WS_DIR}/log/sitl/${STAMP}-${PROFILE}-${PATTERN}${SPAWN_YAW_RAD:+-yaw${SPAWN_YAW_RAD}}"
+  RUN_DIR="${WS_DIR}/log/sitl/${STAMP}-${PROFILE}-${PATTERN}${SPAWN_YAW_RAD:+-yaw${SPAWN_YAW_RAD}}${GNSS_OUTAGE_S:+-gnssout${GNSS_OUTAGE_S}}"
   TIMEOUT_S="${HOVER_TIMEOUT_S}"
 fi
 export ROS_LOG_DIR="${RUN_DIR}/ros_log"  # the ROS and launch logs stay in the run directory
@@ -213,7 +225,7 @@ driver_cmd() {  # $1 = budget in seconds
   else
     DRIVER_CMD=(env "${DDS_ENV[@]}" "${PYTHON}" tools/uavnav/sitl_hover.py --run-dir "${RUN_DIR}" --profile "${PROFILE}"
                 --spawn-yaw-rad "${SPAWN_YAW_RAD:-0}" --pattern "${PATTERN}" --hover-mode "${HOVER_MODE}"
-                --budget-s "$1")
+                --budget-s "$1" ${GNSS_OUTAGE_S:+--gnss-outage-s "${GNSS_OUTAGE_S}"})
   fi
 }
 if [[ "${MODE}" == probe ]]; then
@@ -348,7 +360,7 @@ trap on_exit EXIT
 trap 'log "interrupted (SIGINT)"; exit 130' INT
 trap 'log "terminated (SIGTERM)"; exit 130' TERM
 
-log "${MODE} run dir ${RUN_DIR}; profile ${PROFILE_FILE}; spawn yaw ${SPAWN_YAW_RAD:-0} rad; hover mode ${HOVER_MODE}; bound ${TIMEOUT_S} s"
+log "${MODE} run dir ${RUN_DIR}; profile ${PROFILE_FILE}; spawn yaw ${SPAWN_YAW_RAD:-0} rad; hover mode ${HOVER_MODE}; GNSS outage ${GNSS_OUTAGE_S:-none} s; bound ${TIMEOUT_S} s"
 T0=${SECONDS}
 DEADLINE=$((T0 + TIMEOUT_S))
 for name in "${GROUP_NAMES[@]}"; do

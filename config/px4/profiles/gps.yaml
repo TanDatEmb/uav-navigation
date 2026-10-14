@@ -1,10 +1,11 @@
 # PX4 localization profile "gps" (tier c, SYSTEM_DESIGN §0, §4.1, §6.2).
-# EKF2 always fuses GNSS; EV is sent FRD with EV yaw off (D20); quality is logged only (D28);
+# EKF2 always fuses GNSS; EV is sent FRD and fused in full, position, velocity, height and yaw (D42: PX4 chooses
+# the heading source; T absorbs whatever heading it chose); quality is logged only (D28);
 # EV delay, horizon, noise mode, GNSS and height source per D33/O23. Every other EKF2 value stays
 # at the PX4 default. Validated by tools/uavnav/px4_profile.py (unknown or changed keys refuse start).
 localization: gps
 px4_params:
-  EKF2_EV_CTRL: 7
+  EKF2_EV_CTRL: 15
   EKF2_EV_QMIN: 0
   EKF2_EV_DELAY: 0
   EKF2_DELAY_MAX: 200

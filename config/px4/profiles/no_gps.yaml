@@ -1,5 +1,5 @@
 # PX4 localization profile "no_gps" (tier c, SYSTEM_DESIGN §0, §4.1, §6.2).
-# Only where LIO holds; EV is sent FRD with EV yaw on (D20); quality is logged only (D28);
+# Only where LIO holds; EV is sent FRD and fused in full, yaw included (D42); quality is logged only (D28);
 # EV delay, horizon, noise mode, no GNSS aiding and EV height reference per D33/O23. Every other
 # EKF2 value stays at the PX4 default. Validated by tools/uavnav/px4_profile.py.
 localization: no_gps

@@ -84,10 +84,12 @@ PROBE_CHECKS = {"posctl_accepted", "cloud_layout", "cloud_non_finite_ratio", "im
 # 35..118 s, the 60 s hover window 50..110 s at 2.5 m. Every stream is nominal; the keyword arguments break one.
 H_START_NS, H_END_NS = 50 * S, 110 * S
 RUN_START_NS, RUN_END_NS = 10 * S, 120 * S
-HOVER_CHECKS = {"posctl_accepted", "ekf2_ev_pos", "ekf2_ev_yaw", "lio_tracking", "lio_flap_rate", "alignment_valid",
+HOVER_CHECKS = {"posctl_accepted", "ekf2_ev_pos", "ekf2_heading", "lio_tracking", "lio_flap_rate", "alignment_valid",
                 "alignment_rate", "alignment_jump_rejections", "drift", "lio_state_rate", "ev_age",
-                "px4_time_identity", "events", "f34_values"}
+                "px4_time_identity", "events", "f34_values", "ev_variance", "gnss_consistency"}
+HOVER_CHECKS_NO_GPS = HOVER_CHECKS - {"gnss_consistency"}   # GNSS consistency is judged in the gps profile only
 HEALTH_CODE = {"INITIALIZING": 0, "TRACKING": 1, "DEGRADED": 2, "LOST": 3}
+HEADING_FLAGS = ("cs_mag_hdg", "cs_mag_3d", "cs_ev_yaw")     # the heading sources the recorder keeps
 
 
 def event(t_ns, component, name, before="", after="", reason="", epoch=1, **values):
@@ -123,25 +125,33 @@ def lio_state_at(t, states):
     return current
 
 
-def make_hover_run(run_dir, profile="gps", spawn_yaw_rad=0.0, lio_transitions=(), ev_pos_gap=None, ev_yaw=None,
+def make_hover_run(run_dir, profile="gps", spawn_yaw_rad=0.0, lio_transitions=(), ev_pos_gap=None, heading=None,
                    px4_offset_ms=1, scan_too_old_ages_s=(), lio_events=(), bridge_events=(), lio_summary=None,
                    bridge_summary=None, alignment_states=(), phase_ok=True, px4_north_m=0.0, truth_north_m=0.0,
-                   state_period_ms=10, alignment_period_ms=100, ev_age_ms=40, yaw_t_rad=None):
+                   state_period_ms=10, alignment_period_ms=100, ev_age_ms=40, yaw_t_rad=None, heading_resets=(),
+                   gnss_gap=None, gnss_outage=None, ev_position_sigma_m=0.03):
     """Write a synthetic hover run.
 
     lio_transitions: extra [(t_ns, before, after)] LIO lifecycle changes after TRACKING at 22 s (health and the
     StateTransition events follow them; odometry is published only in TRACKING). ev_pos_gap: (start_ns, end_ns)
-    with cs_ev_pos false. ev_yaw: cs_ev_yaw value (default: false for gps, true for no_gps).
+    with cs_ev_pos false. heading: [(t_ns, source)] the EKF2 heading source from t_ns on, source one of "none",
+    "mag_hdg", "mag_3d", "ev_yaw" (default: none, then from 26 s ev_yaw for no_gps and mag_3d for gps);
+    cs_yaw_align holds from the first source that is not "none".
     alignment_states: extra [(t_ns, state_code)] alignment state changes after VALID at 25 s.
     px4_north_m, truth_north_m: northward displacement over the hover window of PX4 and of the ground truth.
-    yaw_t_rad: the yaw of T in /alignment (default: the D35 value, pi/2 - spawn yaw for gps, 0 for no_gps)."""
+    yaw_t_rad: the yaw of T in /alignment (default: pi/2 - spawn yaw for gps, 0 for no_gps, as measured in S1b).
+    heading_resets: [(t_ns, delta_rad)] EKF2 heading resets (vehicle_local_position heading_reset_counter +1 and
+    delta_heading). gnss_gap: (start_ns, end_ns) with cs_gnss_pos false (gps). gnss_outage: the hover_meta.json
+    "gnss_outage" record (None: no outage requested). ev_position_sigma_m: the EV position sigma sent, every axis."""
     run_dir = pathlib.Path(run_dir)
     transitions = [(22 * S, "INITIALIZING", "TRACKING")] + sorted(lio_transitions)
     states = [(t, after) for t, _, after in transitions]
     yaw_t = yaw_t_rad if yaw_t_rad is not None else (math.pi / 2 - spawn_yaw_rad if profile == "gps" else 0.0)
+    if heading is None:
+        heading = [(RUN_START_NS, "none"), (26 * S, "ev_yaw" if profile == "no_gps" else "mag_3d")]
     lio_state, health, odometry, alignment, ev = [], [], [], [], []
     for t in range(20 * S, 118 * S, state_period_ms * MS):
-        lio_state.append({"arrival_ns": t + 2 * MS, "stamp_ns": t, "epoch": 1, "lio_state": 1,
+        lio_state.append({"arrival_ns": t + 2 * MS, "wall_ns": t + 5 * S, "stamp_ns": t, "epoch": 1, "lio_state": 1,
                           "x": 0.0, "y": 0.0, "z": 2.5, "qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0,
                           "vx": 0.0, "vy": 0.0, "vz": 0.0})
     align_changes = [(25 * S, 1)] + sorted(alignment_states)
@@ -162,25 +172,34 @@ def make_hover_run(run_dir, profile="gps", spawn_yaw_rad=0.0, lio_transitions=()
                               "z_m": 0.0, "yaw_rad": yaw_t, "age_s": 0.0, "residual_position_m": 0.01,
                               "residual_yaw_rad": 0.001})
         if t >= 25 * S and name == "TRACKING":
+            variance = ev_position_sigma_m ** 2
             ev.append({"arrival_ns": t + ev_age_ms * MS, "timestamp_us": (t + ev_age_ms * MS) // 1000,
-                       "timestamp_sample_us": t // 1000})
+                       "timestamp_sample_us": t // 1000, "position_variance": [variance] * 3,
+                       "velocity_variance": [0.0004] * 3, "orientation_variance": [1e-6] * 3})
     vlp, truth = [], []
+    resets = sorted(heading_resets)
     for t in range(RUN_START_NS, 119 * S, 20 * MS):
         z = -TARGET_HEIGHT_M if 40 * S <= t <= 115 * S else 0.0
         progress = min(1.0, max(0.0, (t - H_START_NS) / (H_END_NS - H_START_NS)))
+        done = [delta for when, delta in resets if t >= when]
         vlp.append({"arrival_ns": t + 3 * MS, "timestamp_us": (t + px4_offset_ms * MS) // 1000,
                     "timestamp_sample_us": t // 1000, "xy_valid": True, "z_valid": True,
-                    "x": 0.01 + px4_north_m * progress, "y": -0.02, "z": z, "vz": 0.0, "heading": yaw_t})
+                    "x": 0.01 + px4_north_m * progress, "y": -0.02, "z": z, "vz": 0.0, "heading": yaw_t,
+                    "xy_reset_counter": 0, "z_reset_counter": 0, "heading_reset_counter": len(done),
+                    "delta_heading": done[-1] if done else 0.0})
         truth.append({"arrival_ns": t + 2 * MS, "stamp_ns": t, "x": -0.02, "y": 0.01 + truth_north_m * progress,
                       "z": -z})
     flags = []
-    if ev_yaw is None:
-        ev_yaw = profile == "no_gps"
+    schedule = sorted(heading)
     for t in range(RUN_START_NS, 119 * S, 200 * MS):
         fused = t >= 26 * S and not (ev_pos_gap and ev_pos_gap[0] <= t < ev_pos_gap[1])
+        source = [s for when, s in schedule if t >= when]
+        source = source[-1] if source else "none"
+        aligned = any(t >= when and s != "none" for when, s in schedule)
+        gnss = profile == "gps" and not (gnss_gap and gnss_gap[0] <= t < gnss_gap[1])
         flags.append({"arrival_ns": t + 2 * MS, "timestamp_us": t // 1000, "cs_ev_pos": fused,
-                      "cs_ev_yaw": bool(ev_yaw) and t >= 26 * S, "cs_ev_hgt": fused, "cs_ev_vel": fused,
-                      "cs_gnss_pos": profile == "gps"})
+                      "cs_ev_hgt": fused, "cs_ev_vel": fused, "cs_gnss_pos": gnss, "cs_yaw_align": aligned,
+                      **{flag: flag == f"cs_{source}" for flag in HEADING_FLAGS}})
     status = []
     for t in range(RUN_START_NS, 119 * S, 200 * MS):
         armed = 35 * S <= t <= 118 * S
@@ -212,7 +231,8 @@ def make_hover_run(run_dir, profile="gps", spawn_yaw_rad=0.0, lio_transitions=()
     phases[-1]["ok"] = phase_ok
     meta = {"profile": profile, "spawn_yaw_rad": spawn_yaw_rad, "pattern": "hover", "hover_mode": "posctl",
             "target_height_m": TARGET_HEIGHT_M, "ground_z_m": 0.0,
-            "hover_window": {"start_ns": H_START_NS, "end_ns": H_END_NS}, "phases": phases, "interrupted": False}
+            "hover_window": {"start_ns": H_START_NS, "end_ns": H_END_NS}, "phases": phases, "interrupted": False,
+            "gnss_outage": gnss_outage}
     (run_dir / "hover_meta.json").write_text(json.dumps(meta), encoding="utf-8")
     return run_dir
 
@@ -373,6 +393,9 @@ class SitlChecksTest(unittest.TestCase):
         self.assertEqual(checks["lio_flap_rate"]["value"]["degraded_to_tracking_in_window"], 0)
         self.assertAlmostEqual(checks["lio_state_rate"]["value"]["rate_hz"], 100.0, delta=0.1)
         self.assertAlmostEqual(checks["lio_state_rate"]["value"]["interarrival_p99_ms"], 10.0, places=6)
+        # T11 M2: the inter-arrival is also reported in wall time (the recorder's wall_ns), a cross-check of the
+        # /clock-time value whose resolution is one Gazebo step.
+        self.assertAlmostEqual(checks["lio_state_rate"]["value"]["interarrival_wall_p99_ms"], 10.0, places=6)
         self.assertAlmostEqual(checks["lio_state_rate"]["value"]["f23_step_max_m"], 0.0, places=9)
         self.assertAlmostEqual(checks["alignment_rate"]["value"]["rate_hz"], 10.0, delta=0.1)
         self.assertAlmostEqual(checks["ev_age"]["value"]["p99_ms"], 40.0, places=6)
@@ -421,11 +444,22 @@ class SitlChecksTest(unittest.TestCase):
     def test_fails_on_ev_fusion_gap(self):
         summary = self.hover(ev_pos_gap=(70 * S, 80 * S))  # 10 s of the 60 s window without EV position fusion
         self.assertEqual(self.failing(summary), {"ekf2_ev_pos"})
-        self.assertAlmostEqual(summary["checks"]["ekf2_ev_pos"]["value"]["fraction"], 250 / 300, places=6)
-        # EV yaw: never fused in the gps profile, fused in the no_gps profile (D20).
-        self.assertEqual(self.failing(self.hover(ev_yaw=True)), {"ekf2_ev_yaw"})
-        self.assertEqual(self.failing(self.hover(profile="no_gps")), set())
-        self.assertEqual(self.failing(self.hover(profile="no_gps", ev_yaw=False)), {"ekf2_ev_yaw", "f34_values"})
+        self.assertAlmostEqual(summary["checks"]["ekf2_ev_pos"]["value"]["fraction"], 50 / 60, places=4)
+        # D42: PX4 chooses the heading source; EV yaw fused or not fails nothing, in either profile.
+        for profile in ("gps", "no_gps"):
+            for source in ("ev_yaw", "mag_3d"):
+                summary = self.hover(profile=profile, heading=[(RUN_START_NS, "none"), (26 * S, source)])
+                self.assertEqual(self.failing(summary), set(), (profile, source))
+        # T11 M3: the fraction is weighted by time (each flags sample holds until the next one), not by sample.
+        # 3.2 s without EV fusion carried by two samples (70.0 and 71.6 s) is 5.3 % of the window: it fails,
+        # where a per-sample count (2 of 286) would pass.
+        make_hover_run(self.run_dir, ev_pos_gap=(70 * S, 73200 * MS))
+        flags = [r for r in self.read("estimator_status_flags.jsonl")
+                 if not (70 * S < r["arrival_ns"] < 73200 * MS) or r["arrival_ns"] in (70002 * MS, 71602 * MS)]
+        write_jsonl(self.run_dir / "estimator_status_flags.jsonl", flags)
+        summary = sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)
+        self.assertEqual(self.failing(summary), {"ekf2_ev_pos"})
+        self.assertAlmostEqual(summary["checks"]["ekf2_ev_pos"]["value"]["fraction"], 1 - 3.2 / 60, places=4)
 
     def flaps(self, count, start_s=60, every_s=15):
         transitions = []
@@ -465,12 +499,13 @@ class SitlChecksTest(unittest.TestCase):
         make_hover_run(self.run_dir)
         (self.run_dir / "estimator_status_flags.jsonl").unlink()
         failing = self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0))
-        self.assertEqual(failing, {"ekf2_ev_pos", "ekf2_ev_yaw"})
+        self.assertEqual(failing, {"ekf2_ev_pos", "ekf2_heading", "gnss_consistency"})
         for name, expected in (("events_lio.jsonl", {"events", "lio_tracking", "lio_flap_rate"}),
                                ("events_px4_bridge.jsonl", {"events", "alignment_valid",
-                                                             "alignment_jump_rejections"}),
+                                                             "alignment_jump_rejections", "f34_values"}),
                                ("ground_truth.jsonl", {"drift"}),
-                               ("vehicle_visual_odometry.jsonl", {"ev_age"}),
+                               ("vehicle_visual_odometry.jsonl", {"ev_age", "ev_variance"}),
+                               ("vehicle_local_position.jsonl", {"ekf2_heading", "drift"}),
                                ("lio_state.jsonl", {"lio_state_rate"}),
                                ("alignment.jsonl", {"alignment_valid", "alignment_rate", "f34_values"})):
             make_hover_run(self.run_dir)
@@ -562,7 +597,7 @@ class SitlChecksTest(unittest.TestCase):
         summary = self.hover(bridge_events=[reset_ok])
         self.assertEqual(self.failing(summary), set())
         self.assertEqual(summary["checks"]["alignment_valid"]["value"]["px4_resets"], 1)
-        self.assertEqual(self.failing(self.hover(bridge_events=[reset_bad])), {"alignment_valid"})
+        self.assertEqual(self.failing(self.hover(bridge_events=[reset_bad])), {"alignment_valid", "f34_values"})
 
     def test_hover_rates_and_ages(self):
         # /lio/state at 1/12 ms = 83 Hz fails; EV older than 150 ms (p99) fails.
@@ -579,7 +614,7 @@ class SitlChecksTest(unittest.TestCase):
                  (self.run_dir / "estimator_status_flags.jsonl").read_text(encoding="utf-8").splitlines()]
         write_jsonl(self.run_dir / "estimator_status_flags.jsonl", [r for r in flags if r["arrival_ns"] < H_START_NS])
         self.assertEqual(self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)),
-                         {"ekf2_ev_pos", "ekf2_ev_yaw"})
+                         {"ekf2_ev_pos", "ekf2_heading", "gnss_consistency"})
         # A torn line in an event log (a process killed mid-write) is missing evidence.
         make_hover_run(self.run_dir)
         with open(self.run_dir / "events_lio.jsonl", "a", encoding="utf-8") as f:
@@ -598,9 +633,9 @@ class SitlChecksTest(unittest.TestCase):
         return meta
 
     def test_hover_window_shorter_than_60_s_fails(self):
-        windowed = {"ekf2_ev_pos", "ekf2_ev_yaw", "lio_tracking", "lio_flap_rate",
+        windowed = {"ekf2_ev_pos", "ekf2_heading", "lio_tracking", "lio_flap_rate",
                     "alignment_valid", "alignment_rate", "alignment_jump_rejections", "drift", "lio_state_rate",
-                    "ev_age", "px4_time_identity", "f34_values"}
+                    "ev_age", "px4_time_identity", "f34_values", "ev_variance", "gnss_consistency"}
         for end_ns in (H_START_NS + 2 * S, H_END_NS - 100 * MS):  # healthy data, but 2 s and 59.9 s windows
             make_hover_run(self.run_dir)
             self.edit_meta(hover_window={"start_ns": H_START_NS, "end_ns": end_ns})
@@ -611,7 +646,7 @@ class SitlChecksTest(unittest.TestCase):
 
     def test_hover_streams_must_cover_the_window(self):
         # One sample cannot stand for 60 s: a single flags, health or alignment record in the window fails.
-        for name, checks in (("estimator_status_flags.jsonl", {"ekf2_ev_pos", "ekf2_ev_yaw"}),
+        for name, checks in (("estimator_status_flags.jsonl", {"ekf2_ev_pos", "ekf2_heading", "gnss_consistency"}),
                              ("lio_health.jsonl", {"lio_tracking"}),
                              ("alignment.jsonl", {"alignment_valid", "alignment_rate", "f34_values"})):
             make_hover_run(self.run_dir)
@@ -629,7 +664,7 @@ class SitlChecksTest(unittest.TestCase):
                        if not 70 * S < r["arrival_ns"] < 70 * S + int(hole_s * S)]
             write_jsonl(self.run_dir / "estimator_status_flags.jsonl", records)
             failing = self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0))
-            self.assertEqual(failing, {"ekf2_ev_pos", "ekf2_ev_yaw"} if fails else set(), hole_s)
+            self.assertEqual(failing, {"ekf2_ev_pos", "ekf2_heading", "gnss_consistency"} if fails else set(), hole_s)
 
     def test_phases_ok_requires_every_named_phase(self):
         make_hover_run(self.run_dir)
@@ -685,7 +720,7 @@ class SitlChecksTest(unittest.TestCase):
         self.assertEqual(summary["checks"]["alignment_valid"]["value"]["resets_before_first_valid"], 1)
         after_window = event(116 * S, "px4_bridge", "Px4ResetApplied", "FROZEN", "INVALID",
                              "PX4_RESET_WHILE_FROZEN")
-        self.assertEqual(self.failing(self.hover(bridge_events=[after_window])), {"alignment_valid"})
+        self.assertEqual(self.failing(self.hover(bridge_events=[after_window])), {"alignment_valid", "f34_values"})
 
     def test_hover_drift_against_ground_truth(self):
         # PX4 and the truth (ENU y = north = NED x) both move 1 m north: no drift.
@@ -717,54 +752,49 @@ class SitlChecksTest(unittest.TestCase):
                 r["yaw_rad"] += delta_rad
         write_jsonl(self.run_dir / "alignment.jsonl", records)
 
-    def test_f34_gps_judges_the_offset_from_pi_over_2_minus_spawn_yaw(self):
-        # D35: gps |yaw_T - (pi/2 - spawn yaw)| <= 3 degrees. The measured -1.7 degrees passes.
-        self.assertEqual(self.failing(self.hover(spawn_yaw_rad=1.2, yaw_t_rad=math.pi / 2 - 1.2 - math.radians(1.7))),
-                         set())
-        summary = self.hover(spawn_yaw_rad=1.2, yaw_t_rad=math.pi / 2 - 1.2 + math.radians(2.9))
+    def test_f34_passes_on_any_stable_offset(self):
+        # D42: T absorbs whatever heading PX4 chose; the absolute yaw_T is reported, never judged. A steady T at
+        # 0 or 21 degrees passes in both profiles, whatever the spawn yaw.
+        for profile in ("gps", "no_gps"):
+            for yaw_t_deg in (0.0, 21.0):
+                summary = self.hover(profile=profile, spawn_yaw_rad=1.2, yaw_t_rad=math.radians(yaw_t_deg))
+                self.assertEqual(self.failing(summary), set(), (profile, yaw_t_deg))
+                value = summary["checks"]["f34_values"]["value"]
+                self.assertAlmostEqual(value["yaw_t_mean_rad"], math.radians(yaw_t_deg), places=9)
+                self.assertAlmostEqual(value["yaw_t_spread_rad"], 0.0, places=9)
+                self.assertAlmostEqual(value["yaw_t_offset_rad"],
+                                       math.remainder(math.radians(yaw_t_deg) - (math.pi / 2 - 1.2), 2 * math.pi),
+                                       places=9)
+        # A PX4 reset applied while VALID keeps T VALID across it: passes, and the reset is listed.
+        reset = event(70 * S, "px4_bridge", "Px4ResetApplied", "VALID", "VALID", "PX4_RESET_APPLIED",
+                      sensor_time_s=70.0, heading_reset_step=1.0, delta_heading_rad=0.35)
+        summary = self.hover(bridge_events=[reset])
         self.assertEqual(self.failing(summary), set())
-        # 0.1 rad (5.7 degrees) off: fails, and the values are still reported.
-        make_hover_run(self.run_dir, spawn_yaw_rad=1.2)
-        self.shift_yaw_t(0.1)
-        summary = sitl_checks.evaluate_hover(self.run_dir, "gps", 1.2)
-        self.assertEqual(self.failing(summary), {"f34_values"})
-        self.assertEqual(summary["result"], "FAIL")
-        self.assertAlmostEqual(summary["checks"]["f34_values"]["value"]["yaw_t_offset_rad"], 0.1, places=9)
-        # The old no_gps shape (yaw_T 0 where gps expects pi/2) fails the gps profile.
-        self.assertEqual(self.failing(self.hover(yaw_t_rad=0.0)), {"f34_values"})
-        # A sign regression of the offset fails too.
-        self.assertEqual(self.failing(self.hover(spawn_yaw_rad=1.2, yaw_t_rad=-(math.pi / 2 - 1.2) - 0.2)),
-                         {"f34_values"})
+        resets = summary["checks"]["f34_values"]["value"]["resets"]
+        self.assertEqual([(r["t_s"], r["states"], r["delta_heading_rad"]) for r in resets],
+                         [(70.0, "VALID->VALID", 0.35)])
 
-    def test_f34_no_gps_judges_yaw_t_near_zero_with_ev_yaw_fused(self):
-        summary = self.hover(profile="no_gps", spawn_yaw_rad=1.2)
+    def test_f34_fails_on_unstable_t(self):
+        # A 1.5 degree spread of yaw_T inside the window fails in both profiles; 0.9 degree passes.
+        for profile in ("gps", "no_gps"):
+            for step_deg, fails in ((1.5, True), (0.9, False)):
+                make_hover_run(self.run_dir, profile=profile)
+                self.shift_yaw_t(math.radians(step_deg), only_after_s=70)
+                summary = sitl_checks.evaluate_hover(self.run_dir, profile, 0.0)
+                self.assertEqual(self.failing(summary), {"f34_values"} if fails else set(), (profile, step_deg))
+                self.assertAlmostEqual(math.degrees(summary["checks"]["f34_values"]["value"]["yaw_t_spread_rad"]),
+                                       step_deg, places=6)
+        # T not VALID after a PX4 reset (once it has been VALID in the run) fails F34 even with a steady yaw_T.
+        reset_bad = event(70 * S, "px4_bridge", "Px4ResetApplied", "FROZEN", "INVALID", "PX4_RESET_WHILE_FROZEN",
+                          sensor_time_s=70.0)
+        summary = self.hover(bridge_events=[reset_bad])
+        self.assertIn("f34_values", self.failing(summary))
+        self.assertEqual(summary["checks"]["f34_values"]["value"]["resets_not_valid_after"], 1)
+        # A reset before the first VALID is reported, not judged.
+        early = event(20 * S, "px4_bridge", "Px4ResetApplied", "INIT", "INIT", "PX4_RESET_APPLIED", sensor_time_s=20.0)
+        summary = self.hover(bridge_events=[early])
         self.assertEqual(self.failing(summary), set())
-        value = summary["checks"]["f34_values"]["value"]
-        self.assertAlmostEqual(value["yaw_t_mean_rad"], 0.0, places=9)
-        self.assertAlmostEqual(value["ev_yaw_fraction"], 1.0, places=9)
-        self.assertEqual(self.failing(self.hover(profile="no_gps", yaw_t_rad=math.radians(2.9))), set())
-        # The old rule's shape: |yaw_T| = 21 degrees (pi/2 - 1.2 rad) fails the no_gps profile.
-        summary = self.hover(profile="no_gps", spawn_yaw_rad=1.2, yaw_t_rad=math.pi / 2 - 1.2)
-        self.assertEqual(self.failing(summary), {"f34_values"})
-        self.assertGreater(abs(math.degrees(summary["checks"]["f34_values"]["value"]["yaw_t_mean_rad"])), 20.0)
-        self.assertEqual(self.failing(self.hover(profile="no_gps", yaw_t_rad=-math.radians(3.5))), {"f34_values"})
-        # yaw_T near zero without EV yaw fused is not the D35 case: both checks fail.
-        self.assertEqual(self.failing(self.hover(profile="no_gps", ev_yaw=False)),
-                         {"ekf2_ev_yaw", "f34_values"})
-
-    def test_f34_fails_when_yaw_t_moves_over_the_window(self):
-        # Spread <= 1 degree in every profile, whatever the mean: a 2 degree step inside the window fails.
-        for profile, spawn in (("gps", 0.0), ("no_gps", 0.0)):
-            make_hover_run(self.run_dir, profile=profile, spawn_yaw_rad=spawn)
-            self.shift_yaw_t(math.radians(2.0), only_after_s=70)
-            summary = sitl_checks.evaluate_hover(self.run_dir, profile, spawn)
-            self.assertEqual(self.failing(summary), {"f34_values"}, profile)
-            self.assertAlmostEqual(math.degrees(summary["checks"]["f34_values"]["value"]["yaw_t_spread_rad"]),
-                                   2.0, places=6)
-        # A 0.9 degree step stays within the spread limit.
-        make_hover_run(self.run_dir)
-        self.shift_yaw_t(math.radians(0.9), only_after_s=70)
-        self.assertEqual(self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)), set())
+        self.assertFalse(summary["checks"]["f34_values"]["value"]["resets"][0]["judged"])
 
     def test_f34_fails_closed_on_missing_data(self):
         make_hover_run(self.run_dir, profile="no_gps")
@@ -772,14 +802,14 @@ class SitlChecksTest(unittest.TestCase):
         summary = sitl_checks.evaluate_hover(self.run_dir, "no_gps", 0.0)
         self.assertIn("f34_values", self.failing(summary))
         self.assertIsNone(summary["checks"]["f34_values"]["value"])
-        # no_gps also needs the EV yaw flags; gps does not read them.
-        make_hover_run(self.run_dir, profile="no_gps")
-        (self.run_dir / "estimator_status_flags.jsonl").unlink()
-        self.assertTrue({"ekf2_ev_yaw", "f34_values"} <= self.failing(
-            sitl_checks.evaluate_hover(self.run_dir, "no_gps", 0.0)))
+        # F34 needs the bridge events (the resets); it does not read the EKF2 flags in any profile (D42).
         make_hover_run(self.run_dir)
-        (self.run_dir / "estimator_status_flags.jsonl").unlink()
-        self.assertNotIn("f34_values", self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)))
+        (self.run_dir / "events_px4_bridge.jsonl").unlink()
+        self.assertIn("f34_values", self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)))
+        for profile in ("gps", "no_gps"):
+            make_hover_run(self.run_dir, profile=profile)
+            (self.run_dir / "estimator_status_flags.jsonl").unlink()
+            self.assertNotIn("f34_values", self.failing(sitl_checks.evaluate_hover(self.run_dir, profile, 0.0)))
         # A non-finite yaw is malformed data, not a pass.
         make_hover_run(self.run_dir)
         records = [json.loads(line) for line in
@@ -787,6 +817,90 @@ class SitlChecksTest(unittest.TestCase):
         next(r for r in records if r["stamp_ns"] >= 70 * S)["yaw_rad"] = "nan"
         write_jsonl(self.run_dir / "alignment.jsonl", records)
         self.assertIn("f34_values", self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)))
+
+    def test_heading_sources_are_reported(self):
+        # Compass (3-axis) until 80 s, then EV yaw; one heading reset before the first VALID (25 s) and one at
+        # 80 s, after it. Reported, not judged (D42): the run passes whatever source PX4 uses.
+        summary = self.hover(heading=[(RUN_START_NS, "none"), (12 * S, "mag_3d"), (80 * S, "ev_yaw")],
+                             heading_resets=[(15 * S, 0.02), (80 * S, -0.35)])
+        self.assertEqual(self.failing(summary), set())
+        value = summary["checks"]["ekf2_heading"]["value"]
+        self.assertAlmostEqual(value["window_fractions"]["mag_3d"], 0.5, places=4)
+        self.assertAlmostEqual(value["window_fractions"]["ev_yaw"], 0.5, places=4)
+        self.assertAlmostEqual(value["yaw_align_fraction"], 1.0, places=9)
+        self.assertEqual([(round(r["t_s"], 3), r["delta_heading_rad"], r["after_first_valid"])
+                          for r in value["heading_resets"]], [(15.003, 0.02, False), (80.003, -0.35, True)])
+        self.assertEqual([(round(c["t_s"], 3), c["source"]) for c in value["timeline"]],
+                         [(10.002, "none"), (12.002, "mag_3d"), (80.002, "ev_yaw")])
+        # No heading source at all in the window is reported as "none", still not judged.
+        summary = self.hover(heading=[(RUN_START_NS, "none")])
+        self.assertNotIn("ekf2_heading", self.failing(summary))
+        self.assertAlmostEqual(summary["checks"]["ekf2_heading"]["value"]["window_fractions"]["none"], 1.0, places=9)
+        # Missing data still fails closed: no reset size (delta_heading) in the PX4 records.
+        make_hover_run(self.run_dir)
+        records = self.read("vehicle_local_position.jsonl")
+        for r in records:
+            del r["delta_heading"]
+        write_jsonl(self.run_dir / "vehicle_local_position.jsonl", records)
+        self.assertEqual(self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)), {"ekf2_heading"})
+
+    def test_gnss_dropout_outside_the_outage_fails_gps(self):
+        # 5 s of the 60 s window without GNSS fusion and no outage requested: 91.7 % < 95 %, fails.
+        summary = self.hover(gnss_gap=(70 * S, 75 * S))
+        self.assertEqual(self.failing(summary), {"gnss_consistency"})
+        self.assertAlmostEqual(summary["checks"]["gnss_consistency"]["value"]["fraction"], 55 / 60, places=4)
+        # The same dropout inside the injected outage is excluded from the judged time.
+        outage = {"requested_s": 5.0, "off_ns": 70 * S, "ok_ns": 75 * S, "off_ack": 0, "ok_ack": 0}
+        summary = self.hover(gnss_gap=(70 * S, 75 * S), gnss_outage=outage)
+        self.assertEqual(self.failing(summary), set())
+        value = summary["checks"]["gnss_consistency"]["value"]
+        self.assertGreater(value["fraction"], 0.999)
+        self.assertAlmostEqual(value["judged_s"], 55.0, places=6)
+        self.assertLess(value["outage_fraction"], 0.01)
+        # GNSS that stays lost 4 s past the outage is 7.3 % of the judged 55 s: fails.
+        self.assertEqual(self.failing(self.hover(gnss_gap=(70 * S, 79 * S), gnss_outage=outage)),
+                         {"gnss_consistency"})
+        # An outage PX4 did not accept (no ack, or not ACCEPTED) is not an outage: fails closed.
+        for change in ({"off_ack": None}, {"ok_ack": 4}):
+            summary = self.hover(gnss_outage=dict(outage, **change))
+            self.assertEqual(self.failing(summary), {"gnss_consistency"}, change)
+            self.assertIn("not accepted", summary["checks"]["gnss_consistency"]["detail"])
+        # no_gps has no GNSS check (GNSS is telemetry only there).
+        summary = self.hover(profile="no_gps")
+        self.assertEqual(set(summary["checks"]), HOVER_CHECKS_NO_GPS)
+        self.assertEqual(summary["result"], "PASS")
+
+    def test_ev_variance_is_reported(self):
+        summary = self.hover(ev_position_sigma_m=0.03)
+        self.assertEqual(self.failing(summary), set())
+        value = summary["checks"]["ev_variance"]["value"]
+        self.assertAlmostEqual(value["position_sigma_p50_m"], 0.03, places=9)
+        self.assertAlmostEqual(value["position_sigma_max_m"], 0.03, places=9)
+        self.assertEqual(value["evp_noise_m"], 0.1)
+        self.assertAlmostEqual(value["fraction_below_evp_noise"], 1.0, places=9)
+        # A sigma above the floor is reported, not judged; the max takes the largest axis.
+        make_hover_run(self.run_dir)
+        records = self.read("vehicle_visual_odometry.jsonl")
+        inside = [r for r in records if H_START_NS <= r["arrival_ns"] <= H_END_NS]
+        inside[10]["position_variance"] = [0.0009, 0.0009, 0.25]
+        write_jsonl(self.run_dir / "vehicle_visual_odometry.jsonl", records)
+        summary = sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)
+        self.assertEqual(self.failing(summary), set())
+        self.assertAlmostEqual(summary["checks"]["ev_variance"]["value"]["position_sigma_max_m"], 0.5, places=9)
+        # A record without its variance is missing data.
+        del inside[10]["position_variance"]
+        write_jsonl(self.run_dir / "vehicle_visual_odometry.jsonl", records)
+        self.assertEqual(self.failing(sitl_checks.evaluate_hover(self.run_dir, "gps", 0.0)), {"ev_variance"})
+
+    def test_events_fail_on_publish_failures(self):
+        for component, name in (("lio", "LioNodeFailed"), ("lio", "LioPublishFailed"), ("lio", "LioIngestReentered"),
+                                ("px4_bridge", "BridgeNodeFailed"), ("px4_bridge", "BridgePublishFailed")):
+            record = event(70 * S, component, name, reason="X", count=1.0)
+            summary = self.hover(**{"lio_events" if component == "lio" else "bridge_events": [record]})
+            self.assertEqual(self.failing(summary), {"events"}, name)
+            self.assertEqual(summary["checks"]["events"]["value"]["zero_tolerance"][name], 1)
+        summary = self.hover(lio_summary=lio_node_summary(119 * S, publish_failed=1.0))
+        self.assertEqual(self.failing(summary), {"events"})
 
 
 # --- the altitude sweep (Task 13) -------------------------------------------------------------------------------

@@ -1,8 +1,8 @@
-"""PX4 localization profiles (tier c, SYSTEM_DESIGN §0, §4.1, §6.2; D20, D28, D33/O23).
+"""PX4 localization profiles (tier c, SYSTEM_DESIGN §0, §4.1, §6.2; D42, D28, D33/O23).
 
 A profile file names its localization ("gps" or "no_gps") and the EKF2 parameters of that
 profile. Only the O23 allow-list is accepted, every key must be present, and each value must be
-the decided one (D20: EKF2_EV_CTRL 7 / 15; D28: EKF2_EV_QMIN 0; O23: the rest). Anything else
+the decided one (D42: EKF2_EV_CTRL 15 in both; D28: EKF2_EV_QMIN 0; O23: the rest). Anything else
 raises ProfileError naming the key, so the SITL harness refuses to start (fail closed).
 Harness-only PX4 parameters (UXRCE_DDS_SYNCT, SIM_GZ_EN_ODOM, COM_RC_IN_MODE, ...) are not
 profile parameters; tools/simulation/run_px4_mid360.sh sets them.
@@ -23,10 +23,10 @@ import sys
 
 import yaml
 
-# O23 allow-list with the decided value per localization (D20, D28, D33/O23).
+# O23 allow-list with the decided value per localization (D42, D28, D33/O23).
 _DECIDED = {
     "gps": {
-        "EKF2_EV_CTRL": 7,       # D20: EV pos/vel/hgt, EV yaw off
+        "EKF2_EV_CTRL": 15,      # D42: EV fused in full (pos, vel, hgt, yaw); PX4 chooses the heading source
         "EKF2_EV_QMIN": 0,       # D28: quality is logged only
         "EKF2_EV_DELAY": 0,      # O23: timestamp_sample is already the scan time
         "EKF2_DELAY_MAX": 200,   # O23: horizon above the LIO latency [ms]
@@ -35,7 +35,7 @@ _DECIDED = {
         "EKF2_HGT_REF": 1,       # O23: GNSS height reference
     },
     "no_gps": {
-        "EKF2_EV_CTRL": 15,      # D20: EV yaw on
+        "EKF2_EV_CTRL": 15,      # D42: as gps
         "EKF2_EV_QMIN": 0,
         "EKF2_EV_DELAY": 0,
         "EKF2_DELAY_MAX": 200,
@@ -112,7 +112,7 @@ def load(path: pathlib.Path) -> Profile:
             raise ProfileError(f"{path}: parameter {name!r} must be an integer, got {value!r}")
         if value != expected:
             raise ProfileError(f"{path}: parameter {name!r} must be {expected} for localization "
-                               f"{localization!r} (D20/D28/D33-O23), got {value}")
+                               f"{localization!r} (D42/D28/D33-O23), got {value}")
     return Profile(localization=localization, px4_params=dict(params))
 
 

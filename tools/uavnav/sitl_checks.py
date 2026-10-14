@@ -4,12 +4,12 @@ evaluate_probe(run_dir) judges the Task 3 probe of the SITL assumptions (D33 O20
 writes run_dir/summary.json with seven checks: <mode>_accepted, cloud_layout, cloud_non_finite_ratio,
 imu_rate, scan_stamp_vs_imu, sensor_time_identity, px4_time_identity.
 
-evaluate_hover(run_dir, profile, spawn_yaw_rad) judges the S1 hover (Task 11; SYSTEM_DESIGN §7.2, D20, D29,
-D33 O15/O21/O24) over the hover window (60 s of /clock time) and the whole run, and writes summary.json with
-fourteen checks: <mode>_accepted, ekf2_ev_pos, ekf2_ev_yaw, lio_tracking, lio_flap_rate, alignment_valid,
-alignment_rate, alignment_jump_rejections, drift, lio_state_rate, ev_age, px4_time_identity, events and
-f34_values (D35: yaw_T steady within 1 degree; gps |yaw_T - (pi/2 - spawn yaw)| <= 3 degrees, no_gps
-|yaw_T| <= 3 degrees with EV yaw fused).
+evaluate_hover(run_dir, profile, spawn_yaw_rad) judges the S1 hover (S1b Task 11, S1c Task 1; SYSTEM_DESIGN
+§0, §4.1, §7.2; D29, D33 O15/O21/O24, D42) over the hover window (60 s of /clock time) and the whole run, and
+writes summary.json with these checks: <mode>_accepted, ekf2_ev_pos, ekf2_heading (reported), lio_tracking,
+lio_flap_rate, alignment_valid, alignment_rate, alignment_jump_rejections, drift, lio_state_rate, ev_age,
+px4_time_identity, events, f34_values (D42: yaw_T steady within 1 degree and T VALID across every PX4 reset;
+the absolute yaw_T is reported only), ev_variance (reported) and, in the gps profile only, gnss_consistency.
 
 evaluate_sweep(run_dir, profile, spawn_yaw_rad) judges the data of the altitude sweep (Task 13; gps only) and
 writes summary.json with three data checks: sweep_steps, calibration_inputs and events. The hover criteria are
@@ -34,17 +34,21 @@ Probe records (written by tools/uavnav/sitl_probe.py; one JSON object per line):
 
 Hover records (written by tools/uavnav/sitl_hover.py, plus the two event logs of the nodes):
 
-    hover_meta.json               as probe_meta.json, plus spawn_yaw_rad, pattern, interrupted
-    lio_state.jsonl               arrival_ns, stamp_ns, epoch, lio_state, x, y, z, qw, qx, qy, qz,
-                                  vx, vy, vz (velocity in base_link, O21)
+    hover_meta.json               as probe_meta.json, plus spawn_yaw_rad, pattern, interrupted, gnss_outage
+                                  (null, or requested_s, off_ns, ok_ns, off_ack, ok_ack: the injected GNSS
+                                  outage, /clock ns, and the VehicleCommandAck result of each command or null)
+    lio_state.jsonl               arrival_ns, wall_ns (monotonic), stamp_ns, epoch, lio_state, x, y, z,
+                                  qw, qx, qy, qz, vx, vy, vz (velocity in base_link, O21)
     lio_health.jsonl              arrival_ns, stamp_ns, state, epoch, reason_name, correction_age_s,
                                   output_error_{attitude_rad, velocity_mps, position_m}
     lio_odometry.jsonl            arrival_ns, stamp_ns, epoch, reset_counter, quality, x, y, z
     alignment.jsonl               arrival_ns, stamp_ns, state, x_m, y_m, z_m, yaw_rad, age_s,
                                   residual_position_m, residual_yaw_rad
-    vehicle_visual_odometry.jsonl arrival_ns, timestamp_us, timestamp_sample_us (the EV the bridge sent)
+    vehicle_visual_odometry.jsonl arrival_ns, timestamp_us, timestamp_sample_us, position_variance,
+                                  velocity_variance, orientation_variance (the EV the bridge sent)
     estimator_status_flags.jsonl  arrival_ns, timestamp_us, cs_ev_pos, cs_ev_yaw, cs_ev_hgt, cs_ev_vel,
-                                  cs_gnss_pos
+                                  cs_gnss_pos, cs_mag_hdg, cs_mag_3d, cs_yaw_align
+    vehicle_local_position.jsonl  as the probe's, plus heading, xy/z/heading_reset_counter, delta_heading
     ground_truth.jsonl            arrival_ns, stamp_ns, x, y, z (Gazebo world, ENU)
     events_lio.jsonl, events_px4_bridge.jsonl   the JSONL event logs (tools/uavnav/events.py)
 
@@ -396,10 +400,15 @@ COVERAGE_EDGE_MAX_S = 2.0                        # a stream's first/last window 
 COVERAGE_MAX_GAP_S = 2.0                         # and no hole above 2 s (flags ~1 Hz; the others 10-100 Hz)
 XY_VALID_MIN_FRACTION = 0.99                     # vehicle_local_position xy_valid in >= 99 % of the window
 TRUTH_MATCH_MIN_FRACTION = 0.95                  # >= 95 % of the PX4 samples paired with ground truth (drift)
-EV_POS_MIN_FRACTION = 0.95                       # cs_ev_pos in >= 95 % of the window's samples
-EV_YAW_NO_GPS_MIN_FRACTION = 0.95                # no_gps: cs_ev_yaw in >= 95 % (D20); gps: never
-F34_YAW_T_SPREAD_MAX_RAD = math.radians(1.0)     # D35: yaw_T max - min over the window <= 1 degree
-F34_YAW_T_FRAME_TOLERANCE_RAD = math.radians(3.0)  # D35: gps |yaw_T - (pi/2 - spawn yaw)|, no_gps |yaw_T| <= 3 degrees
+EV_POS_MIN_FRACTION = 0.95                       # cs_ev_pos in >= 95 % of the window's time (T11 M3: held samples)
+F34_YAW_T_SPREAD_MAX_RAD = math.radians(1.0)     # D42: yaw_T max - min over the window <= 1 degree
+GNSS_POS_MIN_FRACTION = 0.95                     # gps: cs_gnss_pos in >= 95 % of the window's time, outage excluded
+HEADING_SOURCES = ("mag_hdg", "mag_3d", "ev_yaw")  # estimator_status_flags cs_<source>: the heading aiding fused
+VEHICLE_CMD_RESULT_ACCEPTED = 0                  # px4_msgs/VehicleCommandAck
+EKF2_EVP_NOISE_M = 0.1                           # PX4 v1.17 defaults (params_external_vision.yaml, params_gnss.yaml):
+EKF2_EVV_NOISE_MPS = 0.1                         # the floors EKF2 puts under the EV variance it receives (SYSTEM_DESIGN
+EKF2_EVA_NOISE_RAD = 0.1                         # §4.1); EKF2_GPS_P_NOISE while GNSS is fused. Not profile values:
+EKF2_GPS_P_NOISE_M = 0.5                         # reported next to the sigma sent, never judged
 LIO_MAX_TRACKING_ENTRIES = 2                     # TRACKING entered at most twice in the run
 LIO_MAX_FLAPS_PER_60S = 1.0                      # DEGRADED -> TRACKING per 60 s of the window (owner 2026-10-13, O15)
 ALIGNMENT_MIN_RATE_HZ = 9.0                      # /alignment >= 9 Hz
@@ -411,7 +420,8 @@ STATE_INTERARRIVAL_P99_MAX_MS = 20.0             # P7: the publisher is not star
 EV_AGE_P99_MAX_MS = 150.0                        # ROS now - timestamp_sample < EKF2_DELAY_MAX (200 ms)
 MAX_SCAN_DROP_FRACTION = 0.01                    # LioScanDropped <= 1 % of the scans received
 IMU_NOMINAL_HZ = 200.0                           # the Gazebo IMU (probe: 200.01 Hz), the reference of the scan rate
-ZERO_TOLERANCE_EVENTS = ("LioQueueOverflow", "LioBackendFailed", "ImuRateTooHigh", "EventsDropped")
+ZERO_TOLERANCE_EVENTS = ("LioQueueOverflow", "LioBackendFailed", "ImuRateTooHigh", "EventsDropped", "LioNodeFailed",
+                         "BridgeNodeFailed", "LioPublishFailed", "BridgePublishFailed", "LioIngestReentered")
 
 
 def _wrap(angle: float) -> float:
@@ -516,26 +526,94 @@ def _in_window(data: _Loader, records: list) -> list:
     return [r for r in records if start <= r["t_ros_ns"] <= end]
 
 
-def _fraction(records: list, key: str, source: str) -> float:
-    return sum(1 for r in records if _field(r, key, bool, source)) / len(records)
+def _held(data: _Loader, name: str) -> list:
+    """The window cut into [(t0, t1, record)]: each record of name holds from its arrival until the next one
+    (T11 M3: time, not sample count). The window start takes the last record before it, or the first one in it
+    (_windowed bounds that edge by COVERAGE_EDGE_MAX_S)."""
+    start, end = _window(data)
+    inside = sorted(_windowed(data, name), key=lambda r: r["arrival_ns"])
+    before = [r for r in data.jsonl(name) if _field(r, "arrival_ns", int, name) < start]
+    first = max(before, key=lambda r: r["arrival_ns"]) if before else inside[0]
+    points = [(start, first)] + [(r["arrival_ns"], r) for r in inside]
+    return [(t0, t1, r) for (t0, r), (t1, _) in zip(points, points[1:] + [(end, None)]) if t1 > t0]
+
+
+def _overlap_ns(t0: int, t1: int, span) -> int:
+    return 0 if span is None else max(0, min(t1, span[1]) - max(t0, span[0]))
+
+
+def _held_fraction(segments: list, holds, exclude=None, only=None):
+    """(fraction of the time holds(record) is true, the time counted in ns) over the segments, without the
+    exclude span or inside the only span (each (start_ns, end_ns) or None)."""
+    true_ns = total_ns = 0
+    for t0, t1, r in segments:
+        span = t1 - t0 if only is None else _overlap_ns(t0, t1, only)
+        span -= _overlap_ns(t0, t1, exclude) if only is None else 0
+        total_ns += span
+        true_ns += span if holds(r) else 0
+    if total_ns <= 0:
+        raise MissingData("no time left to judge")
+    return true_ns / total_ns, total_ns
+
+
+def _flag(key: str):
+    return lambda r: _field(r, key, bool, "estimator_status_flags.jsonl")
 
 
 def _check_ekf2_ev_pos(data: _Loader) -> dict:
-    flags = _windowed(data, "estimator_status_flags.jsonl")
-    fraction = _fraction(flags, "cs_ev_pos", "estimator_status_flags.jsonl")
+    segments = _held(data, "estimator_status_flags.jsonl")
+    fraction, _ = _held_fraction(segments, _flag("cs_ev_pos"))
     return {"pass": fraction >= EV_POS_MIN_FRACTION,
-            "value": {"fraction": fraction, "samples": len(flags),
-                      "cs_ev_hgt_fraction": _fraction(flags, "cs_ev_hgt", "estimator_status_flags.jsonl")},
-            "detail": f"cs_ev_pos in >= {EV_POS_MIN_FRACTION:.0%} of the window's estimator_status_flags"}
+            "value": {"fraction": fraction, "samples": len(segments),
+                      "cs_ev_hgt_fraction": _held_fraction(segments, _flag("cs_ev_hgt"))[0]},
+            "detail": f"cs_ev_pos in >= {EV_POS_MIN_FRACTION:.0%} of the window's time (each estimator_status_flags "
+                      "sample holds until the next)"}
 
 
-def _check_ekf2_ev_yaw(data: _Loader, profile: str) -> dict:
-    flags = _windowed(data, "estimator_status_flags.jsonl")
-    fraction = _fraction(flags, "cs_ev_yaw", "estimator_status_flags.jsonl")
-    passed = fraction == 0.0 if profile == "gps" else fraction >= EV_YAW_NO_GPS_MIN_FRACTION
-    return {"pass": passed, "value": {"profile": profile, "fraction": fraction, "samples": len(flags)},
-            "detail": "D20: cs_ev_yaw false throughout (gps) or true in >= "
-                      f"{EV_YAW_NO_GPS_MIN_FRACTION:.0%} of the window (no_gps)"}
+def _heading_source(record: dict) -> str:
+    fused = [s for s in HEADING_SOURCES if _field(record, f"cs_{s}", bool, "estimator_status_flags.jsonl")]
+    return "+".join(fused) or "none"
+
+
+def _check_ekf2_heading(data: _Loader) -> dict:
+    """Reported, not judged (D42: PX4 chooses the heading source): the fraction of the window per EKF2 heading
+    source, the source over the whole run, and every EKF2 heading reset with its time and size, before or after
+    the first VALID of T. Missing data still fails (MissingData)."""
+    segments = _held(data, "estimator_status_flags.jsonl")
+    fractions = {}
+    for source in sorted({_heading_source(r) for _, _, r in segments}):
+        fractions[source] = _held_fraction(segments, lambda r, s=source: _heading_source(r) == s)[0]
+    timeline, last = [], None
+    for r in sorted(data.jsonl("estimator_status_flags.jsonl"), key=lambda r: _field(
+            r, "arrival_ns", int, "estimator_status_flags.jsonl")):
+        now = (_heading_source(r), _field(r, "cs_yaw_align", bool, "estimator_status_flags.jsonl"))
+        if now != last:
+            timeline.append({"t_s": r["arrival_ns"] / 1e9, "source": now[0], "yaw_align": now[1]})
+            last = now
+    source = "vehicle_local_position.jsonl"
+    valid = [_field(r, "arrival_ns", int, "alignment.jsonl") for r in data.jsonl("alignment.jsonl")
+             if r.get("state") == ALIGNMENT_VALID]
+    first_valid = min(valid, default=None)
+    resets, counter = [], None
+    positions = sorted(data.jsonl(source), key=lambda r: _field(r, "arrival_ns", int, source))
+    for r in positions:
+        now = _field(r, "heading_reset_counter", int, source)
+        delta = _field(r, "delta_heading", float, source)
+        if counter is not None and now != counter:
+            resets.append({"t_s": r["arrival_ns"] / 1e9, "counter": now, "delta_heading_rad": delta,
+                           "delta_heading_deg": math.degrees(delta),
+                           "after_first_valid": first_valid is not None and r["arrival_ns"] >= first_valid})
+        counter = now
+    return {"pass": True,
+            "value": {"window_fractions": fractions,
+                      "yaw_align_fraction": _held_fraction(segments, _flag("cs_yaw_align"))[0],
+                      "timeline": timeline, "heading_resets": resets,
+                      "heading_reset_counter_at_first_record": _field(positions[0], "heading_reset_counter", int,
+                                                                      source),
+                      "first_valid_s": None if first_valid is None else first_valid / 1e9},
+            "detail": "reported (D42: PX4 chooses the heading source): window fraction per source (cs_mag_hdg, "
+                      "cs_mag_3d, cs_ev_yaw), the source timeline, every heading reset (vehicle_local_position "
+                      "heading_reset_counter, delta_heading) before or after the first VALID of T"}
 
 
 def _transitions(data: _Loader) -> list:
@@ -684,13 +762,20 @@ def _check_lio_state_rate(data: _Loader) -> dict:
         steps.append(math.dist([_field(b, k, float, source) - _field(a, k, float, source) for k in "xyz"],
                                [0.5 * (va[i] + vb[i]) * dt for i in range(3)]))
     p99 = percentile(gaps, 99)
+    walls = [r.get("wall_ns") for r in states]  # T11 M2: the same gaps in wall time, reported as a cross-check of
+    wall_gaps = None                            # the /clock-time value (resolution: one Gazebo step, 4 ms)
+    if all(isinstance(w, int) and not isinstance(w, bool) for w in walls):
+        wall_gaps = [(b - a) / 1e6 for a, b in zip(walls, walls[1:])]
     return {"pass": abs(rate - STATE_RATE_HZ) <= STATE_RATE_TOL_HZ and p99 <= STATE_INTERARRIVAL_P99_MAX_MS,
             "value": {"rate_hz": rate, "samples": len(states), "interarrival_p50_ms": percentile(gaps, 50),
                       "interarrival_p99_ms": p99, "interarrival_max_ms": max(gaps),
+                      "interarrival_wall_p50_ms": percentile(wall_gaps, 50) if wall_gaps else None,
+                      "interarrival_wall_p99_ms": percentile(wall_gaps, 99) if wall_gaps else None,
                       "f23_step_max_m": max(steps) if steps else None,
                       "f23_step_p99_m": percentile(steps, 99) if steps else None},
             "detail": f"{STATE_RATE_HZ} +- {STATE_RATE_TOL_HZ} Hz and inter-arrival p99 <= "
-                      f"{STATE_INTERARRIVAL_P99_MAX_MS} ms (P7, /clock time); F23 step max |dp - v dt| reported"}
+                      f"{STATE_INTERARRIVAL_P99_MAX_MS} ms (P7, /clock time, resolution one 4 ms step; the wall-time "
+                      "inter-arrival is reported as a cross-check); F23 step max |dp - v dt| reported"}
 
 
 def _check_ev_age(data: _Loader) -> dict:
@@ -732,7 +817,8 @@ def _check_events(data: _Loader) -> dict:
     span_s = (max(timed) - min(timed)) / 1e9 if len(timed) > 1 else None
     not_finite = int(_field(bridge_node, "rejected_local_position", float, "BridgeNodeSummary"))
     passed = (all(n == 0 for n in zero.values()) and summary["rejected_wrong_frame"] == 0
-              and summary["rejected_malformed_cloud"] == 0 and dropped <= MAX_SCAN_DROP_FRACTION * scans)
+              and summary["rejected_malformed_cloud"] == 0 and summary["publish_failed"] == 0
+              and dropped <= MAX_SCAN_DROP_FRACTION * scans)
     return {"pass": passed,
             "value": {"zero_tolerance": zero, "lio_scan_dropped": dropped, "scan_drop_fraction": dropped / scans,
                       "imu_gap": _event_total(_named(lio, "ImuGap")),
@@ -746,41 +832,103 @@ def _check_events(data: _Loader) -> dict:
                       "lio_node_summary": summary,
                       "bridge_node_summary": {k: v for k, v in bridge_node.items()}},
             "detail": f"whole run: zero {', '.join(ZERO_TOLERANCE_EVENTS)}; LioScanDropped <= "
-                      f"{MAX_SCAN_DROP_FRACTION:.0%} of the scans received; LioNodeSummary rejected_wrong_frame "
-                      "and rejected_malformed_cloud 0. Reported: ImuGap count, Px4SampleRejected NOT_FINITE "
+                      f"{MAX_SCAN_DROP_FRACTION:.0%} of the scans received; LioNodeSummary rejected_wrong_frame, "
+                      "rejected_malformed_cloud and publish_failed 0. Reported: ImuGap count, Px4SampleRejected NOT_FINITE "
                       "(expected 0; BridgeNodeSummary rejected_local_position), the scan rate at the lio node "
                       f"(scans x {IMU_NOMINAL_HZ:g} Hz / IMU samples received, and over the log span)"}
 
 
-def _check_f34_values(data: _Loader, spawn_yaw_rad: float, profile: str) -> dict:
-    """F34 verdict (D35): yaw_T is steady over the window and has the frame the profile implies.
+def _check_f34_values(data: _Loader, spawn_yaw_rad: float) -> dict:
+    """F34 verdict (D42): T absorbs whatever heading PX4 chose, so T is judged on its stability, never on its value.
 
-    gps: |yaw_T - (pi/2 - spawn yaw)| <= 3 degrees. no_gps: |yaw_T| <= 3 degrees (EKF2 takes its heading from EV
-    yaw, so the PX4 local frame is LIO's start frame) and EV yaw fused in >= 95 % of the window. Both: the spread
-    of yaw_T over the window <= 1 degree. Missing or non-finite data fails (MissingData)."""
+    PASS when the spread of yaw_T over the window is <= 1 degree and T is VALID after every Px4ResetApplied once
+    it has been VALID in the run (a reset before the first VALID is listed, not judged). Reported only: the mean
+    yaw_T, its offset from pi/2 - spawn yaw (the NED heading at LIO start), every reset with its heading delta, and
+    the largest spread between consecutive resets. Missing or non-finite data fails (MissingData)."""
     yaws = [_field(r, "yaw_rad", float, "alignment.jsonl") for r in _windowed(data, "alignment.jsonl")]
-    if not all(math.isfinite(y) for y in yaws):
-        raise MissingData("alignment.jsonl: yaw_rad is not finite")
+    times = [r["arrival_ns"] for r in _windowed(data, "alignment.jsonl")]
     deltas = [_wrap(y - yaws[0]) for y in yaws]
     mean = _wrap(yaws[0] + sum(deltas) / len(deltas))
     spread = max(deltas) - min(deltas)
     expected = _wrap(math.pi / 2.0 - spawn_yaw_rad)
-    offset = _wrap(mean - expected)
-    value = {"yaw_t_spread_rad": spread, "yaw_t_mean_rad": mean, "expected_yaw_t_rad": expected,
-             "yaw_t_offset_rad": offset, "spawn_yaw_rad": spawn_yaw_rad, "profile": profile,
-             "samples": len(yaws)}
-    steady = spread <= F34_YAW_T_SPREAD_MAX_RAD
-    if profile == "gps":
-        frame = abs(offset) <= F34_YAW_T_FRAME_TOLERANCE_RAD
-        detail_frame = "|yaw_T - (pi/2 - spawn yaw)| <= 3 degrees"
-    else:
-        flags = _windowed(data, "estimator_status_flags.jsonl")
-        ev_yaw_fraction = _fraction(flags, "cs_ev_yaw", "estimator_status_flags.jsonl")
-        value["ev_yaw_fraction"] = ev_yaw_fraction
-        frame = (abs(mean) <= F34_YAW_T_FRAME_TOLERANCE_RAD and ev_yaw_fraction >= EV_YAW_NO_GPS_MIN_FRACTION)
-        detail_frame = f"|yaw_T| <= 3 degrees with EV yaw fused in >= {EV_YAW_NO_GPS_MIN_FRACTION:.0%} of the window"
-    return {"pass": steady and frame, "value": value,
-            "detail": f"D35 ({profile}): yaw_T max - min over the window <= 1 degree and {detail_frame}"}
+    bridge = _events(data, "events_px4_bridge.jsonl")
+    first_valid = min((r["t_ros_ns"] for r in bridge if r["state_after"] == "VALID"), default=None)
+    resets = []
+    for r in _named(bridge, "Px4ResetApplied"):
+        delta = r["values"].get("delta_heading_rad")
+        resets.append({"t_s": r["t_ros_ns"] / 1e9, "states": f"{r['state_before']}->{r['state_after']}",
+                       "reason": r["reason"], "judged": first_valid is not None and r["t_ros_ns"] >= first_valid,
+                       "delta_heading_rad": delta, "heading_reset_step": r["values"].get("heading_reset_step")})
+    not_valid = [r for r in resets if r["judged"] and not r["states"].endswith("->VALID")]
+    cuts = sorted(int(r["t_s"] * 1e9) for r in resets)
+    segments = {}
+    for t, d in zip(times, deltas):
+        segments.setdefault(bisect.bisect_right(cuts, t), []).append(d)
+    return {"pass": spread <= F34_YAW_T_SPREAD_MAX_RAD and not not_valid,
+            "value": {"yaw_t_spread_rad": spread, "yaw_t_mean_rad": mean, "expected_yaw_t_rad": expected,
+                      "yaw_t_offset_rad": _wrap(mean - expected), "spawn_yaw_rad": spawn_yaw_rad,
+                      "samples": len(yaws), "resets": resets, "resets_not_valid_after": len(not_valid),
+                      "max_spread_between_resets_rad": max(max(v) - min(v) for v in segments.values())},
+            "detail": "D42: yaw_T max - min over the window <= 1 degree and T VALID after every Px4ResetApplied once "
+                      "it has been VALID in the run; the absolute yaw_T and its offset from pi/2 - spawn yaw are "
+                      "reported only"}
+
+
+def _check_gnss_consistency(data: _Loader) -> dict:
+    """gps only: cs_gnss_pos in >= 95 % of the window's time, the injected outage [off_ns, ok_ns] excluded. An
+    outage requested but not accepted by PX4 (both commands acked ACCEPTED) is missing data: the run does not hold
+    the outage it was asked for."""
+    segments = _held(data, "estimator_status_flags.jsonl")
+    outage = data.meta().get("gnss_outage")
+    span = None
+    value = {}
+    if outage is not None:
+        if not isinstance(outage, dict):
+            raise MissingData(f"gnss_outage is not an object: {outage!r}")
+        acks = (outage.get("off_ack"), outage.get("ok_ack"))
+        if any(a != VEHICLE_CMD_RESULT_ACCEPTED or isinstance(a, bool) for a in acks):
+            raise MissingData(f"GNSS outage requested but the injection was not accepted by PX4 (off ack "
+                              f"{acks[0]!r}, ok ack {acks[1]!r}; {VEHICLE_CMD_RESULT_ACCEPTED} is ACCEPTED)")
+        span = (_field(outage, "off_ns", int, "gnss_outage"), _field(outage, "ok_ns", int, "gnss_outage"))
+        if span[1] <= span[0]:
+            raise MissingData(f"empty GNSS outage {span[0]}..{span[1]}")
+        value["outage_s"] = (span[1] - span[0]) / 1e9
+        value["outage_fraction"] = _held_fraction(segments, _flag("cs_gnss_pos"), only=span)[0]
+        back = [r["arrival_ns"] for r in data.jsonl("estimator_status_flags.jsonl")
+                if r.get("arrival_ns", 0) >= span[1] and r.get("cs_gnss_pos") is True]
+        value["gnss_back_after_ok_s"] = (min(back) - span[1]) / 1e9 if back else None
+    fraction, judged_ns = _held_fraction(segments, _flag("cs_gnss_pos"), exclude=span)
+    value.update(fraction=fraction, judged_s=judged_ns / 1e9, outage_requested=outage is not None)
+    return {"pass": fraction >= GNSS_POS_MIN_FRACTION, "value": value,
+            "detail": f"gps: cs_gnss_pos in >= {GNSS_POS_MIN_FRACTION:.0%} of the window's time, the injected "
+                      "outage excluded; an outage not accepted by PX4 fails"}
+
+
+def _check_ev_variance(data: _Loader) -> dict:
+    """Reported, not judged: the EV sigma the bridge sent in the window against the floors EKF2 puts under it
+    (EKF2_EVP_NOISE, EKF2_EVV_NOISE, EKF2_EVA_NOISE; EKF2_GPS_P_NOISE while GNSS is fused). Missing data fails."""
+    source = "vehicle_visual_odometry.jsonl"
+
+    def sigmas(record, key):
+        values = record.get(key)
+        if not isinstance(values, list) or len(values) != 3:
+            raise MissingData(f"{source}: field {key!r} missing or not 3 values: {values!r}")
+        return [math.sqrt(_field({"v": v}, "v", float, f"{source} {key}")) for v in values]
+    records = _windowed(data, source)
+    position = [max(sigmas(r, "position_variance")) for r in records]
+    per_axis = list(zip(*(sigmas(r, "position_variance") for r in records)))
+    velocity = [max(sigmas(r, "velocity_variance")) for r in records]
+    yaw = [sigmas(r, "orientation_variance")[2] for r in records]
+    return {"pass": True,
+            "value": {"position_sigma_p50_m": percentile(position, 50), "position_sigma_max_m": max(position),
+                      "position_sigma_p50_per_axis_m": [percentile(list(a), 50) for a in per_axis],
+                      "velocity_sigma_p50_mps": percentile(velocity, 50), "yaw_sigma_p50_rad": percentile(yaw, 50),
+                      "evp_noise_m": EKF2_EVP_NOISE_M, "evv_noise_mps": EKF2_EVV_NOISE_MPS,
+                      "eva_noise_rad": EKF2_EVA_NOISE_RAD, "gps_p_noise_m": EKF2_GPS_P_NOISE_M,
+                      "fraction_below_evp_noise": sum(1 for p in position if p < EKF2_EVP_NOISE_M) / len(position),
+                      "samples": len(records)},
+            "detail": "reported: EV position sigma (largest axis) p50 and max against the PX4 floor EKF2_EVP_NOISE "
+                      "(PX4 default; EKF2_GPS_P_NOISE while GNSS is fused), velocity and yaw sigma p50"}
 
 
 def evaluate_hover(run_dir, profile: str, spawn_yaw_rad: float) -> dict:
@@ -803,7 +951,7 @@ def evaluate_hover(run_dir, profile: str, spawn_yaw_rad: float) -> dict:
     checks = {
         f"{mode}_accepted": _run(_check_mode_accepted, data),
         "ekf2_ev_pos": _run(_check_ekf2_ev_pos, data),
-        "ekf2_ev_yaw": _run(lambda d: _check_ekf2_ev_yaw(d, profile), data),
+        "ekf2_heading": _run(_check_ekf2_heading, data),
         "lio_tracking": _run(_check_lio_tracking, data),
         "lio_flap_rate": _run(_check_lio_flap_rate, data),
         "alignment_valid": _run(_check_alignment_valid, data),
@@ -814,8 +962,11 @@ def evaluate_hover(run_dir, profile: str, spawn_yaw_rad: float) -> dict:
         "ev_age": _run(_check_ev_age, data),
         "px4_time_identity": _run(_check_hover_px4_time, data),
         "events": _run(_check_events, data),
-        "f34_values": _run(lambda d: _check_f34_values(d, spawn_yaw_rad, profile), data),
+        "f34_values": _run(lambda d: _check_f34_values(d, spawn_yaw_rad), data),
+        "ev_variance": _run(_check_ev_variance, data),
     }
+    if profile == "gps":
+        checks["gnss_consistency"] = _run(_check_gnss_consistency, data)
     return _write_summary(run_dir, {
         "kind": "hover", "run_dir": str(run_dir), "profile": profile, "spawn_yaw_rad": spawn_yaw_rad,
         "pattern": meta.get("pattern"), "hover_mode": mode}, meta, checks)

@@ -11,6 +11,10 @@ Started by tools/uavnav/sitl_hover.sh --hover once PX4 SITL, MicroXRCEAgent and
    --hover-mode hold (the approved O24 fallback): arm, NAV_TAKEOFF (climb), then the "hold" phase.
 3. climb (<= 20 s of /clock) to 2.5 m above the ground z (posctl: throttle stick).
 4. hover for 60 s of /clock time with centred sticks: the evaluation window of sitl_checks.evaluate_hover.
+   With --gnss-outage-s S (gps profile, S1c Task 1): at 20 s of the hover, VEHICLE_CMD_INJECT_FAILURE (unit GPS,
+   OFF), and S s later the same with OK; hover_meta.json "gnss_outage" records both /clock times and the
+   VehicleCommandAck result of each (null when PX4 sent none within 1 s). It needs SYS_FAILURE_EN=1, which the
+   harness sets for such a run only.
 5. land (NAV_LAND once, again only if PX4 is not in AUTO_LAND), <= 30 s to the auto-disarm.
    On an interruption or an exception while armed, one best-effort NAV_LAND is sent before exit.
 
@@ -55,6 +59,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import sitl_probe  # noqa: E402  (the Task 3 flight phases: bounded waits, arm, POSCTL climb, land)
 
 HOVER_SIM_S, HOVER_WALL_MAX_S = 60.0, 120.0   # the evaluation window; wall bound for RTF >= 0.5
+GNSS_OUTAGE_START_S = 20.0                    # /clock seconds into the hover when the GNSS outage starts (plan T1)
+GNSS_OUTAGE_MAX_S = 30.0                      # the outage ends at least 10 s before the window does
+ACK_WAIT_NS = 1_000_000_000                   # an ack counts when it arrives within 1 s of /clock of its command
 CLIMB_SIM_S, CLIMB_WALL_MAX_S = 20.0, 40.0
 LAND_S = 30.0
 SWEEP_TARGETS_M = tuple(2.5 * (k + 1) for k in range(8))  # 2.5 .. 20 m above the ground z (plan Task 13)
@@ -86,6 +93,7 @@ class HoverRecorder(Node):
         self.ev_pos = None
         self.throttle = 0.0
         self._last_stick_ns = None
+        self.acks = []  # (arrival_ns, command, result) of every VehicleCommandAck
 
         best_effort = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=50, reliability=ReliabilityPolicy.BEST_EFFORT)
         reliable = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=50, reliability=ReliabilityPolicy.RELIABLE)
@@ -167,7 +175,9 @@ class HoverRecorder(Node):
         self._record("vehicle_visual_odometry", self._arrival(), {
             "timestamp_us": int(msg.timestamp), "timestamp_sample_us": int(msg.timestamp_sample),
             "x": _finite(msg.position[0]), "y": _finite(msg.position[1]), "z": _finite(msg.position[2]),
-            "reset_counter": int(msg.reset_counter), "quality": int(msg.quality)})
+            "reset_counter": int(msg.reset_counter), "quality": int(msg.quality),
+            **{k: [_finite(v) for v in getattr(msg, k)] for k in ("position_variance", "velocity_variance",
+                                                                  "orientation_variance")}})
 
     def _on_position(self, msg):
         arrival = self._arrival()
@@ -175,7 +185,8 @@ class HoverRecorder(Node):
                   "xy_valid": bool(msg.xy_valid), "z_valid": bool(msg.z_valid), "x": _finite(msg.x),
                   "y": _finite(msg.y), "z": _finite(msg.z), "vz": _finite(msg.vz), "heading": _finite(msg.heading),
                   "xy_reset_counter": int(msg.xy_reset_counter), "z_reset_counter": int(msg.z_reset_counter),
-                  "heading_reset_counter": int(msg.heading_reset_counter)}
+                  "heading_reset_counter": int(msg.heading_reset_counter),
+                  "delta_heading": _finite(msg.delta_heading)}
         with self._lock:  # raw floats for the flight logic, as the probe keeps them
             self.position = dict(record, arrival_ns=arrival, x=float(msg.x), y=float(msg.y), z=float(msg.z))
         self._record("vehicle_local_position", arrival, record)
@@ -185,7 +196,9 @@ class HoverRecorder(Node):
             self.ev_pos = bool(msg.cs_ev_pos)
         self._record("estimator_status_flags", self._arrival(), {
             "timestamp_us": int(msg.timestamp), "cs_ev_pos": bool(msg.cs_ev_pos), "cs_ev_yaw": bool(msg.cs_ev_yaw),
-            "cs_ev_hgt": bool(msg.cs_ev_hgt), "cs_ev_vel": bool(msg.cs_ev_vel), "cs_gnss_pos": bool(msg.cs_gnss_pos)})
+            "cs_ev_hgt": bool(msg.cs_ev_hgt), "cs_ev_vel": bool(msg.cs_ev_vel), "cs_gnss_pos": bool(msg.cs_gnss_pos),
+            "cs_mag_hdg": bool(msg.cs_mag_hdg), "cs_mag_3d": bool(msg.cs_mag_3d),
+            "cs_yaw_align": bool(msg.cs_yaw_align)})
 
     def _on_status(self, msg):
         arrival = self._arrival()
@@ -196,8 +209,12 @@ class HoverRecorder(Node):
         self._record("vehicle_status", arrival, record)
 
     def _on_ack(self, msg):
-        self._record("vehicle_command_ack", self._arrival(), {
+        arrival = self._arrival()
+        with self._lock:
+            self.acks.append((arrival, int(msg.command), int(msg.result)))
+        self._record("vehicle_command_ack", arrival, {
             "command": int(msg.command), "result": int(msg.result), "result_param1": int(msg.result_param1)})
+
 
     def _on_truth(self, msg):
         p, q = msg.pose.pose.position, msg.pose.pose.orientation
@@ -220,10 +237,15 @@ class HoverFlight(sitl_probe.Flight):
     """The Task 11 phase sequence; the waits, arm, mode and land are the probe's."""
 
     def __init__(self, node: HoverRecorder, mode: str, budget_s: float, stop: threading.Event,
-                 pattern: str = "hover"):
+                 pattern: str = "hover", gnss_outage_s: float = 0.0):
         super().__init__(node, mode, budget_s, stop)
         self.ready_detail = None
         self.pattern = pattern
+        self.gnss_outage_s = gnss_outage_s
+        # Recorded as requested from the start, so a run that never sent the commands cannot pass as one without
+        # an outage request (sitl_checks fails a requested outage without two ACCEPTED acks).
+        self.gnss_outage = None if not gnss_outage_s else {
+            "requested_s": gnss_outage_s, "off_ns": None, "ok_ns": None, "off_ack": None, "ok_ack": None}
         self.sweep_steps = []
         # The sweep keeps time for a landing from 20 m; the hover keeps the probe's reserve.
         self.reserve_s = SWEEP_LAND_S if pattern == "altitude_sweep" else sitl_probe.LAND_RESERVE_S
@@ -280,15 +302,57 @@ class HoverFlight(sitl_probe.Flight):
         sim_s = (self.node.snapshot()[0] - start) / 1e9
         return ok, f"height {h if h is None else round(h, 3)} m after {sim_s:.2f} s of /clock time"
 
+    def inject_gps(self, failure_type: int) -> int:
+        """VEHICLE_CMD_INJECT_FAILURE for the GPS unit (all instances); returns the /clock time it was sent."""
+        sent = self.node.snapshot()[0]
+        self.node.command(VehicleCommand.VEHICLE_CMD_INJECT_FAILURE, VehicleCommand.FAILURE_UNIT_SENSOR_GPS,
+                          failure_type, 0.0)
+        self.log(f"GNSS injection type {failure_type} sent at {sent / 1e9:.3f} s")
+        return sent
+
+    def gnss_outage_step(self, start: int):
+        """Called on every hover poll: OFF at GNSS_OUTAGE_START_S into the hover, OK gnss_outage_s later."""
+        outage = self.gnss_outage
+        if outage is None:
+            return
+        now = self.node.snapshot()[0]
+        if outage["off_ns"] is None and now - start >= GNSS_OUTAGE_START_S * 1e9:
+            outage["off_ns"] = self.inject_gps(VehicleCommand.FAILURE_TYPE_OFF)
+        elif (outage["off_ns"] is not None and outage["ok_ns"] is None
+              and now - outage["off_ns"] >= self.gnss_outage_s * 1e9):
+            outage["ok_ns"] = self.inject_gps(VehicleCommand.FAILURE_TYPE_OK)
+
+    def gnss_outage_acks(self):
+        """Fill the ack of each injection: the first one within ACK_WAIT_NS of /clock after it was sent."""
+        if self.gnss_outage is None:
+            return
+        with self.node._lock:
+            acks = list(self.node.acks)
+        for key in ("off", "ok"):
+            sent = self.gnss_outage[f"{key}_ns"]
+            if sent is None:
+                continue
+            results = [r for a, c, r in acks if c == VehicleCommand.VEHICLE_CMD_INJECT_FAILURE and a is not None
+                       and sent <= a <= sent + ACK_WAIT_NS]
+            self.gnss_outage[f"{key}_ack"] = results[0] if results else None
+
     def hover(self):
         self.node.set_throttle(0.0)
         start = self.node.snapshot()[0]
-        ok = self.wait(lambda: self.node.snapshot()[0] - start >= HOVER_SIM_S * 1e9 or not self.armed(),
-                       HOVER_WALL_MAX_S)
+
+        def done():
+            self.gnss_outage_step(start)
+            return self.node.snapshot()[0] - start >= HOVER_SIM_S * 1e9 or not self.armed()
+        ok = self.wait(done, HOVER_WALL_MAX_S)
         end = self.node.snapshot()[0]
         self.hover_window = {"start_ns": start, "end_ns": end}
         sim_s = (end - start) / 1e9
-        return ok and self.armed() and sim_s >= HOVER_SIM_S, f"{sim_s:.2f} s of /clock time"
+        detail = f"{sim_s:.2f} s of /clock time"
+        if self.gnss_outage_s:
+            self.gnss_outage_acks()
+            detail += f"; GNSS outage {self.gnss_outage}"
+            ok = ok and self.gnss_outage["ok_ns"] is not None
+        return ok and self.armed() and sim_s >= HOVER_SIM_S, detail
 
     def sweep(self):
         """Climb in 2.5 m steps to 20 m, holding each step 10 s of /clock with centred sticks (Task 13)."""
@@ -356,9 +420,14 @@ def main(argv=None) -> int:
                         help="hover (Task 11) or altitude_sweep (Task 13: gps profile, posctl only)")
     parser.add_argument("--hover-mode", default="posctl", choices=tuple(sitl_probe.NAV_STATE))
     parser.add_argument("--budget-s", required=True, type=float, help="wall-time budget of the whole driver")
+    parser.add_argument("--gnss-outage-s", type=float, default=0.0,
+                        help="gps hover only: inject a GNSS outage of this many /clock seconds, 20 s into the hover")
     args = parser.parse_args(argv)
     if not args.run_dir.is_dir() or not args.budget_s > 0 or not math.isfinite(args.spawn_yaw_rad):
         parser.error("--run-dir must exist, --budget-s must be > 0 and --spawn-yaw-rad finite")
+    if args.gnss_outage_s and not (args.profile == "gps" and args.pattern == "hover"
+                                   and 0.0 < args.gnss_outage_s <= GNSS_OUTAGE_MAX_S):
+        parser.error(f"--gnss-outage-s needs --profile gps, --pattern hover and 0 < s <= {GNSS_OUTAGE_MAX_S}")
     if args.pattern == "altitude_sweep" and (args.profile != "gps" or args.hover_mode != "posctl"):
         parser.error("--pattern altitude_sweep is flown with --profile gps and --hover-mode posctl only")
 
@@ -371,7 +440,7 @@ def main(argv=None) -> int:
     executor.add_node(node)
     spinner = threading.Thread(target=executor.spin, daemon=True)
     spinner.start()
-    flight = HoverFlight(node, args.hover_mode, args.budget_s, stop, args.pattern)
+    flight = HoverFlight(node, args.hover_mode, args.budget_s, stop, args.pattern, args.gnss_outage_s)
     ok = False
     try:
         ok = flight.run()
@@ -386,7 +455,7 @@ def main(argv=None) -> int:
         meta = {"profile": args.profile, "spawn_yaw_rad": args.spawn_yaw_rad, "pattern": args.pattern,
                 "hover_mode": args.hover_mode, "target_height_m": sitl_probe.TARGET_HEIGHT_M,
                 "ground_z_m": flight.ground_z, "hover_window": flight.hover_window, "phases": flight.phases,
-                "interrupted": stop.is_set()}
+                "interrupted": stop.is_set(), "gnss_outage": flight.gnss_outage}
         if args.pattern == "altitude_sweep":
             meta["sweep_steps"] = flight.sweep_steps
         (args.run_dir / "hover_meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")

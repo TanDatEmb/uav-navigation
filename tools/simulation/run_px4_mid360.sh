@@ -8,6 +8,8 @@
 #                         validated by tools/uavnav/px4_profile.py (D20, D28, D33/O23); invalid -> exit 2
 #   UAVNAV_SPAWN_YAW_RAD  optional: ENU spawn yaw of x500_mid360 [rad], applied with the world's
 #                         set_pose service before PX4 attaches (F34 check, D33/O24)
+#   UAVNAV_SYS_FAILURE_EN optional: 1 sets SYS_FAILURE_EN=1 (failure injection; the harness sets it for a GNSS
+#                         outage run only, S1c Task 1); anything else but empty refuses start
 #   GZ_GUI=0              headless Gazebo server (the SITL harness always sets it)
 #   SESSION_DIR           run directory; Gazebo log in $SESSION_DIR/logs, PX4 working directory
 #                         (fresh parameters, PX4 logs) in $SESSION_DIR/px4 (default SESSION_DIR:
@@ -142,6 +144,10 @@ PY
     exit 2
   fi
 fi
+case "${UAVNAV_SYS_FAILURE_EN:-}" in
+  ""|1) ;;
+  *) echo "ERROR: UAVNAV_SYS_FAILURE_EN must be 1 or unset, got ${UAVNAV_SYS_FAILURE_EN}" >&2; exit 2 ;;
+esac
 if [[ "${CHECK_ONLY}" == "1" ]]; then
   echo "PX4 binary     : ${PX4_BIN} (ok)"
   echo "PX4 rootfs     : ${PX4_ROOTFS} (ok; gz_env.sh ok; etc ${PX4_BUILD}/etc ok)"
@@ -149,6 +155,7 @@ if [[ "${CHECK_ONLY}" == "1" ]]; then
   echo "PX4 profile    : ${UAVNAV_PX4_PROFILE} (valid)"
   echo "  ${PROFILE_ENV//$'\n'/$'\n'  }"
   if [[ -n "${SPAWN_POSE_REQ:-}" ]]; then echo "Spawn pose     : ${SPAWN_POSE_REQ}"; fi
+  if [[ -n "${UAVNAV_SYS_FAILURE_EN:-}" ]]; then echo "Harness        : SYS_FAILURE_EN=1 (failure injection)"; fi
   exit 0
 fi
 
@@ -250,6 +257,9 @@ export PX4_PARAM_UXRCE_DDS_SYNCT=0   # Gazebo /clock is the only time source (D2
 export PX4_PARAM_SIM_GZ_EN_ODOM=0    # Gazebo truth odometry must never compete with LIO EV
 export PX4_PARAM_SIM_GZ_EN_GPS=1     # GNSS stays simulated (telemetry in no_gps, aiding in gps)
 export PX4_PARAM_COM_RC_IN_MODE=1    # MAVLink-only manual control: the ROS stick stream (O24)
+if [[ "${UAVNAV_SYS_FAILURE_EN:-}" == 1 ]]; then
+  export PX4_PARAM_SYS_FAILURE_EN=1  # VEHICLE_CMD_INJECT_FAILURE accepted (GNSS outage run only, S1c Task 1)
+fi
 # NAV_DLL_ACT=0 and CBRK_SUPPLY_CHK are set by px4_mid360_startup.sh after rcS.
 
 if [[ -v PX4_SIM_MODEL ]]; then unset PX4_SIM_MODEL; fi
