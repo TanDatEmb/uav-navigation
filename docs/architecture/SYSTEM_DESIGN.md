@@ -231,7 +231,7 @@ Làm theo đủ cơ chế của EKF2 (F35):
 | 2d ★ | Thử lại (O30) | `LioLifecycle` | INITIALIZING (sau restart) → LOST | chưa TRACKING sau `reinit_timeout_s`, hoặc gap > `gap_lost` | `StateTransition` REINIT_TIMEOUT / LIDAR_GAP_LOST |
 | 3a | Tracking lại | `LioLifecycle` | INITIALIZING → TRACKING | map sẵn sàng và 5 scan tốt | `StateTransition` CONFIRMATION_REACHED |
 | 3b | Đồng bộ lại `T` | `AlignmentEstimator` | FROZEN → VALID | cặp đầu tiên của epoch mới qua cổng nhảy (0.5 m, 5°) | `AlignmentTransition` |
-| 3b ★ | EV chờ `T` (O31) | `px4_bridge` | chặn EV của epoch mới khi `T` còn FROZEN | tránh để chính EV mới làm EKF2 reset (F33c) trong lúc FROZEN, vốn dẫn tới INVALID | `EvGated` T_FROZEN |
+| 3b ★ | EV chờ `T` (O31) | `px4_bridge` | chặn EV của epoch mới khi `T` còn FROZEN | tránh để chính EV mới làm EKF2 reset (F33c) trong lúc FROZEN, vốn dẫn tới INVALID | `EvGated` ALIGNMENT_FROZEN |
 | 3c | Navigation | Supervisor (S2) | LOST → REACQUIRING → AVAILABLE | §2.3 | `StateTransition` |
 | 4 | Hết chuỗi | `AlignmentEstimator`, Supervisor | FROZEN → INVALID; HANDED_OVER | FROZEN quá `lio_recovery_timeout_s`, PX4 reset khi FROZEN, hoặc PX4 mất vị trí (không GPS) | `AlignmentTransition`; reason bàn giao §2.3 |
 
