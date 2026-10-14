@@ -60,6 +60,8 @@
 
 A decision different from the recommendation is a plan change: edit the task before dispatching it.
 
+**Status 2026-10-14: all three gates are closed by the owner as recommended** (AR4 APPROVED with `Owner xác nhận` = `có`; O34 = D47; O35 = D48). The information limits the critique found are recorded in SYSTEM_DESIGN §0 (D46).
+
 ## Global Constraints
 
 - **Tree and commits:** single tree; `git add <path>` only; `git diff --cached --stat` before every commit; Makefile builds at `-j3` (sanitize `-j2`).

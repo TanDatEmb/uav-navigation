@@ -35,6 +35,20 @@ Profile là tham số tầng (c) theo D22. Profile được chọn khi chạy; k
 
 Cả hai profile (D42): xe luôn có compass (`SYS_HAS_MAG` bật, không có profile không compass); EV gửi FRD và được fuse đầy đủ nhất có thể (vị trí, vận tốc, yaw), PX4 tự chọn nguồn heading. `T` hấp thụ mọi lệch heading PX4 chọn (§4.1), nên không có kỳ vọng về một giá trị `yaw_T` tuyệt đối. Profile có GPS từng tắt EV yaw (D20) vì lo cạnh tranh heading; S1c đo lại cấu hình EV đầy đủ trong SITL, và chỉ giữ ngoại lệ theo profile khi số đo cho thấy cấu hình đầy đủ hỏng, kèm bằng chứng để owner duyệt.
 
+### Giới hạn thông tin (D46)
+
+Những điều dưới đây là giới hạn của thông tin, không phải của cài đặt: thêm tính năng không giải được chúng. Hệ thống phải xử lý bằng bàn giao, phạm vi vận hành hoặc đo trên phần cứng, và không được dựng một chuỗi phương pháp giả vờ có thông tin (D44).
+
+| Giới hạn | Vì sao không giải được | Hệ thống làm gì |
+|---|---|---|
+| Không GPS và mất hình học (map trống) | Chỉ còn IMU; PX4 báo mất vị trí sau khoảng 5 s (`EKF2_NOAID_TOUT`) | Bàn giao cho failsafe của PX4 (D4); ngân sách chỉ ít hơn 10 s |
+| LIO trôi chậm khi vẫn TRACKING, ở không GPS | Không có nguồn độc lập nào nhìn thấy; EKF2 chỉ đi theo EV | Phạm vi vận hành (D3: chỉ môi trường LIO duy trì được) và đo drift trên phần cứng (D39) |
+| Khớp sai nhưng rất tự tin, ở cấu trúc lặp | Thông tin của chính scan không lộ ra được | Có GPS: GNSS qua EKF2 phát hiện. Không GPS: không phát hiện được, chỉ phạm vi vận hành |
+| Liên tục frame qua khởi động lại | Không thể tốt hơn tham chiếu lúc đó (nhiễu GNSS ở gps, IMU trôi ở no_gps); seed của map mới chỉ chọn gốc | `T` về INIT theo epoch mới; điều hướng neo lại (S2/S3) |
+| Mép của vùng có hình học | Quy tắc chỉ giãn cách các lần thử (thời gian giữ cố định, D41) | Xe phải di chuyển: quyết định của điều hướng, không phải của LIO |
+| Covariance của EV | EKF2 nâng sai số EV lên sàn riêng (`EKF2_EVP_NOISE`, `EKF2_GPS_P_NOISE` khi có GNSS) | Cổng nhị phân "chỉ gửi EV khi TRACKING" là kênh trung thực; không nới covariance |
+| Mô phỏng | Không có bias IMU, thời gian theo điểm LiDAR, nhiễu góc | Mọi số drift và khôi phục từ SITL là **cận lạc quan**, phải ghi vậy |
+
 ### Hành vi an toàn không được nới
 
 - **Fail-closed.** Thiếu dữ liệu, hoặc dữ liệu cũ hay mơ hồ về thời gian, frame, identity, epoch, world hay certificate, thì bị từ chối. Không bao giờ coi là đạt.
