@@ -49,6 +49,7 @@ invariant_paths:
     - src/estimation/uavnav_lio_core/include/uavnav/lio/runner.hpp
     - src/estimation/uavnav_lio_core/include/uavnav/lio/channels.hpp
   INV-LIO-4-tracking-needs-confirmation-and-applied-corrections:
+    - src/estimation/uavnav_lio_core/include/uavnav/lio/limits.hpp
     - src/estimation/uavnav_lio_core/include/uavnav/lio/lifecycle.hpp
     - src/estimation/uavnav_lio_core/src/lifecycle.cpp
     - src/estimation/uavnav_lio_core/src/frontend.cpp

@@ -203,7 +203,7 @@ INITIALIZING ──map đủ ∧ 5 scan tốt (tươi) liên tiếp──► TRA
 - **Hiệu chỉnh và quy tắc nhận/từ chối (D31, D40, AR4).**
   - Không từ chối vì tuổi. Một kết quả `kScanGood` bị từ chối chỉ khi predictor không đặt được nó vào buffer 300 ms hoặc nó không hữu hạn. Kết luận có kiểu duy nhất là `Result<void, PredictorReason>` của `OutputPredictor::on_correction`. Kết quả bị từ chối thành `kScanCorrectionRejected`: đếm như scan suy biến, không đẩy mốc scan cuối.
   - Sai epoch, hoặc kết quả tới khi một restart đang chờ, bị bỏ ở mọi loại kết quả (`kStaleEpoch`, D33/O16).
-  - **Guard tươi trên cạnh xác nhận.** Một scan tốt đã áp dụng luôn đẩy mốc scan cuối. Nó chỉ được đếm vào `confirm_scans` khi (stamp IMU mới nhất mà lifecycle đã thấy − scan end) ≤ `gap_degraded`. Tác hại được ngăn: xác nhận TRACKING trên một output mà tầm tích phân IMU đã vi phạm luật gap (dao động O15).
+  - **Guard tươi trên cạnh xác nhận.** Một scan tốt đã áp dụng luôn đẩy mốc scan cuối. Nó chỉ được đếm vào `confirm_scans` khi (stamp IMU mới nhất mà lifecycle đã thấy − scan end) + chu kỳ scan ≤ `gap_degraded` (0.15 s ở giá trị beta): xác nhận không được theo sau ngay bởi một gap vượt `gap_degraded` nếu scan kế tới trễ như scan này. Quy tắc này đóng dải dao động của DV1 trong code; việc đóng DV1 chờ số đo SITL. Khi nạp cấu hình, `lifecycle_gap_lost_s` phải ≥ buffer predictor (0.3 s) + 2 chu kỳ scan, nếu không từ chối. Tác hại được ngăn: xác nhận TRACKING trên một output mà tầm tích phân IMU đã vi phạm luật gap (dao động O15).
   - Hệ quả: backend bão hoà nằm ở DEGRADED, output vẫn được hiệu chỉnh, không có EV và không LOST.
 - Scan rỗng là một event, không phải exception.
 - `/lio/scan` chỉ được phát khi TRACKING.
@@ -252,7 +252,7 @@ Làm theo đủ cơ chế của EKF2 (F35):
 - **Câu trả lời restart tới muộn (D33/O16):** nếu buffer predictor không còn khớp được thời điểm của lệnh (backend trả lời sau hơn 300 ms), frontend từ chối câu trả lời, phát `LioRestartRejected` với lý do stale, ở lại RESTARTING và không kéo lùi output. Lệnh mới được phát theo quy tắc theo mức ở trên.
 - Khi đang chờ câu trả lời restart, frontend chỉ áp dụng chính câu trả lời đó; kết quả scan mang epoch của một câu trả lời đã bị từ chối bị bỏ (`kStaleEpoch`).
 
-**Chuỗi khôi phục (D38, D41, AR4).** LOST không phải điểm cuối và LIO không bỏ cuộc. Bảng dưới đây là toàn bộ chuỗi, trên các state machine sẵn có, không thêm trạng thái, message hay cờ. Các dòng của `LioLifecycle` chờ AR4; dòng seed và `T` chờ O34.
+**Chuỗi khôi phục (D38, D41, AR4).** LOST không phải điểm cuối và LIO không bỏ cuộc. Bảng dưới đây là toàn bộ chuỗi, trên các state machine sẵn có, không thêm trạng thái, message hay cờ. Dòng guard tươi và hiệu chỉnh đã có trong code (S1c Task 2); các dòng còn lại của `LioLifecycle` (S1c Task 3); dòng seed và `T` chờ O34.
 
 | # | Bước | Nơi ghi | Cạnh hoặc hành động | Điều kiện | Event |
 |---|---|---|---|---|---|
