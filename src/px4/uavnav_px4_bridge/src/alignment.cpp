@@ -101,6 +101,7 @@ bool AlignmentEstimator::go(AlignmentState to, AlignmentReason reason, time::Sen
   assert(listed && "alignment transition not in kAlignmentTransitions");
   if (!listed) return false;
   state_ = to;
+  waiting_.reset();  // a scan waits for a pair only in the state it arrived in (on_lio step 5)
   // Entry actions.
   switch (to) {
     case AlignmentState::kValid: stale_since_ = t; break;
@@ -186,7 +187,7 @@ AlignmentOutput AlignmentEstimator::on_px4(const Px4PoseSample& s) noexcept {
   last_counters_ = now;
   if (!xy && !z && !heading) {
     push(s);
-    return output(AlignmentReason::kNone);
+    return decide_waiting(s.t);
   }
 
   const Eigen::Vector3d d{xy ? s.delta_xy_m.x() : 0.0, xy ? s.delta_xy_m.y() : 0.0, z ? s.delta_z_m : 0.0};
@@ -326,6 +327,9 @@ AlignmentOutput AlignmentEstimator::on_lio(const LioPoseSample& s) noexcept {
   }
   last_lio_ = s.t;
   last_seen_ = std::max(last_seen_, s.t);
+  // A newer LIO input ends the wait of an older scan: it is never paired after a newer one (step 5).
+  const bool dropped_waiting = waiting_.has_value();
+  waiting_.reset();
 
   if (const auto r = timeouts(s.t)) return output(*r);
 
@@ -358,13 +362,32 @@ AlignmentOutput AlignmentEstimator::on_lio(const LioPoseSample& s) noexcept {
   }
 
   const auto px4 = px4_at(s.t);
-  if (!px4) return output(transition.value_or(AlignmentReason::kNoPx4Sample));
-  const Pair pair{instant(px4->p, px4->yaw, s.p_frd_m, s.yaw_frd_rad), s.p_frd_m, px4->p};
+  if (px4) return pair_scan(s, *px4, transition);
+  // DV2: the PX4 sample after the scan has not arrived yet. The scan waits for it (state INIT or VALID here).
+  if (ring_size_ > 0 && s.t > sample(ring_size_ - 1).t) {
+    waiting_ = s;
+    return output(transition.value_or(dropped_waiting ? AlignmentReason::kNoPx4Sample : AlignmentReason::kNone));
+  }
+  return output(transition.value_or(AlignmentReason::kNoPx4Sample));
+}
+
+AlignmentOutput AlignmentEstimator::pair_scan(const LioPoseSample& s, const Interpolated& px4,
+                                              std::optional<AlignmentReason> transition) noexcept {
+  const Pair pair{instant(px4.p, px4.yaw, s.p_frd_m, s.yaw_frd_rad), s.p_frd_m, px4.p};
   newest_pair_ = s.t;
   const AlignmentReason r = state_ == AlignmentState::kInit ? accumulate(pair, s.t) : filter(pair, s.t);
   // FROZEN -> VALID reports the transition (kLioTracking) unless the returning pair itself is jump-rejected:
   // that rejection (T unchanged) is the more important fact and keeps its own reason.
   return output(r == AlignmentReason::kPairRejectedJump ? r : transition.value_or(r), pair.inst);
+}
+
+AlignmentOutput AlignmentEstimator::decide_waiting(time::SensorTime t) noexcept {
+  if (!waiting_ || t < waiting_->t) return output(AlignmentReason::kNone);
+  const LioPoseSample s = *waiting_;
+  waiting_.reset();
+  const auto px4 = px4_at(s.t);
+  if (!px4) return output(AlignmentReason::kNoPx4Sample);
+  return pair_scan(s, *px4, std::nullopt);
 }
 
 AlignmentOutput AlignmentEstimator::on_tick(time::SensorTime now) noexcept {

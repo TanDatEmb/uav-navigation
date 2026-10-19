@@ -108,7 +108,8 @@ enum class AlignmentReason : std::uint8_t {
   kPx4ResetWhileFrozen,  ///< FROZEN -> INVALID
   kStale,              ///< VALID -> INVALID: no accepted pair for valid_stale
   kFrozenTooLong,      ///< FROZEN -> INVALID: FROZEN for longer than frozen_max
-  kNoPx4Sample,        ///< no PX4 sample within kPairingWindow on both sides of the scan; nothing changed
+  kNoPx4Sample,        ///< no PX4 sample within kPairingWindow on both sides of the scan, also for a waiting
+                       ///< scan dropped by a newer one (on_lio step 5); nothing changed
   kInputRejected       ///< non-finite value, position beyond limits::kMaxPositionAbsM, negative stamp, or
                        ///< stamp not newer than the previous one;
                        ///< also a refused unlisted state change (a programming error, state unchanged)
@@ -254,6 +255,11 @@ class AlignmentEstimator {
   ///   INVALID -> stays INVALID, kPx4ResetApplied
   /// Returns an output (the brief's signature returned void; the reset reason must reach the caller's
   /// event at the decision point, AGENTS.md §2.3). Ignoring it is allowed.
+  /// The waiting scan (on_lio step 5, DV2) is decided by the first accepted sample stamped at or after it that
+  /// applies no reset (a reset sample keeps it waiting; the next sample decides it on the moved buffer): it is
+  /// paired exactly as on_lio would pair it (kPairAccepted, kPairsConsistent, kPairRejectedJump, raw set, stamp =
+  /// the scan's), or refused kNoPx4Sample when the bracket exceeds kPairingWindow on a side (nothing changes).
+  /// Either way it no longer waits. A sample stamped before the waiting scan leaves it waiting (kNone).
   AlignmentOutput on_px4(const Px4PoseSample& s) noexcept;
 
   /// Pairs the scan with PX4 interpolated at s.t (linear position, shortest-arc yaw, the two buffered
@@ -271,7 +277,21 @@ class AlignmentEstimator {
   ///     FROZEN  -> VALID (kLioTracking); the pair, if any, is then processed as in VALID, but the
   ///                reason is kLioTracking, except a jump-rejected pair, which reports kPairRejectedJump
   ///                (T unchanged; the jump rejection protects T).
-  ///     no PX4 pair                                             -> kNoPx4Sample, nothing changes
+  ///     scan stamped after the newest buffered PX4 sample (the buffer not empty)
+  ///                                                             -> the scan WAITS: kNone (or the FROZEN -> VALID
+  ///                reason kLioTracking), nothing else changes. on_px4 decides it with the next sample after
+  ///                it (DV2: in SITL the LIO odometry reaches the bridge about 20 ms after its stamp, often
+  ///                before the PX4 sample after the stamp; refusing it at once dropped 0–53 % of the pairs
+  ///                of a hover and took T STALE once, docs/analysis/2026-10-s1c-dv2.md).
+  ///                At most one scan waits. It stops waiting, unpaired, when
+  ///                  - a newer LIO input passes checks 1–2: if that call ends with ITS scan waiting, it reports
+  ///                    kNoPx4Sample (for the dropped scan) instead of kNone; any other reason of that call
+  ///                    (kLioLost, kStale) wins and implies the drop;
+  ///                  - the state changes (go(): the scan waited for a pair in the state it arrived in).
+  ///                Harm prevented by not pairing it later: a pair decided after a newer scan, or in another
+  ///                state, would step T out of scan order.
+  ///     no PX4 pair otherwise (empty buffer, a bracket beyond kPairingWindow, older than the span)
+  ///                                                             -> kNoPx4Sample, nothing changes
   ///     INIT: consistent with the running mean at the vehicle -> added (kPairAccepted), and at
   ///           consistent_pairs and every member within the thresholds of the final mean at its own vehicle
   ///           point -> VALID with T = mean (kPairsConsistent); inconsistent -> the accumulation restarts
@@ -289,6 +309,11 @@ class AlignmentEstimator {
   AlignmentOutput on_tick(time::SensorTime now) noexcept;
 
   AlignmentState state() const noexcept { return state_; }
+
+  /// Stamp of the scan waiting for its PX4 sample (on_lio "waits"), if any.
+  std::optional<time::SensorTime> waiting_scan() const noexcept {
+    return waiting_ ? std::optional<time::SensorTime>{waiting_->t} : std::nullopt;
+  }
 
  private:
   struct Interpolated {
@@ -314,6 +339,12 @@ class AlignmentEstimator {
   Pose4 accumulation_mean() const noexcept;
   AlignmentReason accumulate(const Pair& pair, time::SensorTime t) noexcept;
   AlignmentReason filter(const Pair& pair, time::SensorTime t) noexcept;
+  /// Pairs a tracking scan with the interpolated PX4 pose (INIT: accumulate, VALID: filter) and reports it;
+  /// `transition` is the FROZEN -> VALID reason of the same call, if any (on_lio step 5).
+  AlignmentOutput pair_scan(const LioPoseSample& s, const Interpolated& px4,
+                            std::optional<AlignmentReason> transition) noexcept;
+  /// on_px4: decides the waiting scan with the sample stamped `t` just buffered (on_px4 comment).
+  AlignmentOutput decide_waiting(time::SensorTime t) noexcept;
   void accept(time::SensorTime t) noexcept;
   std::optional<AlignmentReason> timeouts(time::SensorTime now) noexcept;
 
@@ -343,6 +374,7 @@ class AlignmentEstimator {
   std::optional<time::SensorTime> last_lio_;       // newest accepted LIO stamp (any tracking value)
   std::optional<time::SensorTime> last_accepted_;  // LIO stamp of the newest accepted pair
   std::optional<time::SensorTime> newest_pair_;    // LIO stamp of the newest formed pair (D28 stamp)
+  std::optional<LioPoseSample> waiting_;           // the one scan waiting for its PX4 sample (on_lio step 5)
   time::SensorTime last_seen_{};                   // newest LIO stamp or tick
   time::SensorTime stale_since_{};                 // VALID: max(last accepted pair, entry into VALID)
   time::SensorTime frozen_since_{};                // FROZEN: stamp of the lost sample that froze T

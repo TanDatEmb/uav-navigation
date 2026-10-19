@@ -29,6 +29,8 @@
 //     F14, and limits::kClockMode; a refusal is "EvRejected" with the EvReason) and, independently, fed to the
 //     alignment as on_lio(tracking = true) with the FRD pose (frames.hpp; a quaternion that is not a rotation gives
 //     a NaN yaw, which the alignment refuses). A gated sample is not fed: its non-TRACKING health already was.
+//     A scan stamped after the newest PX4 sample waits in the alignment (alignment.hpp on_lio step 5, DV2): the
+//     EV is still sent at once (D42), and the PX4 sample that decides the scan reports its pair (below).
 //     Limitation (deferred to O25, S3/S4): an odometry of an OLDER epoch than the newest health is not gated.
 //   /lio/health. Every non-TRACKING health (any epoch; the core treats every code other than kTracking as not
 //     TRACKING) is fed as on_lio(tracking = false), so a LIO loss takes T VALID -> FROZEN (D11's BACKUP path),
@@ -42,6 +44,9 @@
 //   vehicle_local_position. A sample with xy_valid or z_valid false is skipped ("Px4SampleRejected",
 //     kPx4PositionInvalid): not buffered, its reset counters not consumed, so a reset it carries is applied by the
 //     next valid sample (PX4 keeps the counter and delta until the next reset). A valid one goes to on_px4.
+//     When it decides the waiting scan (its output is a pair outcome: kPairAccepted, kPairsConsistent,
+//     kPairRejectedJump or kNoPx4Sample), the outcome is the odometry's: its events are reported on the odometry
+//     stream (input 0, sensor_time_s = the scan's stamp), and an accepted pair ends the odometry episodes.
 //   on_tick, every limits::kTickPeriod of ROS time (sensor time in SITL, D29): the alignment's timeouts.
 // Future stamps: any input stamp later than the newest tick time + limits::kMaxStampAhead is refused
 // (kStampInFuture; "LioInputRejected" for odometry and health, "Px4SampleRejected" for PX4) before any other
@@ -61,7 +66,8 @@
 // every limits::kEventSummaryEvery-th as a safety net. The episode ends at the next ACCEPTED input of the slot's
 // stream: if occurrences went unreported, one SUMMARY record is emitted (same event and reason; values input or stream,
 // count = the episode total, suppressed = the unreported ones, summary 1), and the slot re-arms, so the next fault
-// episode is reported at once. Accepted: odometry = not refused, not gated, EV encoded and its pair not rejected;
+// episode is reported at once. Accepted: odometry = not refused, not gated, EV encoded and its pair not rejected
+// (a waiting scan is accepted when the PX4 sample that decides it accepts its pair; its EV was checked at its call);
 // health = not refused and not rejected by the alignment; PX4 = not refused and accepted by the alignment; tick =
 // not rejected. flush() ends every open episode (the node calls it at shutdown).
 //   "AlignmentTransition"   one per alignment STATE CHANGE (before != after), keyed on the change and not on the
@@ -74,7 +80,9 @@
 //   "AlignmentPairRejected" rate-limited per input: an alignment output with kPairRejectedJump, kNoPx4Sample or
 //                           kInputRejected (also a refused PX4 sample: non-finite, beyond limits, stamp not newer);
 //                           states; values input, sensor_time_s, count, and for a LIO input (which formed or tried
-//                           a pair) residual_position_m, residual_yaw_rad (a PX4 sample forms no pair: none).
+//                           a pair) residual_position_m, residual_yaw_rad (a PX4 sample forms no pair: none). A
+//                           waiting scan dropped by a newer one is reported by the newer odometry with the dropped
+//                           scan's sensor_time_s; one decided by a PX4 sample as input 0 with the scan's stamp.
 //   "AlignmentAccumulationRestarted" rate-limited (reason kLioLost, input 1): a non-TRACKING health in INIT threw
 //                           away the INIT accumulation (no state change). Its episode ends at the next accepted
 //                           odometry, i.e. when the accumulation grows again. Values sensor_time_s, count.

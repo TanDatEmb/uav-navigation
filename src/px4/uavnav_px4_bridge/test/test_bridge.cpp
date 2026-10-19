@@ -706,6 +706,73 @@ TEST(Px4Bridge, FrozenToValidWithAJumpRejectedPairIsOneTransition) {
   EXPECT_GT(Value(rejected[0], "residual_position_m"), 1.9);
 }
 
+// DV2: an odometry delivered before the PX4 sample after its stamp (LIO latency 20 ms < PX4 interval + lag in SITL)
+// waits; the next PX4 sample pairs it. No rejection event, the pair is published from the PX4 call.
+TEST(Px4Bridge, OdometryAheadOfPx4IsPairedByTheNextPx4Sample) {
+  Rig rig;
+  World w;
+  RunToValid(rig, w);  // PX4 up to 3.580 s
+  rig.bridge.on_tick(Ms(3'600), Snap(Ms(3'600)));
+  rig.bridge.on_px4_local_position(w.Px4(Ms(3'600)), Snap(Ms(3'600)));
+  const BridgeOutputs wait = rig.bridge.on_lio_odometry(w.Odom(Ms(3'603)), Snap(Ms(3'610)));
+  EXPECT_TRUE(wait.ev);  // the EV never waits (D42)
+  ASSERT_TRUE(wait.alignment);
+  EXPECT_EQ(wait.alignment->reason, AlignmentReason::kNone);
+  EXPECT_FALSE(wait.alignment->raw.has_value());
+  const BridgeOutputs paired = rig.bridge.on_px4_local_position(w.Px4(Ms(3'620)), Snap(Ms(3'620)));
+  ASSERT_TRUE(paired.alignment);  // published: on_px4 output with a reason (O21)
+  EXPECT_EQ(paired.alignment->reason, AlignmentReason::kPairAccepted);
+  EXPECT_EQ(paired.alignment->stamp, Ms(3'603));
+  ASSERT_TRUE(paired.alignment->raw.has_value());
+  ExpectPoseNear(*paired.alignment->raw, w.truth, 1e-9);
+  EXPECT_TRUE(rig.Events("AlignmentPairRejected").empty());
+}
+
+// A waiting odometry that the next PX4 sample cannot pair (beyond kPairingWindow) is reported as the odometry's
+// NO_PX4_SAMPLE, with the scan's stamp.
+TEST(Px4Bridge, WaitingOdometryWithoutAPx4SampleInTheWindowIsReported) {
+  Rig rig;
+  World w;
+  RunToValid(rig, w);
+  rig.bridge.on_tick(Ms(3'600), Snap(Ms(3'600)));
+  rig.bridge.on_px4_local_position(w.Px4(Ms(3'600)), Snap(Ms(3'600)));
+  rig.bridge.on_lio_odometry(w.Odom(Ms(3'603)), Snap(Ms(3'610)));
+  const BridgeOutputs late = rig.bridge.on_px4_local_position(w.Px4(Ms(3'660)), Snap(Ms(3'660)));  // 57 ms after
+  ASSERT_TRUE(late.alignment);
+  EXPECT_EQ(late.alignment->reason, AlignmentReason::kNoPx4Sample);
+  const auto rejected = rig.Events("AlignmentPairRejected");
+  ASSERT_EQ(rejected.size(), 1U);
+  EXPECT_EQ(rejected[0].reason, "NO_PX4_SAMPLE");
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "input"), 0.0);  // the odometry's pair, decided at a PX4 sample
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "sensor_time_s"), 3.603);
+}
+
+// A waiting odometry dropped by the next one (no PX4 sample in between) is reported with its own stamp.
+TEST(Px4Bridge, WaitingOdometryDroppedByANewerOneIsReportedWithItsStamp) {
+  Rig rig;
+  World w;
+  RunToValid(rig, w);
+  rig.bridge.on_tick(Ms(3'600), Snap(Ms(3'600)));
+  rig.bridge.on_px4_local_position(w.Px4(Ms(3'600)), Snap(Ms(3'600)));
+  rig.bridge.on_lio_odometry(w.Odom(Ms(3'603)), Snap(Ms(3'610)));
+  const BridgeOutputs next = rig.bridge.on_lio_odometry(w.Odom(Ms(3'703)), Snap(Ms(3'710)));
+  ASSERT_TRUE(next.alignment);
+  EXPECT_EQ(next.alignment->reason, AlignmentReason::kNoPx4Sample);
+  const auto rejected = rig.Events("AlignmentPairRejected");
+  ASSERT_EQ(rejected.size(), 1U);
+  EXPECT_EQ(rejected[0].reason, "NO_PX4_SAMPLE");
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "input"), 0.0);
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "sensor_time_s"), 3.603);
+  // The newer one is paired by the next PX4 sample after it; the accepted pair ends the episode (no suppressed
+  // occurrence, so no summary record).
+  rig.bridge.on_px4_local_position(w.Px4(Ms(3'700)), Snap(Ms(3'712)));
+  const BridgeOutputs paired = rig.bridge.on_px4_local_position(w.Px4(Ms(3'720)), Snap(Ms(3'724)));
+  ASSERT_TRUE(paired.alignment);
+  EXPECT_EQ(paired.alignment->reason, AlignmentReason::kPairAccepted);
+  EXPECT_EQ(paired.alignment->stamp, Ms(3'703));
+  EXPECT_EQ(rig.Events("AlignmentPairRejected").size(), 1U);
+}
+
 TEST(Px4Bridge, EveryAlignmentStateChangeIsOneEvent) {
   // Short timeouts and few pairs so that 5000 inputs visit every state many times.
   const AlignmentConfig cfg{time::milliseconds(500), 3U, 0.5, 0.0873, time::milliseconds(300), time::seconds(1)};

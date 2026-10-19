@@ -39,6 +39,13 @@ bool is_pair_rejection(AlignmentReason r) noexcept {
          r == AlignmentReason::kInputRejected;
 }
 
+/// The outcome of a pair (formed, or refused for want of a PX4 sample): what on_px4 reports when it decides the
+/// waiting scan (alignment.hpp on_px4).
+bool is_pair_decision(AlignmentReason r) noexcept {
+  return r == AlignmentReason::kPairAccepted || r == AlignmentReason::kPairsConsistent ||
+         r == AlignmentReason::kPairRejectedJump || r == AlignmentReason::kNoPx4Sample;
+}
+
 bool is_reset(AlignmentReason r) noexcept {
   return r == AlignmentReason::kPx4ResetApplied || r == AlignmentReason::kPx4ResetWhileFrozen;
 }
@@ -94,9 +101,14 @@ BridgeOutputs Px4Bridge::on_lio_odometry(const LioOdometryIn& in, const time::Ti
   }
 
   const AlignmentState before = alignment_.state();
+  const std::optional<time::SensorTime> waiting = alignment_.waiting_scan();
   const LioPoseSample pose{in.t, flu_to_frd(in.p_flu_m), frd_yaw(in.q_flu), true};
-  out.alignment = report(before, alignment_.on_lio(pose), Input::kOdometry, in.t, in.epoch, now);
-  if (out.ev && !is_pair_rejection(out.alignment->reason)) accepted(Input::kOdometry, now);
+  const AlignmentOutput a = alignment_.on_lio(pose);
+  // kNoPx4Sample while this scan now waits is the drop of the scan that waited before (alignment.hpp step 5).
+  const bool dropped = waiting && a.reason == AlignmentReason::kNoPx4Sample && alignment_.waiting_scan() == in.t;
+  out.alignment = report(before, a, Input::kOdometry, dropped ? *waiting : in.t, in.epoch, now);
+  // A waiting scan is not accepted yet: its pair is decided at a PX4 sample (on_px4_local_position).
+  if (out.ev && !is_pair_rejection(a.reason) && alignment_.waiting_scan() != in.t) accepted(Input::kOdometry, now);
   return out;
 }
 
@@ -135,9 +147,16 @@ BridgeOutputs Px4Bridge::on_px4_local_position(const Px4LocalPositionIn& in, con
     return {};
   }
   const AlignmentState before = alignment_.state();
+  const std::optional<time::SensorTime> waiting = alignment_.waiting_scan();
   const AlignmentOutput out = alignment_.on_px4(in.sample);
   if (is_reset(out.reason)) report_reset(before, out, in.sample, now);
-  report(before, out, Input::kPx4, in.sample.t, lio_epoch_, now);
+  if (waiting && !alignment_.waiting_scan() && is_pair_decision(out.reason)) {
+    // This sample decided the waiting scan: the pair is the odometry's, reported on its stream with its stamp.
+    report(before, out, Input::kOdometry, *waiting, lio_epoch_, now);
+    if (!is_pair_rejection(out.reason)) accepted(Input::kOdometry, now);
+  } else {
+    report(before, out, Input::kPx4, in.sample.t, lio_epoch_, now);
+  }
   if (out.reason != AlignmentReason::kInputRejected) {
     px4_counters_ = Counters{in.sample.xy_reset_counter, in.sample.z_reset_counter, in.sample.heading_reset_counter};
     accepted(Input::kPx4, now);

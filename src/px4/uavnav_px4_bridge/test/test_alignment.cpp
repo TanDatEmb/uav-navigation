@@ -289,9 +289,11 @@ TEST(Alignment, NoPx4SampleInValidLeavesEverythingUnchanged) {
   Sim sim;
   sim.run_until_valid();
   const AlignmentOutput before = sim.step();
-  // Only PX4 samples before the scan (none after it): one side missing.
+  // PX4 samples on both sides, but the one after the scan is 57 ms after it: beyond kPairingWindow.
   const double t = sim.t_lio_next;
   sim.feed_px4_until(t - 0.005);
+  sim.t_px4_next += 0.06;
+  sim.one_px4();
   const AlignmentOutput o = sim.est.on_lio(sim.lio_at(t));
   EXPECT_EQ(o.reason, AlignmentReason::kNoPx4Sample);
   EXPECT_EQ(o.state, AlignmentState::kValid);
@@ -331,11 +333,141 @@ TEST(Alignment, PairingWindowIsFiftyMillisecondsOnEachSide) {
     EXPECT_EQ(o.reason, AlignmentReason::kPairAccepted);
   }
   {
-    // A scan newer than every PX4 sample.
+    // A scan newer than every PX4 sample waits for the next one (DV2); that one is 60 ms after the scan: too far.
     AlignmentEstimator est(BetaConfig());
     est.on_px4(make(100.00));
-    EXPECT_EQ(est.on_lio(LioPoseSample{At(100.01), {0, 0, 0}, 0.0, true}).reason, AlignmentReason::kNoPx4Sample);
+    EXPECT_EQ(est.on_lio(LioPoseSample{At(100.01), {0, 0, 0}, 0.0, true}).reason, AlignmentReason::kNone);
+    EXPECT_EQ(est.on_px4(make(100.07)).reason, AlignmentReason::kNoPx4Sample);
   }
+  {
+    // The same with the next sample exactly 50 ms after the scan: paired.
+    AlignmentEstimator est(BetaConfig());
+    est.on_px4(make(100.00));
+    EXPECT_EQ(est.on_lio(LioPoseSample{At(100.01), {0, 0, 0}, 0.0, true}).reason, AlignmentReason::kNone);
+    const AlignmentOutput o = est.on_px4(make(100.06));
+    EXPECT_EQ(o.reason, AlignmentReason::kPairAccepted);
+    ASSERT_TRUE(o.raw.has_value());
+    EXPECT_NEAR(o.raw->x_m, 100.01, 1e-9);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// DV2: a scan newer than the newest buffered PX4 sample waits for the next PX4 sample (one waiting scan).
+
+TEST(Alignment, ScanAheadOfTheNewestPx4SampleWaitsAndPairsWithTheNextSampleAfterIt) {
+  Sim sim;
+  sim.run_until_valid();
+  const AlignmentOutput before = sim.step();
+  ASSERT_EQ(before.reason, AlignmentReason::kPairAccepted);
+  const double t = sim.t_lio_next;  // x.x03 s
+  sim.t_lio_next += 0.1;
+  sim.feed_px4_until(t - 0.005);    // newest PX4 sample 13 ms before the scan
+  const AlignmentOutput wait = sim.est.on_lio(sim.lio_at(t));
+  EXPECT_EQ(wait.reason, AlignmentReason::kNone);  // not a rejection: the pair is decided later
+  EXPECT_EQ(wait.state, AlignmentState::kValid);
+  EXPECT_FALSE(wait.raw.has_value());
+  ExpectPoseEq(wait.filtered, before.filtered);
+  EXPECT_EQ(wait.stamp, before.stamp);
+  EXPECT_EQ(sim.est.waiting_scan(), At(t));
+  // A sample still before the scan does not decide it.
+  EXPECT_EQ(sim.one_px4().reason, AlignmentReason::kNone);
+  EXPECT_EQ(sim.est.waiting_scan(), At(t));
+  // The first sample after the scan pairs it, interpolated at the scan time.
+  const AlignmentOutput o = sim.one_px4();
+  EXPECT_EQ(o.reason, AlignmentReason::kPairAccepted);
+  EXPECT_EQ(o.state, AlignmentState::kValid);
+  ASSERT_TRUE(o.raw.has_value());
+  ExpectPoseNear(*o.raw, sim.truth, 1e-9);
+  EXPECT_LT(o.residual_position_m, 1e-9);
+  EXPECT_EQ(o.stamp, At(t));
+  EXPECT_EQ(sim.est.waiting_scan(), std::nullopt);
+  // Later samples have nothing to decide.
+  EXPECT_EQ(sim.one_px4().reason, AlignmentReason::kNone);
+  // The scan stream continues normally.
+  EXPECT_EQ(sim.step().reason, AlignmentReason::kPairAccepted);
+}
+
+TEST(Alignment, WaitingScanInInitCompletesTheAccumulation) {
+  Sim sim;
+  AlignmentOutput o{};
+  for (int i = 0; i < 19; ++i) o = sim.step();
+  ASSERT_EQ(o.state, AlignmentState::kInit);
+  const double t = sim.t_lio_next;
+  sim.t_lio_next += 0.1;
+  sim.feed_px4_until(t - 0.005);
+  EXPECT_EQ(sim.est.on_lio(sim.lio_at(t)).reason, AlignmentReason::kNone);
+  EXPECT_EQ(sim.one_px4().reason, AlignmentReason::kNone);
+  const AlignmentOutput v = sim.one_px4();  // the 20th consistent pair, decided by a PX4 sample
+  EXPECT_EQ(v.reason, AlignmentReason::kPairsConsistent);
+  EXPECT_EQ(v.state, AlignmentState::kValid);
+  ExpectPoseNear(v.filtered, sim.truth, 1e-9);
+}
+
+TEST(Alignment, NewerScanDropsTheWaitingScanAsNoPx4Sample) {
+  Sim sim;
+  sim.run_until_valid();
+  const AlignmentOutput before = sim.step();
+  const double t1 = sim.t_lio_next;
+  const double t2 = t1 + 0.1;
+  sim.t_lio_next = t2 + 0.1;
+  sim.feed_px4_until(t1 - 0.005);
+  EXPECT_EQ(sim.est.on_lio(sim.lio_at(t1)).reason, AlignmentReason::kNone);
+  // No PX4 sample arrives before the next scan: the first scan is dropped (reported), the second one waits.
+  const AlignmentOutput drop = sim.est.on_lio(sim.lio_at(t2));
+  EXPECT_EQ(drop.reason, AlignmentReason::kNoPx4Sample);
+  EXPECT_EQ(drop.state, AlignmentState::kValid);
+  ExpectPoseEq(drop.filtered, before.filtered);
+  EXPECT_EQ(sim.est.waiting_scan(), At(t2));
+  // The PX4 samples arrive late, all at once: those after t1 but before t2 decide nothing (t1 is gone); the first
+  // one after t2 pairs t2.
+  while (sim.t_px4_next < t2) EXPECT_EQ(sim.one_px4().reason, AlignmentReason::kNone) << sim.t_px4_next;
+  const AlignmentOutput o = sim.one_px4();
+  EXPECT_EQ(o.reason, AlignmentReason::kPairAccepted);
+  EXPECT_EQ(o.stamp, At(t2));
+}
+
+TEST(Alignment, StateChangeDropsTheWaitingScan) {
+  Sim sim;
+  sim.run_until_valid();
+  const AlignmentOutput last = sim.step();
+  ASSERT_EQ(last.reason, AlignmentReason::kPairAccepted);
+  // A scan 0.9 s after the last accepted pair waits; the stale timeout fires before a PX4 sample decides it.
+  const double t = time::to_seconds(last.stamp) + 0.9;
+  sim.t_lio_next = t + 0.1;
+  sim.t_px4_next = std::round((t - 0.005) * 100.0) / 100.0;
+  sim.one_px4();
+  EXPECT_EQ(sim.est.on_lio(sim.lio_at(t)).reason, AlignmentReason::kNone);
+  const AlignmentOutput stale = sim.est.on_tick(last.stamp + time::milliseconds(1001));
+  EXPECT_EQ(stale.state, AlignmentState::kInvalid);
+  EXPECT_EQ(stale.reason, AlignmentReason::kStale);
+  EXPECT_EQ(sim.est.waiting_scan(), std::nullopt);
+  // The sample after the scan finds nothing waiting: INVALID never pairs.
+  const AlignmentOutput o = sim.one_px4();
+  EXPECT_EQ(o.reason, AlignmentReason::kNone);
+  EXPECT_EQ(o.state, AlignmentState::kInvalid);
+  EXPECT_FALSE(o.raw.has_value());
+}
+
+TEST(Alignment, ResetSampleDoesNotDecideTheWaitingScanTheNextSampleDoes) {
+  Sim sim;
+  sim.run_until_valid();
+  sim.step();
+  const double t = sim.t_lio_next;
+  sim.t_lio_next += 0.1;
+  sim.feed_px4_until(t - 0.005);
+  EXPECT_EQ(sim.est.on_lio(sim.lio_at(t)).reason, AlignmentReason::kNone);
+  EXPECT_EQ(sim.one_px4().reason, AlignmentReason::kNone);  // still before the scan
+  sim.schedule_reset(1, 0, 1, {0.4, -0.2}, 0.0, 0.05);
+  const AlignmentOutput r = sim.one_px4();  // after the scan, carries a reset
+  EXPECT_EQ(r.reason, AlignmentReason::kPx4ResetApplied);
+  EXPECT_FALSE(r.raw.has_value());
+  EXPECT_EQ(sim.est.waiting_scan(), At(t));
+  // The next sample decides it; the bracket (one buffered sample moved by G, the reset sample) is consistent.
+  const AlignmentOutput o = sim.one_px4();
+  EXPECT_EQ(o.reason, AlignmentReason::kPairAccepted);
+  EXPECT_EQ(o.stamp, At(t));
+  EXPECT_LT(o.residual_position_m, 1e-9);
+  EXPECT_LT(std::abs(o.residual_yaw_rad), 1e-9);
 }
 
 TEST(Alignment, InterpolationIsExactForConstantVelocity) {
@@ -1385,8 +1517,11 @@ TEST(AlignmentFuzz, EveryStateChangeIsAListedEdge) {
       if (step % 10 == 3) {
         if (u(rng) < (lost ? 0.08 : 0.03)) lost = !lost;
         const AlignmentState before = sim.est.state();
-        // The scan is stamped in the past (LIO latency), so PX4 samples exist on both sides of it.
-        check(before, sim.est.on_lio(sim.lio_at(t - 0.0495, !lost)), lost);
+        // The scan is usually stamped in the past (LIO latency), so PX4 samples exist on both sides of it; one in
+        // three is stamped 5 ms after the newest PX4 sample and waits for the next one (DV2), so the waiting path
+        // and the pairs decided by on_px4 are fuzzed too.
+        const double scan_lag = u(rng) < 0.33 ? -0.005 : 0.0495;
+        check(before, sim.est.on_lio(sim.lio_at(t - scan_lag, !lost)), lost);
       }
       if (step % 5 == 0) {
         const AlignmentState before = sim.est.state();
