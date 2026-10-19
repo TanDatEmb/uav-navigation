@@ -178,7 +178,7 @@ NavAvailability:  AVAILABLE ──LIO LOST──► LOST(since) ──LIO TRACKI
 
 ### §3.1 State machine
 
-Sơ đồ đích theo D41 (không thêm trạng thái; chi tiết ở AR4, thay AR3; chờ owner xác nhận AR4 và O34 trước khi code; tới lúc đó code giữ sơ đồ S1b, trong đó LOST → RESTARTING khi một scan tốt trên map đóng băng và RESTARTING chờ lệnh restart từ ngoài):
+Sơ đồ đích theo D41 (không thêm trạng thái; chi tiết ở AR4, đã được owner xác nhận). Phần hiệu chỉnh và guard tươi (D40) đã có trong code từ S1c Task 2. Phần LOST chờ ổn định rồi tự khởi động lại (S1c Task 3) **chưa có**: code vẫn giữ sơ đồ S1b, trong đó LOST → RESTARTING khi một scan tốt trên map đóng băng và RESTARTING chờ lệnh restart từ ngoài mà chưa ai gọi:
 
 ```text
 INITIALIZING ──map đủ ∧ 5 scan tốt (tươi) liên tiếp──► TRACKING ◄──5 scan tốt (tươi)──┐
@@ -306,11 +306,11 @@ Hai khối trao đổi qua hàng đợi có giới hạn, chỉ chứa dữ li�
   - loại đưa vào lifecycle: `kScanGood`, `kScanDegenerate`, `kScanEmpty`, `kMapReady`, `kRestartSeeded`;
   - loại không đưa vào lifecycle (D31): `kImuInitialized` (căn predictor), `kScanNotProcessed` (đối soát), `kRestartRejected`.
 
-**Chỉ một scan được predictor áp dụng thì mới tính là scan có correction (D31).** Nếu predictor từ chối hiệu chỉnh của một kết quả `kScanGood`, ví dụ vì cũ hơn buffer 300 ms (`kOlderThanBuffer`), thì frontend làm như dưới đây. Quy tắc tuổi của D33/O15 (tuổi > `gap_degraded`) bị D40 bỏ; khi AR4 được duyệt, guard tươi trên cạnh xác nhận (§3.1) thay nó.
+**Chỉ một scan được predictor áp dụng thì mới tính là scan có correction (D31).** Nếu predictor từ chối hiệu chỉnh của một kết quả `kScanGood`, ví dụ vì cũ hơn buffer 300 ms (`kOlderThanBuffer`), thì frontend làm như dưới đây. Quy tắc tuổi của D33/O15 (tuổi > `gap_degraded`) đã bị D40 bỏ (S1c Task 2, `8c9ad29`); guard tươi trên cạnh xác nhận (§3.1) thay nó.
 - đưa scan đó vào lifecycle như `kScanDegenerate` với reason riêng;
 - **không** đẩy mốc "scan cuối" lên.
 
-Nhờ vậy backend chậm kéo dài sẽ dẫn tới DEGRADED/LOST. Nếu không có quy tắc này, `/lio/state` có thể trôi trong khi health vẫn báo TRACKING.
+Nhờ vậy `/lio/state` không trôi trong khi health vẫn báo TRACKING cho những kết quả predictor không đặt được vào buffer; backend chậm kéo dài nhưng kết quả còn đặt được thì ở DEGRADED với output vẫn được hiệu chỉnh (D40), không đi tới LOST.
 
 **Phần thực thi có thread là mã sản phẩm (D31).** Việc ghép frontend, backend và hai hàng đợi trên hai thread nằm trong một lớp của `uavnav_lio_core`, lớp này có test và có chạy TSan. Node ROS ở S1b dùng lại đúng lớp đó. Driver đồng bộ một thread chỉ dùng cho test và replay offline; node sản phẩm không được dùng nó.
 
@@ -328,9 +328,8 @@ Hàng đợi tràn là một event có reason, và không bao giờ chặn threa
 - **Chờ IMU phủ scan (O20, D40).** Hậu quả của giới hạn 100 ms: ở 10 Hz scan kế tiếp tới sau khoảng 100 ms, nên "bị scan mới thay" và "chờ quá 100 ms" gần như trùng nhau. Giới hạn chỉ ngăn một scan cũ giữ chỗ chờ duy nhất khi IMU ngừng. Giữ nguyên.
 - **Ngưỡng stamp tương lai (O20, D40, AR4).**
   - Mục đích: một mẫu IMU có stamp đi trước thời gian thật δ sẽ thành mốc IMU mới nhất. Mọi mẫu thật sau nó bị từ chối là sai thứ tự trong khoảng δ, và quy tắc gap của lifecycle thấy một LiDAR gap giả dài thêm δ. Đây là bất khả kỹ thuật (hỏng trục thời gian), không phải quy tắc tuổi.
-  - Đề xuất AR4: `kMaxStampAhead` = 0.05 s (tầng a), kèm `static_assert` rằng nó nhỏ hơn `kGapDegradedMin` − chu kỳ scan. `kGapDegradedMin` = 0.2 s (hai chu kỳ scan) là cận dưới mới của `lifecycle_gap_degraded_s`. Như vậy δ được nhận không thể tự gây DEGRADED.
+  - AR4 (đã code ở S1c Task 2): `kMaxStampAhead` = 0.05 s (tầng a), kèm `static_assert` rằng nó nhỏ hơn `kGapDegradedMin` − chu kỳ scan. `kGapDegradedMin` = 0.2 s (hai chu kỳ scan) là cận dưới mới của `lifecycle_gap_degraded_s`. Như vậy δ được nhận không thể tự gây DEGRADED. Cận của `lifecycle_gap_degraded_s` là [0.2, 2.0] s.
   - Chế độ đồng hồ của node `lio` (`kClockMode`) thuộc phần cứng (P8).
-  - Tới khi AR4 được xác nhận, giá trị 0.5 s của O20 giữ nguyên.
 
 Thread khác:
 - **events writer.**
