@@ -22,7 +22,7 @@ help:
 	@echo "                SITL probe of the S1b assumptions (tools/uavnav/sitl_hover.sh --probe), <= 240 s;"
 	@echo "                headless, refuses while colcon runs, artifacts in log/sitl/; not part of test or gate"
 	@echo "  make sitl-build  build everything the SITL hover starts (SITL_PKGS='$(SITL_PKGS)')"
-	@echo "  make sitl-hover PROFILE=gps|no_gps [SPAWN_YAW_RAD=<rad>] [PATTERN=hover|altitude_sweep] [HOVER_MODE=posctl|hold] [GNSS_OUTAGE_S=<s>] [DRY_RUN=1]"
+	@echo "  make sitl-hover PROFILE=gps|no_gps [SPAWN_YAW_RAD=<rad>] [PATTERN=hover|altitude_sweep] [HOVER_MODE=posctl|hold] [DRY_RUN=1]"
 	@echo "                S1 hover (tools/uavnav/sitl_hover.sh --hover): PX4 SITL + Gazebo + uavnav_bringup + the rclpy"
 	@echo "                driver, <= 300 s; verdict log/sitl/<run>/summary.json; not part of test or gate"
 	@echo "  make clean   print what would be removed (log/); deletes nothing"
@@ -99,14 +99,13 @@ sitl-probe:
 # run with `python3 -m tools.uavnav.lio_calibration <run dir>`. Needs `make sitl-build`. Never part of test/gate.
 SITL_PKGS := uavnav_bringup uav_simulation uav_description uavnav_lio uavnav_px4_bridge
 SPAWN_YAW_RAD ?=
-GNSS_OUTAGE_S ?=
 PATTERN ?= hover
 sitl-build:
 	@$(MAKE) --no-print-directory build PKGS="$(SITL_PKGS)"
 
 sitl-hover:
-	@test -n "$(PROFILE)" || { echo "usage: make sitl-hover PROFILE=gps|no_gps [SPAWN_YAW_RAD=<rad>] [PATTERN=hover|altitude_sweep] [HOVER_MODE=posctl|hold] [GNSS_OUTAGE_S=<s>] [DRY_RUN=1]"; exit 2; }
-	@PYTHON="$(PYTHON)" tools/uavnav/sitl_hover.sh --hover --profile "$(PROFILE)" --pattern "$(PATTERN)" --hover-mode "$(HOVER_MODE)" $(if $(SPAWN_YAW_RAD),--spawn-yaw-rad "$(SPAWN_YAW_RAD)") $(if $(GNSS_OUTAGE_S),--gnss-outage-s "$(GNSS_OUTAGE_S)") $(if $(filter 1,$(DRY_RUN)),--dry-run)
+	@test -n "$(PROFILE)" || { echo "usage: make sitl-hover PROFILE=gps|no_gps [SPAWN_YAW_RAD=<rad>] [PATTERN=hover|altitude_sweep] [HOVER_MODE=posctl|hold] [DRY_RUN=1]"; exit 2; }
+	@PYTHON="$(PYTHON)" tools/uavnav/sitl_hover.sh --hover --profile "$(PROFILE)" --pattern "$(PATTERN)" --hover-mode "$(HOVER_MODE)" $(if $(SPAWN_YAW_RAD),--spawn-yaw-rad "$(SPAWN_YAW_RAD)") $(if $(filter 1,$(DRY_RUN)),--dry-run)
 
 # build/ and install/ are a shared incremental build (CLAUDE.local.md); never removed here.
 clean:

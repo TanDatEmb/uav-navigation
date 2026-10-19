@@ -2,7 +2,8 @@
 
 A profile file names its localization ("gps" or "no_gps") and the EKF2 parameters of that
 profile. Only the O23 allow-list is accepted, every key must be present, and each value must be
-the decided one (D42: EKF2_EV_CTRL 15 in both; D28: EKF2_EV_QMIN 0; O23: the rest). Anything else
+the decided one (D42: EKF2_EV_CTRL 15 in both; D28: EKF2_EV_QMIN 0; O23: the rest). A profile that
+switches the compass off (SYS_HAS_MAG 0, EKF2_MAG_TYPE 5) is refused by name (D42: compass mandatory). Anything else
 raises ProfileError naming the key, so the SITL harness refuses to start (fail closed).
 Harness-only PX4 parameters (UXRCE_DDS_SYNCT, SIM_GZ_EN_ODOM, COM_RC_IN_MODE, ...) are not
 profile parameters; tools/simulation/run_px4_mid360.sh sets them.
@@ -44,6 +45,7 @@ _DECIDED = {
         "EKF2_HGT_REF": 3,       # O23: EV height reference
     },
 }
+_COMPASS_OFF = {"SYS_HAS_MAG": 0, "EKF2_MAG_TYPE": 5}   # D42: the compass is mandatory; these switch it off
 _TOP_LEVEL = ("localization", "px4_params")
 
 
@@ -101,6 +103,9 @@ def load(path: pathlib.Path) -> Profile:
     if not isinstance(params, dict):
         raise ProfileError(f"{path}: key 'px4_params' must be a mapping")
     decided = _DECIDED[localization]
+    for name, off in _COMPASS_OFF.items():
+        if params.get(name) == off:
+            raise ProfileError(f"{path}: parameter {name!r} = {off} switches the compass off; D42 makes it mandatory")
     for name in params:
         if name not in decided:
             raise ProfileError(f"{path}: parameter {name!r} is not in the O23 allow-list {sorted(decided)}")

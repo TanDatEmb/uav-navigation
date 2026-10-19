@@ -62,6 +62,17 @@ class Px4ProfileTest(unittest.TestCase):
         self.assertEqual(px4_profile.load(NO_GPS).px4_params["EKF2_EV_QMIN"], 0)
         self.assert_rejected(GPS_TEXT.replace("EKF2_EV_QMIN: 0", "EKF2_EV_QMIN: 1"), "EKF2_EV_QMIN")
 
+    def test_compass_is_mandatory(self):
+        # D42: the compass seeds the heading of every flight. A profile that switches it off is refused, naming the
+        # key and the reason, and the launcher applies SYS_HAS_MAG=1 itself (the profiles do not carry it).
+        for line in ("  SYS_HAS_MAG: 0\n", "  EKF2_MAG_TYPE: 5\n"):
+            self.assert_rejected(GPS_TEXT + line, line.split(":")[0].strip(), "compass")
+        for profile in (px4_profile.load(GPS), px4_profile.load(NO_GPS)):
+            self.assertNotIn("SYS_HAS_MAG", profile.px4_params)
+        launcher = (ROOT / "tools" / "simulation" / "run_px4_mid360.sh").read_text(encoding="utf-8")
+        active = [line.strip() for line in launcher.splitlines() if not line.lstrip().startswith("#")]
+        self.assertTrue(any(line.startswith("export PX4_PARAM_SYS_HAS_MAG=1") for line in active))
+
     def test_unknown_param_rejected(self):
         self.assert_rejected(GPS_TEXT + "  EKF2_FOO: 1\n", "EKF2_FOO")
         # Harness parameters (O23) are not profile parameters.

@@ -29,7 +29,8 @@ starts nothing.
 PX4 parameters are the profile (EKF2, tier c) plus the harness-only values of
 D33/O23: `UXRCE_DDS_SYNCT=0`, `SIM_GZ_EN_ODOM=0`, `SIM_GZ_EN_GPS=1`,
 `COM_RC_IN_MODE=1` (MAVLink-only manual control, which carries the ROS stick
-stream on `/fmu/in/manual_control_input`), and `NAV_DLL_ACT=0` and
+stream on `/fmu/in/manual_control_input`), `SYS_HAS_MAG=1` (the compass is
+mandatory, D42; a profile that switches it off is refused), and `NAV_DLL_ACT=0` and
 `CBRK_SUPPLY_CHK` set by `px4_mid360_startup.sh` after rcS. Every other
 parameter keeps the PX4 default. `PX4_PARAM_*` variables inherited from the
 calling shell are dropped with a warning.

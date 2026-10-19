@@ -34,9 +34,7 @@ Probe records (written by tools/uavnav/sitl_probe.py; one JSON object per line):
 
 Hover records (written by tools/uavnav/sitl_hover.py, plus the two event logs of the nodes):
 
-    hover_meta.json               as probe_meta.json, plus spawn_yaw_rad, pattern, interrupted, gnss_outage
-                                  (null, or requested_s, off_ns, ok_ns, off_ack, ok_ack: the injected GNSS
-                                  outage, /clock ns, and the VehicleCommandAck result of each command or null)
+    hover_meta.json               as probe_meta.json, plus spawn_yaw_rad, pattern, interrupted
     lio_state.jsonl               arrival_ns, wall_ns (monotonic), stamp_ns, epoch, lio_state, x, y, z,
                                   qw, qx, qy, qz, vx, vy, vz (velocity in base_link, O21)
     lio_health.jsonl              arrival_ns, stamp_ns, state, epoch, reason_name, correction_age_s,
@@ -402,9 +400,8 @@ XY_VALID_MIN_FRACTION = 0.99                     # vehicle_local_position xy_val
 TRUTH_MATCH_MIN_FRACTION = 0.95                  # >= 95 % of the PX4 samples paired with ground truth (drift)
 EV_POS_MIN_FRACTION = 0.95                       # cs_ev_pos in >= 95 % of the window's time (T11 M3: held samples)
 F34_YAW_T_SPREAD_MAX_RAD = math.radians(1.0)     # D42: yaw_T max - min over the window <= 1 degree
-GNSS_POS_MIN_FRACTION = 0.95                     # gps: cs_gnss_pos in >= 95 % of the window's time, outage excluded
+GNSS_POS_MIN_FRACTION = 0.95                     # gps: cs_gnss_pos in >= 95 % of the window's time
 HEADING_SOURCES = ("mag_hdg", "mag_3d", "ev_yaw")  # estimator_status_flags cs_<source>: the heading aiding fused
-VEHICLE_CMD_RESULT_ACCEPTED = 0                  # px4_msgs/VehicleCommandAck
 EKF2_EVP_NOISE_M = 0.1                           # PX4 v1.17 defaults (params_external_vision.yaml, params_gnss.yaml):
 EKF2_EVV_NOISE_MPS = 0.1                         # the floors EKF2 puts under the EV variance it receives (SYSTEM_DESIGN
 EKF2_EVA_NOISE_RAD = 0.1                         # §4.1); EKF2_GPS_P_NOISE while GNSS is fused. Not profile values:
@@ -538,19 +535,12 @@ def _held(data: _Loader, name: str) -> list:
     return [(t0, t1, r) for (t0, r), (t1, _) in zip(points, points[1:] + [(end, None)]) if t1 > t0]
 
 
-def _overlap_ns(t0: int, t1: int, span) -> int:
-    return 0 if span is None else max(0, min(t1, span[1]) - max(t0, span[0]))
-
-
-def _held_fraction(segments: list, holds, exclude=None, only=None):
-    """(fraction of the time holds(record) is true, the time counted in ns) over the segments, without the
-    exclude span or inside the only span (each (start_ns, end_ns) or None)."""
+def _held_fraction(segments: list, holds):
+    """(fraction of the time holds(record) is true, the time counted in ns) over the segments."""
     true_ns = total_ns = 0
     for t0, t1, r in segments:
-        span = t1 - t0 if only is None else _overlap_ns(t0, t1, only)
-        span -= _overlap_ns(t0, t1, exclude) if only is None else 0
-        total_ns += span
-        true_ns += span if holds(r) else 0
+        total_ns += t1 - t0
+        true_ns += t1 - t0 if holds(r) else 0
     if total_ns <= 0:
         raise MissingData("no time left to judge")
     return true_ns / total_ns, total_ns
@@ -841,67 +831,66 @@ def _check_events(data: _Loader) -> dict:
 def _check_f34_values(data: _Loader, spawn_yaw_rad: float) -> dict:
     """F34 verdict (D42): T absorbs whatever heading PX4 chose, so T is judged on its stability, never on its value.
 
-    PASS when the spread of yaw_T over the window is <= 1 degree and T is VALID after every Px4ResetApplied once
+    The window is split at every Px4ResetApplied and at every non-VALID alignment output (those outputs are not
+    yaw_T samples of a VALID segment). PASS when the spread of yaw_T is <= 1 degree WITHIN each VALID segment, so a
+    PX4 heading reset that T absorbs (yaw_T steps once) is correct, and T is VALID after every Px4ResetApplied once
     it has been VALID in the run (a reset before the first VALID is listed, not judged). Reported only: the mean
-    yaw_T, its offset from pi/2 - spawn yaw (the NED heading at LIO start), every reset with its heading delta, and
-    the largest spread between consecutive resets. Missing or non-finite data fails (MissingData)."""
-    yaws = [_field(r, "yaw_rad", float, "alignment.jsonl") for r in _windowed(data, "alignment.jsonl")]
-    times = [r["arrival_ns"] for r in _windowed(data, "alignment.jsonl")]
-    deltas = [_wrap(y - yaws[0]) for y in yaws]
-    mean = _wrap(yaws[0] + sum(deltas) / len(deltas))
-    spread = max(deltas) - min(deltas)
-    expected = _wrap(math.pi / 2.0 - spawn_yaw_rad)
+    yaw_T over the VALID samples, its offset from pi/2 - spawn yaw (the NED heading at LIO start), every reset with
+    its heading delta, and every segment. T's state over the window is judged by alignment_valid. A window without
+    one VALID output, or non-finite data, is missing data (MissingData)."""
+    records = _windowed(data, "alignment.jsonl")
     bridge = _events(data, "events_px4_bridge.jsonl")
     first_valid = min((r["t_ros_ns"] for r in bridge if r["state_after"] == "VALID"), default=None)
     resets = []
     for r in _named(bridge, "Px4ResetApplied"):
         delta = r["values"].get("delta_heading_rad")
-        resets.append({"t_s": r["t_ros_ns"] / 1e9, "states": f"{r['state_before']}->{r['state_after']}",
-                       "reason": r["reason"], "judged": first_valid is not None and r["t_ros_ns"] >= first_valid,
+        resets.append({"t_s": r["t_ros_ns"] / 1e9, "t_ros_ns": r["t_ros_ns"],
+                       "states": f"{r['state_before']}->{r['state_after']}", "reason": r["reason"],
+                       "judged": first_valid is not None and r["t_ros_ns"] >= first_valid,
                        "delta_heading_rad": delta, "heading_reset_step": r["values"].get("heading_reset_step")})
     not_valid = [r for r in resets if r["judged"] and not r["states"].endswith("->VALID")]
-    cuts = sorted(int(r["t_s"] * 1e9) for r in resets)
-    segments = {}
-    for t, d in zip(times, deltas):
-        segments.setdefault(bisect.bisect_right(cuts, t), []).append(d)
+    cuts = sorted(r["t_ros_ns"] for r in resets)
+    runs, previous = [], None   # [[reset index, [(arrival_ns, yaw_rad)]]]: consecutive VALID outputs between cuts
+    for r in sorted(records, key=lambda r: r["arrival_ns"]):
+        yaw = _field(r, "yaw_rad", float, "alignment.jsonl")
+        if _field(r, "state", int, "alignment.jsonl") != ALIGNMENT_VALID:
+            previous = None
+            continue
+        cell = bisect.bisect_right(cuts, r["arrival_ns"])
+        if previous != cell:
+            runs.append([cell, []])
+            previous = cell
+        runs[-1][1].append((r["arrival_ns"], yaw))
+    if not runs:
+        raise MissingData("no VALID alignment output in the hover window")
+    segments = []
+    for _, samples in runs:
+        base = samples[0][1]
+        deltas = [_wrap(y - base) for _, y in samples]
+        segments.append({"t0_s": samples[0][0] / 1e9, "t1_s": samples[-1][0] / 1e9, "samples": len(samples),
+                         "spread_rad": max(deltas) - min(deltas), "mean_rad": _wrap(base + sum(deltas) / len(deltas))})
+    spread = max(s["spread_rad"] for s in segments)
+    total = sum(s["samples"] for s in segments)
+    base = segments[0]["mean_rad"]
+    mean = _wrap(base + sum(_wrap(s["mean_rad"] - base) * s["samples"] for s in segments) / total)
+    expected = _wrap(math.pi / 2.0 - spawn_yaw_rad)
     return {"pass": spread <= F34_YAW_T_SPREAD_MAX_RAD and not not_valid,
             "value": {"yaw_t_spread_rad": spread, "yaw_t_mean_rad": mean, "expected_yaw_t_rad": expected,
                       "yaw_t_offset_rad": _wrap(mean - expected), "spawn_yaw_rad": spawn_yaw_rad,
-                      "samples": len(yaws), "resets": resets, "resets_not_valid_after": len(not_valid),
-                      "max_spread_between_resets_rad": max(max(v) - min(v) for v in segments.values())},
-            "detail": "D42: yaw_T max - min over the window <= 1 degree and T VALID after every Px4ResetApplied once "
-                      "it has been VALID in the run; the absolute yaw_T and its offset from pi/2 - spawn yaw are "
-                      "reported only"}
+                      "samples": total, "non_valid_samples": len(records) - total, "segments": segments,
+                      "resets": resets, "resets_not_valid_after": len(not_valid)},
+            "detail": "D42: window split at every Px4ResetApplied and every non-VALID alignment output; yaw_T max - min "
+                      "<= 1 degree within each VALID segment, and T VALID after every Px4ResetApplied once it has "
+                      "been VALID in the run; the absolute yaw_T and its offset from pi/2 - spawn yaw are reported "
+                      "only (T's state over the window is judged by alignment_valid)"}
 
 
 def _check_gnss_consistency(data: _Loader) -> dict:
-    """gps only: cs_gnss_pos in >= 95 % of the window's time, the injected outage [off_ns, ok_ns] excluded. An
-    outage requested but not accepted by PX4 (both commands acked ACCEPTED) is missing data: the run does not hold
-    the outage it was asked for."""
-    segments = _held(data, "estimator_status_flags.jsonl")
-    outage = data.meta().get("gnss_outage")
-    span = None
-    value = {}
-    if outage is not None:
-        if not isinstance(outage, dict):
-            raise MissingData(f"gnss_outage is not an object: {outage!r}")
-        acks = (outage.get("off_ack"), outage.get("ok_ack"))
-        if any(a != VEHICLE_CMD_RESULT_ACCEPTED or isinstance(a, bool) for a in acks):
-            raise MissingData(f"GNSS outage requested but the injection was not accepted by PX4 (off ack "
-                              f"{acks[0]!r}, ok ack {acks[1]!r}; {VEHICLE_CMD_RESULT_ACCEPTED} is ACCEPTED)")
-        span = (_field(outage, "off_ns", int, "gnss_outage"), _field(outage, "ok_ns", int, "gnss_outage"))
-        if span[1] <= span[0]:
-            raise MissingData(f"empty GNSS outage {span[0]}..{span[1]}")
-        value["outage_s"] = (span[1] - span[0]) / 1e9
-        value["outage_fraction"] = _held_fraction(segments, _flag("cs_gnss_pos"), only=span)[0]
-        back = [r["arrival_ns"] for r in data.jsonl("estimator_status_flags.jsonl")
-                if r.get("arrival_ns", 0) >= span[1] and r.get("cs_gnss_pos") is True]
-        value["gnss_back_after_ok_s"] = (min(back) - span[1]) / 1e9 if back else None
-    fraction, judged_ns = _held_fraction(segments, _flag("cs_gnss_pos"), exclude=span)
-    value.update(fraction=fraction, judged_s=judged_ns / 1e9, outage_requested=outage is not None)
-    return {"pass": fraction >= GNSS_POS_MIN_FRACTION, "value": value,
-            "detail": f"gps: cs_gnss_pos in >= {GNSS_POS_MIN_FRACTION:.0%} of the window's time, the injected "
-                      "outage excluded; an outage not accepted by PX4 fails"}
+    """gps only: cs_gnss_pos in >= 95 % of the window's time. GNSS loss is not injected in this SITL (S1c Task 1:
+    PX4 ignores VEHICLE_CMD_INJECT_FAILURE), so there is no outage window to exclude."""
+    fraction, judged_ns = _held_fraction(_held(data, "estimator_status_flags.jsonl"), _flag("cs_gnss_pos"))
+    return {"pass": fraction >= GNSS_POS_MIN_FRACTION, "value": {"fraction": fraction, "judged_s": judged_ns / 1e9},
+            "detail": f"gps: cs_gnss_pos in >= {GNSS_POS_MIN_FRACTION:.0%} of the window's time"}
 
 
 def _check_ev_variance(data: _Loader) -> dict:
