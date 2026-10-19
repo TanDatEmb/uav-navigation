@@ -46,7 +46,8 @@
 //     next valid sample (PX4 keeps the counter and delta until the next reset). A valid one goes to on_px4.
 //     When it decides the waiting scan (its output is a pair outcome: kPairAccepted, kPairsConsistent,
 //     kPairRejectedJump or kNoPx4Sample), the outcome is the odometry's: its events are reported on the odometry
-//     stream (input 0, sensor_time_s = the scan's stamp), and an accepted pair ends the odometry episodes.
+//     stream (input 0, sensor_time_s = the scan's stamp), and an accepted pair ends the odometry episodes if the
+//     scan's own EV was encoded.
 //   on_tick, every limits::kTickPeriod of ROS time (sensor time in SITL, D29): the alignment's timeouts.
 // Future stamps: any input stamp later than the newest tick time + limits::kMaxStampAhead is refused
 // (kStampInFuture; "LioInputRejected" for odometry and health, "Px4SampleRejected" for PX4) before any other
@@ -67,7 +68,8 @@
 // stream: if occurrences went unreported, one SUMMARY record is emitted (same event and reason; values input or stream,
 // count = the episode total, suppressed = the unreported ones, summary 1), and the slot re-arms, so the next fault
 // episode is reported at once. Accepted: odometry = not refused, not gated, EV encoded and its pair not rejected
-// (a waiting scan is accepted when the PX4 sample that decides it accepts its pair; its EV was checked at its call);
+// (a waiting scan is accepted when the PX4 sample that decides it accepts its pair AND its own EV was encoded at its
+// call, which the bridge keeps as the waiting scan's stamp);
 // health = not refused and not rejected by the alignment; PX4 = not refused and accepted by the alignment; tick =
 // not rejected. flush() ends every open episode (the node calls it at shutdown).
 //   "AlignmentTransition"   one per alignment STATE CHANGE (before != after), keyed on the change and not on the
@@ -81,8 +83,9 @@
 //                           kInputRejected (also a refused PX4 sample: non-finite, beyond limits, stamp not newer);
 //                           states; values input, sensor_time_s, count, and for a LIO input (which formed or tried
 //                           a pair) residual_position_m, residual_yaw_rad (a PX4 sample forms no pair: none). A
-//                           waiting scan dropped by a newer one is reported by the newer odometry with the dropped
-//                           scan's sensor_time_s; one decided by a PX4 sample as input 0 with the scan's stamp.
+//                           waiting scan decided by a PX4 sample is reported as input 0 with the scan's stamp; one
+//                           dropped without a decision (a newer LIO input, a state change) as NO_PX4_SAMPLE, input 0,
+//                           sensor_time_s = its stamp, without residuals, by the call that dropped it.
 //   "AlignmentAccumulationRestarted" rate-limited (reason kLioLost, input 1): a non-TRACKING health in INIT threw
 //                           away the INIT accumulation (no state change). Its episode ends at the next accepted
 //                           odometry, i.e. when the accumulation grows again. Values sensor_time_s, count.
@@ -232,6 +235,11 @@ class Px4Bridge {
   /// Emits the events of one alignment output (transition, pair rejection, accumulation restart) and returns it.
   AlignmentOutput report(AlignmentState before, const AlignmentOutput& out, Input input, time::SensorTime t,
                          std::uint32_t epoch, const time::TimeSnapshot& now) noexcept;
+  /// A scan that waited before the call (`waiting`) and left without a decision (a newer LIO input, a state change;
+  /// alignment.hpp on_lio step 5) is reported as its odometry's kNoPx4Sample: rate-limited AlignmentPairRejected,
+  /// input 0, sensor_time_s = its stamp.
+  void report_dropped(std::optional<time::SensorTime> waiting, AlignmentState before, const AlignmentOutput& out,
+                      std::uint32_t epoch, const time::TimeSnapshot& now) noexcept;
   void report_reset(AlignmentState before, const AlignmentOutput& out, const Px4PoseSample& s,
                     const time::TimeSnapshot& now) noexcept;
   void refuse_lio(BridgeReason why, Input input, time::SensorTime t, std::uint32_t epoch,
@@ -256,6 +264,7 @@ class Px4Bridge {
   std::optional<time::SensorTime> newest_tick_;  // reference of the future-stamp check
   std::uint32_t lio_epoch_{0};                   // epoch of the newest LIO input (event identity)
   std::optional<Counters> px4_counters_;         // of the newest sample on_px4 accepted (reset steps in events)
+  std::optional<time::SensorTime> waiting_ev_encoded_;  // stamp of the waiting scan if its EV was encoded
 
   std::array<SpamCount, kSpamEvents * kInputs * kReasonSlots> spam_{};
 };

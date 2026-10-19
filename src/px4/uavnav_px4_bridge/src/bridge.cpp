@@ -104,11 +104,16 @@ BridgeOutputs Px4Bridge::on_lio_odometry(const LioOdometryIn& in, const time::Ti
   const std::optional<time::SensorTime> waiting = alignment_.waiting_scan();
   const LioPoseSample pose{in.t, flu_to_frd(in.p_flu_m), frd_yaw(in.q_flu), true};
   const AlignmentOutput a = alignment_.on_lio(pose);
-  // kNoPx4Sample while this scan now waits is the drop of the scan that waited before (alignment.hpp step 5).
-  const bool dropped = waiting && a.reason == AlignmentReason::kNoPx4Sample && alignment_.waiting_scan() == in.t;
-  out.alignment = report(before, a, Input::kOdometry, dropped ? *waiting : in.t, in.epoch, now);
-  // A waiting scan is not accepted yet: its pair is decided at a PX4 sample (on_px4_local_position).
-  if (out.ev && !is_pair_rejection(a.reason) && alignment_.waiting_scan() != in.t) accepted(Input::kOdometry, now);
+  const bool waits = alignment_.waiting_scan() == in.t;
+  // kNoPx4Sample while this scan now waits is the drop of the scan that waited before (alignment.hpp step 5); any
+  // other drop of that scan is reported on its own (report_dropped).
+  const bool drop_is_the_reason = waiting && waits && a.reason == AlignmentReason::kNoPx4Sample;
+  out.alignment = report(before, a, Input::kOdometry, drop_is_the_reason ? *waiting : in.t, in.epoch, now);
+  if (!drop_is_the_reason) report_dropped(waiting, before, *out.alignment, in.epoch, now);
+  // A waiting scan is not accepted yet: its pair is decided at a PX4 sample (on_px4_local_position), which accepts
+  // the odometry only if this scan's EV was encoded.
+  if (waits) waiting_ev_encoded_ = out.ev ? std::optional<time::SensorTime>{in.t} : std::nullopt;
+  if (out.ev && !is_pair_rejection(a.reason) && !waits) accepted(Input::kOdometry, now);
   return out;
 }
 
@@ -131,8 +136,10 @@ BridgeOutputs Px4Bridge::on_lio_health(const LioHealthIn& in, const time::TimeSn
   // Every non-TRACKING health freezes T (O22); the pose of a lost sample is never used. (A code outside the known
   // range does not get here: the node refuses it in the conversion.)
   const AlignmentState before = alignment_.state();
+  const std::optional<time::SensorTime> waiting = alignment_.waiting_scan();
   const LioPoseSample lost{in.t, Eigen::Vector3d::Zero(), 0.0, false};
   const AlignmentOutput out = report(before, alignment_.on_lio(lost), Input::kHealth, in.t, in.epoch, now);
+  report_dropped(waiting, before, out, in.epoch, now);
   if (out.reason != AlignmentReason::kInputRejected) accepted(Input::kHealth, now);
   return BridgeOutputs{std::nullopt, out};
 }
@@ -153,7 +160,7 @@ BridgeOutputs Px4Bridge::on_px4_local_position(const Px4LocalPositionIn& in, con
   if (waiting && !alignment_.waiting_scan() && is_pair_decision(out.reason)) {
     // This sample decided the waiting scan: the pair is the odometry's, reported on its stream with its stamp.
     report(before, out, Input::kOdometry, *waiting, lio_epoch_, now);
-    if (!is_pair_rejection(out.reason)) accepted(Input::kOdometry, now);
+    if (!is_pair_rejection(out.reason) && waiting_ev_encoded_ == waiting) accepted(Input::kOdometry, now);
   } else {
     report(before, out, Input::kPx4, in.sample.t, lio_epoch_, now);
   }
@@ -168,7 +175,9 @@ BridgeOutputs Px4Bridge::on_px4_local_position(const Px4LocalPositionIn& in, con
 BridgeOutputs Px4Bridge::on_tick(time::SensorTime now_sensor, const time::TimeSnapshot& now) {
   if (!newest_tick_ || now_sensor > *newest_tick_) newest_tick_ = now_sensor;
   const AlignmentState before = alignment_.state();
+  const std::optional<time::SensorTime> waiting = alignment_.waiting_scan();
   const AlignmentOutput out = report(before, alignment_.on_tick(now_sensor), Input::kTick, now_sensor, lio_epoch_, now);
+  report_dropped(waiting, before, out, lio_epoch_, now);
   if (out.reason != AlignmentReason::kInputRejected) accepted(Input::kTick, now);
   return BridgeOutputs{std::nullopt, out};
 }
@@ -231,6 +240,21 @@ AlignmentOutput Px4Bridge::report(AlignmentState before, const AlignmentOutput& 
     }
   }
   return out;
+}
+
+void Px4Bridge::report_dropped(std::optional<time::SensorTime> waiting, AlignmentState before,
+                               const AlignmentOutput& out, std::uint32_t epoch, const time::TimeSnapshot& now) noexcept {
+  // Dropped: a scan waited before the call and no longer does (a decision happens only in on_px4).
+  if (!waiting || alignment_.waiting_scan() == waiting) return;
+  const std::size_t s = slot(Spam::kPairRejected, Input::kOdometry, index(AlignmentReason::kNoPx4Sample));
+  if (due(s)) {
+    emit(event("AlignmentPairRejected", epoch, now)
+             .states(before, out.state)
+             .reason(AlignmentReason::kNoPx4Sample)
+             .value("input", static_cast<double>(Input::kOdometry))
+             .value("sensor_time_s", time::to_seconds(*waiting))
+             .value("count", static_cast<double>(spam_[s].count)));
+  }
 }
 
 void Px4Bridge::report_reset(AlignmentState before, const AlignmentOutput& out, const Px4PoseSample& s,

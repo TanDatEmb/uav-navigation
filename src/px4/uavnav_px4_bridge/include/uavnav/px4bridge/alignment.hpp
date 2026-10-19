@@ -277,17 +277,23 @@ class AlignmentEstimator {
   ///     FROZEN  -> VALID (kLioTracking); the pair, if any, is then processed as in VALID, but the
   ///                reason is kLioTracking, except a jump-rejected pair, which reports kPairRejectedJump
   ///                (T unchanged; the jump rejection protects T).
-  ///     scan stamped after the newest buffered PX4 sample (the buffer not empty)
+  ///     scan stamped after the newest buffered PX4 sample (the buffer not empty) by at most kPairingWindow
+  ///     (further ahead: refused kNoPx4Sample at once, fail closed against a wrong future stamp)
   ///                                                             -> the scan WAITS: kNone (or the FROZEN -> VALID
   ///                reason kLioTracking), nothing else changes. on_px4 decides it with the next sample after
   ///                it (DV2: in SITL the LIO odometry reaches the bridge about 20 ms after its stamp, often
   ///                before the PX4 sample after the stamp; refusing it at once dropped 0–53 % of the pairs
   ///                of a hover and took T STALE once, docs/analysis/2026-10-s1c-dv2.md).
   ///                At most one scan waits. It stops waiting, unpaired, when
-  ///                  - a newer LIO input passes checks 1–2: if that call ends with ITS scan waiting, it reports
-  ///                    kNoPx4Sample (for the dropped scan) instead of kNone; any other reason of that call
-  ///                    (kLioLost, kStale) wins and implies the drop;
-  ///                  - the state changes (go(): the scan waited for a pair in the state it arrived in).
+  ///                  - a newer LIO input passes checks 1–2 (a newer scan that waits, pairs at once or is
+  ///                    refused; a non-TRACKING sample, also in INIT where no state changes): if that call ends
+  ///                    with ITS scan waiting, it reports kNoPx4Sample (for the dropped scan) instead of kNone;
+  ///                    any other reason of that call wins (kPairAccepted, kNoPx4Sample of the newer scan,
+  ///                    kLioLost, kStale);
+  ///                  - the state changes (go(): the scan waited for a pair in the state it arrived in; also by
+  ///                    on_tick, kStale).
+  ///                The caller sees every drop: waiting_scan() changes without a decision (Px4Bridge reports it
+  ///                as the odometry's kNoPx4Sample).
   ///                Harm prevented by not pairing it later: a pair decided after a newer scan, or in another
   ///                state, would step T out of scan order.
   ///     no PX4 pair otherwise (empty buffer, a bracket beyond kPairingWindow, older than the span)

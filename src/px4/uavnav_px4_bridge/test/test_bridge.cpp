@@ -755,7 +755,8 @@ TEST(Px4Bridge, WaitingOdometryDroppedByANewerOneIsReportedWithItsStamp) {
   rig.bridge.on_tick(Ms(3'600), Snap(Ms(3'600)));
   rig.bridge.on_px4_local_position(w.Px4(Ms(3'600)), Snap(Ms(3'600)));
   rig.bridge.on_lio_odometry(w.Odom(Ms(3'603)), Snap(Ms(3'610)));
-  const BridgeOutputs next = rig.bridge.on_lio_odometry(w.Odom(Ms(3'703)), Snap(Ms(3'710)));
+  // A newer scan, also within kPairingWindow of the newest PX4 sample: it waits, the older one is dropped.
+  const BridgeOutputs next = rig.bridge.on_lio_odometry(w.Odom(Ms(3'610)), Snap(Ms(3'612)));
   ASSERT_TRUE(next.alignment);
   EXPECT_EQ(next.alignment->reason, AlignmentReason::kNoPx4Sample);
   const auto rejected = rig.Events("AlignmentPairRejected");
@@ -765,16 +766,139 @@ TEST(Px4Bridge, WaitingOdometryDroppedByANewerOneIsReportedWithItsStamp) {
   EXPECT_DOUBLE_EQ(Value(rejected[0], "sensor_time_s"), 3.603);
   // The newer one is paired by the next PX4 sample after it; the accepted pair ends the episode (no suppressed
   // occurrence, so no summary record).
-  rig.bridge.on_px4_local_position(w.Px4(Ms(3'700)), Snap(Ms(3'712)));
-  const BridgeOutputs paired = rig.bridge.on_px4_local_position(w.Px4(Ms(3'720)), Snap(Ms(3'724)));
+  const BridgeOutputs paired = rig.bridge.on_px4_local_position(w.Px4(Ms(3'620)), Snap(Ms(3'624)));
   ASSERT_TRUE(paired.alignment);
   EXPECT_EQ(paired.alignment->reason, AlignmentReason::kPairAccepted);
-  EXPECT_EQ(paired.alignment->stamp, Ms(3'703));
+  EXPECT_EQ(paired.alignment->stamp, Ms(3'610));
   EXPECT_EQ(rig.Events("AlignmentPairRejected").size(), 1U);
 }
 
+// A persistent EV fault (bad covariance, finite pose) while scans wait: the pair of a waiting scan accepted at a PX4
+// sample ends the odometry episodes only if that scan's own EV was encoded, so the EvRejected episode stays one
+// record (no summary and re-report at count 1 on every waiting scan).
+TEST(Px4Bridge, PairDecidedAtAPx4SampleDoesNotEndTheEvRejectedEpisodeOfItsScan) {
+  Rig rig;
+  World w;
+  RunToValid(rig, w);
+  auto bad = [&](std::int64_t stamp_ms) {
+    LioOdometryIn o = w.Odom(Ms(stamp_ms));
+    o.pose_cov = -1e-4 * Eigen::Matrix<double, 6, 6>::Identity();
+    return o;
+  };
+  rig.bridge.on_tick(Ms(3'600), Snap(Ms(3'600)));
+  for (std::int64_t m = 3'600; m <= 3'620; m += 20) rig.bridge.on_px4_local_position(w.Px4(Ms(m)), Snap(Ms(m)));
+  // 1st: bracketed at once (paired), EV rejected: the episode opens.
+  BridgeOutputs out = rig.bridge.on_lio_odometry(bad(3'603), Snap(Ms(3'625)));
+  ASSERT_FALSE(out.ev);
+  ASSERT_EQ(out.alignment->reason, AlignmentReason::kPairAccepted);
+  // 2nd: waits; its pair is accepted at the next PX4 sample.
+  for (std::int64_t m = 3'640; m <= 3'700; m += 20) rig.bridge.on_px4_local_position(w.Px4(Ms(m)), Snap(Ms(m)));
+  out = rig.bridge.on_lio_odometry(bad(3'703), Snap(Ms(3'705)));
+  ASSERT_FALSE(out.ev);
+  ASSERT_EQ(out.alignment->reason, AlignmentReason::kNone);
+  const BridgeOutputs decided = rig.bridge.on_px4_local_position(w.Px4(Ms(3'720)), Snap(Ms(3'720)));
+  ASSERT_EQ(decided.alignment->reason, AlignmentReason::kPairAccepted);
+  ASSERT_EQ(decided.alignment->stamp, Ms(3'703));
+  // 3rd: the fault goes on.
+  for (std::int64_t m = 3'740; m <= 3'820; m += 20) rig.bridge.on_px4_local_position(w.Px4(Ms(m)), Snap(Ms(m)));
+  ASSERT_FALSE(rig.bridge.on_lio_odometry(bad(3'803), Snap(Ms(3'825))).ev);
+  const auto rejected = rig.Events("EvRejected");
+  ASSERT_EQ(rejected.size(), 1U);  // one episode, still open
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "count"), 1.0);
+  EXPECT_EQ(rejected[0].reason, "BAD_COVARIANCE");
+}
+
+// A waiting scan is not an accepted odometry: an open odometry pair-rejection episode stays open until the scan's
+// pair is decided, so a NO_PX4_SAMPLE decided at a PX4 sample is counted in it (one record, not two).
+TEST(Px4Bridge, WaitingOdometryDoesNotEndTheOdometryEpisodeAtOnce) {
+  Rig rig;
+  World w;
+  RunToValid(rig, w);
+  rig.bridge.on_tick(Ms(3'600), Snap(Ms(3'600)));
+  rig.bridge.on_px4_local_position(w.Px4(Ms(3'600)), Snap(Ms(3'600)));
+  // 100 ms ahead of the newest PX4 sample: beyond kPairingWindow, refused at once. The episode opens.
+  ASSERT_EQ(rig.bridge.on_lio_odometry(w.Odom(Ms(3'700)), Snap(Ms(3'610))).alignment->reason,
+            AlignmentReason::kNoPx4Sample);
+  for (std::int64_t m = 3'620; m <= 3'700; m += 20) rig.bridge.on_px4_local_position(w.Px4(Ms(m)), Snap(Ms(m)));
+  ASSERT_EQ(rig.bridge.on_lio_odometry(w.Odom(Ms(3'703)), Snap(Ms(3'705))).alignment->reason, AlignmentReason::kNone);
+  ASSERT_EQ(rig.bridge.on_px4_local_position(w.Px4(Ms(3'760)), Snap(Ms(3'760))).alignment->reason,
+            AlignmentReason::kNoPx4Sample);  // 57 ms after the scan
+  const auto rejected = rig.Events("AlignmentPairRejected");
+  ASSERT_EQ(rejected.size(), 1U);
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "sensor_time_s"), 3.7);
+  // flush() closes the episode: both occurrences are in it.
+  rig.bridge.flush(Snap(Ms(3'800)));
+  const auto all = rig.Events("AlignmentPairRejected");
+  ASSERT_EQ(all.size(), 2U);
+  EXPECT_DOUBLE_EQ(Value(all[1], "count"), 2.0);
+  EXPECT_DOUBLE_EQ(Value(all[1], "summary"), 1.0);
+}
+
+// A waiting scan that leaves without a decision (a newer scan paired at once, a state change) is reported as its
+// odometry's NO_PX4_SAMPLE with its own stamp: never a silent loss.
+TEST(Px4Bridge, WaitingOdometryDroppedWithoutADecisionIsReported) {
+  {
+    // Dropped by a newer scan that pairs at once: a reset sample after both brackets the newer one.
+    Rig rig;
+    World w;
+    RunToValid(rig, w);
+    rig.bridge.on_tick(Ms(3'600), Snap(Ms(3'600)));
+    rig.bridge.on_px4_local_position(w.Px4(Ms(3'600)), Snap(Ms(3'600)));
+    ASSERT_EQ(rig.bridge.on_lio_odometry(w.Odom(Ms(3'603)), Snap(Ms(3'605))).alignment->reason,
+              AlignmentReason::kNone);
+    const Eigen::Vector3d d{0.2, 0.0, 0.0};
+    w.truth = FrameChange(w.truth, w.PNed(Ms(3'620)), d, 0.0);
+    w.xy_counter = 1;
+    w.delta_xy = d.head<2>();
+    ASSERT_EQ(rig.bridge.on_px4_local_position(w.Px4(Ms(3'620)), Snap(Ms(3'620))).alignment->reason,
+              AlignmentReason::kPx4ResetApplied);
+    const BridgeOutputs paired = rig.bridge.on_lio_odometry(w.Odom(Ms(3'610)), Snap(Ms(3'622)));
+    ASSERT_EQ(paired.alignment->reason, AlignmentReason::kPairAccepted);
+    const auto rejected = rig.Events("AlignmentPairRejected");
+    ASSERT_EQ(rejected.size(), 1U);
+    EXPECT_EQ(rejected[0].reason, "NO_PX4_SAMPLE");
+    EXPECT_DOUBLE_EQ(Value(rejected[0], "input"), 0.0);
+    EXPECT_DOUBLE_EQ(Value(rejected[0], "sensor_time_s"), 3.603);
+  }
+  {
+    // Dropped by a state change: a DEGRADED health freezes T while the scan waits.
+    Rig rig;
+    World w;
+    RunToValid(rig, w);
+    rig.bridge.on_tick(Ms(3'600), Snap(Ms(3'600)));
+    rig.bridge.on_px4_local_position(w.Px4(Ms(3'600)), Snap(Ms(3'600)));
+    ASSERT_EQ(rig.bridge.on_lio_odometry(w.Odom(Ms(3'603)), Snap(Ms(3'605))).alignment->reason,
+              AlignmentReason::kNone);
+    ASSERT_EQ(rig.bridge.on_lio_health(w.Health(Ms(3'608), LioHealthCode::kDegraded), Snap(Ms(3'608)))
+                  .alignment->state,
+              AlignmentState::kFrozen);
+    const auto rejected = rig.Events("AlignmentPairRejected");
+    ASSERT_EQ(rejected.size(), 1U);
+    EXPECT_EQ(rejected[0].reason, "NO_PX4_SAMPLE");
+    EXPECT_DOUBLE_EQ(Value(rejected[0], "input"), 0.0);
+    EXPECT_DOUBLE_EQ(Value(rejected[0], "sensor_time_s"), 3.603);
+    EXPECT_EQ(rejected[0].state_after, "FROZEN");
+  }
+  {
+    // Dropped by a state change at a tick: T goes STALE while the scan waits (no PX4 sample after it arrives).
+    Rig rig;
+    World w;
+    RunToValid(rig, w);  // last accepted pair at 3.503 s
+    rig.bridge.on_tick(Ms(3'600), Snap(Ms(3'600)));
+    rig.bridge.on_px4_local_position(w.Px4(Ms(3'600)), Snap(Ms(3'600)));
+    ASSERT_EQ(rig.bridge.on_lio_odometry(w.Odom(Ms(3'603)), Snap(Ms(3'605))).alignment->reason,
+              AlignmentReason::kNone);
+    ASSERT_EQ(rig.bridge.on_tick(Ms(4'600), Snap(Ms(4'600))).alignment->reason, AlignmentReason::kStale);
+    const auto rejected = rig.Events("AlignmentPairRejected");
+    ASSERT_EQ(rejected.size(), 1U);
+    EXPECT_DOUBLE_EQ(Value(rejected[0], "sensor_time_s"), 3.603);
+    EXPECT_EQ(rejected[0].state_after, "INVALID");
+  }
+}
+
 TEST(Px4Bridge, EveryAlignmentStateChangeIsOneEvent) {
-  // Short timeouts and few pairs so that 5000 inputs visit every state many times.
+  // Short timeouts and few pairs so that 20000 inputs visit every state many times (5000 reached the rare FROZEN
+  // edges only by luck of the seed once one odometry in three waits, DV2).
   const AlignmentConfig cfg{time::milliseconds(500), 3U, 0.5, 0.0873, time::milliseconds(300), time::seconds(1)};
   Rig rig(cfg);
   World w;
@@ -791,8 +915,10 @@ TEST(Px4Bridge, EveryAlignmentStateChangeIsOneEvent) {
   std::int64_t last_odom = 0;
   std::optional<LioHealthIn> latest_health;  // the newest health the bridge accepted (the gate's reference)
   std::optional<time::SensorTime> newest_tick;
+  int px4_decided_pairs = 0;
+  int px4_init_to_valid = 0;
   std::int64_t outage_until = 0;  // a LIO outage: no odometry, LOST health (so FROZEN can time out or see a reset)
-  for (int i = 0; i < 5000; ++i) {
+  for (int i = 0; i < 20000; ++i) {
     m += step_ms(rng);
     const time::SensorTime now = Ms(m);
     if (u(rng) < 0.003) outage_until = m + 1'500;
@@ -814,12 +940,18 @@ TEST(Px4Bridge, EveryAlignmentStateChangeIsOneEvent) {
       Px4LocalPositionIn s = w.Px4(Ms(t));
       if (u(rng) < 0.05) s.xy_valid = false;
       if (u(rng) < 0.02) s.sample.p_ned_m.z() = std::numeric_limits<double>::quiet_NaN();
-      rig.bridge.on_px4_local_position(s, Snap(now));
+      const BridgeOutputs po = rig.bridge.on_px4_local_position(s, Snap(now));
+      if (po.alignment && po.alignment->raw) ++px4_decided_pairs;  // a waiting odometry decided here (DV2)
+      if (before == AlignmentState::kInit && rig.bridge.alignment_state() == AlignmentState::kValid) {
+        ++px4_init_to_valid;
+      }
       last_px4 = std::max(last_px4, t);
     } else if (r < 0.55) {  // odometry: sometimes jumped, NaN, regressing, new epoch or from the future
       if (outage) continue;
-      // Stamped just before the newest PX4 sample (so it can pair), increasing, sometimes regressing.
+      // Stamped just before the newest PX4 sample (so it can pair), or in one case of three just after it (so it
+      // waits for the next one, DV2); increasing, sometimes regressing.
       std::int64_t t = std::min(m, std::max(last_odom + 1, last_px4 - static_cast<std::int64_t>(10 * u(rng))));
+      if (u(rng) < 0.33) t = std::min(m, std::max(last_odom + 1, last_px4 + 1 + static_cast<std::int64_t>(10 * u(rng))));
       if (u(rng) < 0.03) t = last_odom - 20;
       last_odom = std::max(last_odom, t);
       LioOdometryIn o = w.Odom(Ms(t));
@@ -868,4 +1000,7 @@ TEST(Px4Bridge, EveryAlignmentStateChangeIsOneEvent) {
     EXPECT_TRUE(seen) << to_string(e.from) << " -> " << to_string(e.to) << " " << to_string(e.reason);
   }
   EXPECT_EQ(rig.recorder->stats().dropped, 0U);
+  // The waiting path is really fuzzed: pairs decided by a PX4 sample, and INIT -> VALID at a PX4 sample.
+  EXPECT_GT(px4_decided_pairs, 0);
+  EXPECT_GT(px4_init_to_valid, 0);
 }

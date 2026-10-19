@@ -363,8 +363,10 @@ AlignmentOutput AlignmentEstimator::on_lio(const LioPoseSample& s) noexcept {
 
   const auto px4 = px4_at(s.t);
   if (px4) return pair_scan(s, *px4, transition);
-  // DV2: the PX4 sample after the scan has not arrived yet. The scan waits for it (state INIT or VALID here).
-  if (ring_size_ > 0 && s.t > sample(ring_size_ - 1).t) {
+  // DV2: the PX4 sample after the scan has not arrived yet. The scan waits for it (state INIT or VALID here), but
+  // only within kPairingWindow of the newest sample (the existing pairing bound), so a scan with a wrong future
+  // stamp stays refused at once (fail closed) instead of waiting for PX4 to catch up with it.
+  if (ring_size_ > 0 && s.t > sample(ring_size_ - 1).t && s.t - sample(ring_size_ - 1).t <= limits::kPairingWindow) {
     waiting_ = s;
     return output(transition.value_or(dropped_waiting ? AlignmentReason::kNoPx4Sample : AlignmentReason::kNone));
   }
