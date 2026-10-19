@@ -312,6 +312,7 @@ Spec §4.1. **Gates: O34 for Steps 1–3; O35 for Step 4.**
   - the buffer span.
 
   Then: close DV2 if the cause is PX4 rate or lag; write a failing test and fix it if the cause is the bridge; otherwise keep DV2 OPEN with Task 6 as the trigger.
+  Direction from the T-vs-MPC critique (docs/analysis/2026-10-t-sync-vs-lio-frame-control.md): the code drops a pair when no PX4 sample after the scan stamp has arrived yet (`alignment.cpp:158-165`); the candidate fix is to hold ONE pending pair until the next PX4 sample arrives (bounded by the existing pairing window), not to drop it. Decide from the offline measurement, test first.
 - [ ] **Step 6: As-built.** AS_BUILT `uavnav_px4_bridge`: the `T` diagram and edge table from `kAlignmentTransitions`, and the epoch gate. Commit with `Docs-Impact: docs/architecture/SYSTEM_DESIGN.md, docs/TRACEABILITY.md, docs/architecture/AS_BUILT.md`.
 
 ---
@@ -372,6 +373,8 @@ Spec §3.4, §4.1, §7.2. There is no product change. It needs Tasks 2–4.
 ---
 
 ### Task 6: Drift benchmark (D39; DV1 and O13 data)
+
+**Added after the T-vs-MPC critique (O36, OPEN):** the Task 6 report also gives, per speed (1, 3, 5 m/s) and profile: the `T` residual at the vehicle (K1) and PX4's tracking error of its own setpoint in its own frame, read from the ULog (`vehicle_local_position_setpoint` against `vehicle_local_position`, K2). No product change; this is the measurement that decides whether plan A' (PX4 loops + `T`) stays.
 
 Spec §7.2, D39. There is no product change. It can run before Task 2 if the gates are late: the report then states which correction rules were active.
 
