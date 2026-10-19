@@ -543,18 +543,24 @@ lọc `alpha = clamp(dt, 1 ms, 200 ms) / alignment_tau_s` (2.0 s); không có c�
 `NO_PX4_SAMPLE`. `go()` từ chối cạnh không có trong bảng (assert ở debug).
 
 **Scan chờ mẫu PX4 (DV2, [đo](../analysis/2026-10-s1c-dv2.md)).** Scan có stamp sau mẫu PX4 mới nhất trong buffer (buffer
-không rỗng) thì **chờ**: `on_lio` trả `NONE`, không đổi gì. Chỉ một scan chờ (`waiting_`, dữ liệu input, không phải trạng
-thái). Kết thúc:
+không rỗng) **không quá `kPairingWindow` (50 ms)** thì **chờ**: `on_lio` trả `NONE`, không đổi gì. Xa hơn thì `NO_PX4_SAMPLE`
+ngay (fail closed với stamp tương lai sai). Chỉ một scan chờ (`waiting_`, dữ liệu input, không phải trạng thái). Kết thúc:
 
 | Sự kiện | Kết quả |
 |---|---|
 | mẫu PX4 được nhận, stamp ≥ scan, không mang reset | ghép như ở `on_lio` (`PAIR_ACCEPTED`, `PAIRS_CONSISTENT`, `PAIR_REJECTED_JUMP`), hoặc `NO_PX4_SAMPLE` nếu một phía vượt 50 ms |
 | mẫu PX4 stamp < scan, hoặc mẫu mang reset | vẫn chờ (mẫu kế tiếp quyết, trên buffer đã áp G) |
-| input LIO mới hơn qua kiểm 1–2 | bỏ scan chờ; nếu chính scan mới phải chờ thì báo `NO_PX4_SAMPLE` cho scan bị bỏ |
-| đổi trạng thái (`go()`) | bỏ scan chờ (cặp chỉ quyết trong trạng thái scan tới) |
+| input LIO mới hơn qua kiểm 1–2 (scan chờ, ghép ngay hay bị từ chối; mẫu không TRACKING, kể cả ở INIT) | bỏ scan chờ |
+| đổi trạng thái (`go()`, kể cả STALE ở tick) | bỏ scan chờ (cặp chỉ quyết trong trạng thái scan tới) |
 
-Vì vậy cạnh INIT → VALID có thể xảy ra trong `on_px4`; bảng cạnh không đổi. Bridge báo kết quả đó trên luồng odometry
-(`input` 0, `sensor_time_s` = stamp scan); scan chờ chưa đóng đợt từ chối của odometry, cặp được nhận mới đóng.
+Vì vậy cạnh INIT → VALID có thể xảy ra trong `on_px4`; bảng cạnh không đổi. Bridge:
+- báo kết quả do mẫu PX4 quyết trên luồng odometry (`input` 0, `sensor_time_s` = stamp scan);
+- báo mọi lần bỏ không có quyết định là `AlignmentPairRejected` `NO_PX4_SAMPLE` của odometry, với stamp của scan bị bỏ, ở
+  lời gọi đã bỏ nó (odometry, health hay tick);
+- scan chờ chưa đóng đợt từ chối của odometry; cặp được nhận chỉ đóng đợt khi EV của chính scan đó đã được mã hoá
+  (`waiting_ev_encoded_`, stamp của scan chờ có EV).
+
+Bản sửa chưa có hover SITL xác nhận (DV2 còn OPEN).
 
 **Cổng EV và ghép input (`Px4Bridge`, `bridge.hpp`).**
 
@@ -592,7 +598,12 @@ Tắt (`shutdown()`, từ pre-shutdown callback hoặc destructor): (1) đóng c
 `Alignment.StateChangeDropsTheWaitingScan`, `Alignment.ResetSampleDoesNotDecideTheWaitingScanTheNextSampleDoes`,
 `Alignment.PairingWindowIsFiftyMillisecondsOnEachSide`, `Px4Bridge.OdometryAheadOfPx4IsPairedByTheNextPx4Sample`,
 `Px4Bridge.WaitingOdometryWithoutAPx4SampleInTheWindowIsReported`,
-`Px4Bridge.WaitingOdometryDroppedByANewerOneIsReportedWithItsStamp` (fuzz có thêm scan phải chờ). SITL: bốn hover F34 (`run:20261013T154709Z-gps-hover`, `run:20261013T154923Z-gps-hover-yaw1.2`,
+`Px4Bridge.WaitingOdometryDroppedByANewerOneIsReportedWithItsStamp`,
+`Alignment.ScanMoreThanThePairingWindowAheadIsRefusedAtOnce`, `Alignment.NonTrackingSampleInInitDropsTheWaitingScan`,
+`Alignment.NewerPairedScanDropsTheWaitingScan`,
+`Px4Bridge.PairDecidedAtAPx4SampleDoesNotEndTheEvRejectedEpisodeOfItsScan`,
+`Px4Bridge.WaitingOdometryDoesNotEndTheOdometryEpisodeAtOnce`, `Px4Bridge.WaitingOdometryDroppedWithoutADecisionIsReported`
+(hai fuzz có scan phải chờ và kiểm rằng có cặp do mẫu PX4 quyết). SITL: bốn hover F34 (`run:20261013T154709Z-gps-hover`, `run:20261013T154923Z-gps-hover-yaw1.2`,
 `run:20261013T155144Z-no_gps-hover`, `run:20261013T155429Z-no_gps-hover-yaw1.2`: `yaw_T` dao động ≤ 0.08°, drift ≤ 0.034 m),
 `run:20261013T163717Z-gps-hover` (2 reset PX4 không phá VALID), `run:20261013T162711Z-gps-altitude_sweep` (EV dừng,
 `T` VALID → FROZEN → INVALID).
@@ -603,13 +614,16 @@ Tắt (`shutdown()`, từ pre-shutdown callback hoặc destructor): (1) đóng c
 - §4.1 "`T` gắn với một epoch LIO" (D47) và bỏ `frozen_max` (D48) **chưa có** (S1c Task 4 Steps 1–4): FROZEN → VALID
   nhận mọi epoch, cạnh `FROZEN_TOO_LONG` và `alignment_frozen_max_s` vẫn còn.
 - §4.1/O22/O25: odometry của epoch cũ đến sau health của epoch mới **không bị chặn** (ghi trong `bridge.hpp`).
-- §4.1 chưa ghi quy tắc scan chờ mẫu PX4 (DV2, ở trên); code thực hiện đúng câu "pose PX4 nội suy tại đúng thời điểm đó".
+- §4.1 ghi quy tắc scan chờ mẫu PX4 nhưng chưa ghi giới hạn `kPairingWindow` lúc bắt đầu chờ và event của mỗi lần bỏ.
+- Kết quả do mẫu PX4 quyết được báo với epoch của input LIO mới nhất, chưa phải epoch của chính scan; health TRACKING của
+  epoch mới hơn chưa bỏ scan chờ (để Task 4, D47).
+- DV2 OPEN: quy tắc đã sửa (`409c4b9`, vòng sửa 1 `08c8e00`), chưa có hover SITL xác nhận.
 
 **Chưa xây / giới hạn.** Mã state health ngoài phạm vi bị node từ chối (`NOT_FINITE`) nên không đóng băng `T` (carry-over
 S2). Hai reset PX4 trong cùng một cửa sổ mẫu bị mất chỉ áp delta cuối; cổng nhảy là lớp chặn cuối. Thời gian chờ publish
 `/alignment` (reliable) khi reader chậm chưa đo.
 
-Verified at: `409c4b9`
+Verified at: `08c8e00`
 
 ## uavnav_bringup
 
