@@ -305,15 +305,22 @@ stateDiagram-v2
 
 | Từ | Tới | Reason | Điều kiện trong code (giá trị beta `config/lio/sim.yaml`) |
 |---|---|---|---|
-| INITIALIZING | TRACKING | `CONFIRMATION_REACHED` | sau `kMapReady` (trả reason `MAP_READY`, không đổi trạng thái), `confirm_scans` (5) `kScanGood` liên tiếp; scan xấu đặt lại bộ đếm; scan trước `kMapReady` bị bỏ qua; sigma và gap không xét |
+| INITIALIZING | TRACKING | `CONFIRMATION_REACHED` | sau `kMapReady` (trả reason `MAP_READY`, không đổi trạng thái), `confirm_scans` (5) `kScanGood` **tươi** liên tiếp (guard tươi, dưới bảng); scan xấu hay scan tốt cũ đặt lại bộ đếm; scan trước `kMapReady` bị bỏ qua; sigma và gap không xét |
 | TRACKING | DEGRADED | `DEGENERATE_SCANS` / `CORRECTION_REJECTED` | `degenerate_scans` (3) scan xấu liên tiếp (degenerate, empty, correction-rejected); reason theo loại của scan hoàn tất chuỗi |
 | TRACKING | DEGRADED | `LIDAR_GAP_DEGRADED` | `kImuTick` với `t − last_scan > gap_degraded` (0.25 s, so sánh chặt) |
 | TRACKING, DEGRADED | LOST | `COVARIANCE_EXCEEDED` | ở **mọi** sự kiện: `!(0 ≤ sigma ≤ position_sigma_lost_m)` (0.5 m); NaN là vượt |
-| DEGRADED | TRACKING | `CONFIRMATION_REACHED` | `confirm_scans` (5) `kScanGood` liên tiếp |
+| DEGRADED | TRACKING | `CONFIRMATION_REACHED` | `confirm_scans` (5) `kScanGood` **tươi** liên tiếp; scan xấu hay scan tốt cũ đặt lại bộ đếm |
 | DEGRADED | LOST | `DEGENERACY_PERSISTED` | scan xấu với `t − degenerate_since > degeneracy_lost` (1.0 s); `degenerate_since` giữ qua cạnh TRACKING → DEGRADED |
 | DEGRADED | LOST | `LIDAR_GAP_LOST` | `kImuTick` với `t − last_scan > gap_lost` (0.5 s) |
 | LOST | RESTARTING | `GEOMETRY_RETURNED` | **một** `kScanGood` (scan đăng ký trên map đóng băng `MapPolicy::kFrozen`); mọi sự kiện khác bị bỏ qua |
 | RESTARTING | INITIALIZING | `RESTART_SEEDED` | backend trả `kRestartSeeded` cho một `restart(seed)` từ ngoài; epoch + 1 |
+
+**Guard tươi trên cạnh xác nhận (D40, AR4; `lifecycle.cpp` `fresh()`).** `LioLifecycle` giữ `last_imu_t_`, stamp
+`kImuTick` mới nhất đã thấy (dữ liệu, không phải cờ; `go()` không đặt lại). Ở INITIALIZING (đang xác nhận) và DEGRADED,
+một `kScanGood` chỉ được đếm vào `confirm_scans` khi `last_imu_t_ − scan end ≤ gap_degraded` (0.25 s; bằng thì đếm); scan
+tốt cũ hơn đặt bộ đếm về 0, nhưng vẫn đẩy `last_scan_time()` và xoá chuỗi suy biến (output đã được hiệu chỉnh tới scan
+end đó). Chưa có tick nào thì mọi scan là tươi. Vì frontend áp kết quả trước khi tick mẫu IMU của chính lời gọi đó,
+`last_imu_t_` là mẫu mới nhất **đã tick**.
 
 `last_scan_time()` chỉ tiến với scan good/degenerate/empty, không với `kScanCorrectionRejected` (D31). Không có cạnh
 LOST → TRACKING (`static_assert`). `go()` từ chối mọi cạnh không có trong bảng. Reason `SCAN_ACCEPTED`, `SCAN_EMPTY` có trong
@@ -325,10 +332,13 @@ enum nhưng không bao giờ được trả.
 |---|---|---|
 | 1 | kết quả scan phải trả lời scan cũ nhất đang bay (`seq`) | sai: `LioResultDiscarded` `UNEXPECTED_SEQUENCE` |
 | 2 | `epoch == requested_epoch` và (là câu trả lời restart ⇔ đang chờ restart) | sai: `LioResultDiscarded` `STALE_EPOCH` |
-| 3 | `kScanGood` với tuổi `= IMU mới nhất đã tick − scan end > gap_degraded` | `ScanResultTooOld` (`RESULT_TOO_OLD`), thành `kScanCorrectionRejected`, **không** đưa vào predictor |
-| 4 | `kScanGood`: `OutputPredictor::on_correction(snapshot)` | lỗi (`NOT_INITIALIZED`, `OLDER_THAN_BUFFER`, `NEWER_THAN_OUTPUT`, `NON_FINITE`): `PredictorCorrectionRejected`, thành `kScanCorrectionRejected` |
-| 5 | đưa `LioEvent{kind, scan end, sigma}` vào lifecycle | `StateTransition` nếu đổi trạng thái; health kèm theo |
-| 6 | odometry chỉ khi hiệu chỉnh đã được áp **và** trạng thái sau bước 5 là TRACKING | `OdometryOutput` (stamp = scan end, `epoch`, `reset_counter` của predictor, `quality`) |
+| 3 | `kScanGood`: `OutputPredictor::on_correction(snapshot)` (thiếu snapshot thì như `NON_FINITE`). Đây là **từ chối duy nhất** của một hiệu chỉnh (D40, AR4); tuổi không bao giờ là lý do | lỗi (`NOT_INITIALIZED`, `OLDER_THAN_BUFFER`, `NEWER_THAN_OUTPUT`, `NON_FINITE`): `PredictorCorrectionRejected`, thành `kScanCorrectionRejected` (không đẩy mốc gap); được áp: output được hiệu chỉnh, `correction_age` tính từ scan end này |
+| 4 | đưa `LioEvent{kind, scan end, sigma}` vào lifecycle (guard tươi quyết định scan có được đếm vào xác nhận) | `StateTransition` nếu đổi trạng thái; health kèm theo |
+| 5 | odometry chỉ khi hiệu chỉnh đã được áp **và** trạng thái sau bước 4 là TRACKING | `OdometryOutput` (stamp = scan end, `epoch`, `reset_counter` của predictor, `quality`) |
+
+Hệ quả đã kiểm: backend bão hoà (kết quả cũ 0.27 s mỗi 100 ms) nằm ở DEGRADED (luật gap), không về TRACKING, không LOST,
+không odometry, output bám registration (sai số lớn nhất 0.017 m trong giây cuối của test). Kết quả cũ hơn `gap_degraded`
+chỉ tới được khi đã rời TRACKING (tick làm nó cũ đã kích hoạt luật gap).
 
 Câu trả lời restart (`apply_restart`): `kRestartRejected`, thiếu snapshot, hoặc predictor không còn `covers()` thời điểm
 lệnh (D33/O16) → `LioRestartRejected`, ở lại RESTARTING; ngược lại `reset_to`, epoch mới, `LioRestart`, lifecycle
@@ -344,9 +354,11 @@ lệnh (D33/O16) → `LioRestartRejected`, ở lại RESTARTING; ngược lại 
 | `kMaxScansInFlight` | 2 (scan thứ ba bị từ chối `BACKEND_BUSY`, bỏ mới nhất) |
 | `kPredictorBufferSpan` / `kPredictorBufferCapacity` / `kPredictorDtMax` | 300 ms / 64 / 30 ms |
 | `kImuHistoryCapacity`, `kHealthPeriod`, `kMaxScanPoints` | 1024, 100 ms, 200000 |
+| `kScanPeriod` / `kGapDegradedMin` | 100 ms / 200 ms (hai chu kỳ scan; cận dưới của `lifecycle_gap_degraded_s`, node `lio` `static_assert` theo nó) |
 | `kRebaseCovarianceInflation`, `kEventSummaryEvery`, `kIcpThreads` | 10, 1000, 3 (1 khi TSan) |
 
-Tầng (b): 23 khoá `kLioSpecs` (`config.hpp`) đọc từ `config/lio/sim.yaml` bằng `load_lio_config`; tách thành
+Tầng (b): 23 khoá `kLioSpecs` (`config.hpp`) đọc từ `config/lio/sim.yaml` bằng `load_lio_config` (`lifecycle_gap_degraded_s`
+trong [0.2, 2.0] s, cận dưới là `kGapDegradedMin`); tách thành
 `FrontendConfig` (lifecycle, `predictor_tau_vel_s`/`_pos_s` 0.25, `imu_max_gap_s`) và `BackendConfig` (toán,
 `degeneracy_translation_min_info` 1.1e5, `degeneracy_rotation_min_info` 2.8e6).
 
@@ -358,26 +370,31 @@ flush recorder, `std::terminate`.
 
 **Event (component `lio`).** Backend: `LioScan`, `EskfRebased`, `ImuInitialized`, `ImuInitRejected`, `OdometryInvalid`,
 `AllocationFailed`, `LioQueueOverflow` (`RESULT_QUEUE_FULL`), `RestartSeedRejected`. Frontend: `StateTransition`,
-`LioRestart`, `LioRestartRejected`, `PredictorCorrectionRejected`, `ScanResultTooOld`, `LioInputRejected`,
+`LioRestart`, `LioRestartRejected`, `PredictorCorrectionRejected`, `LioInputRejected`,
 `LioQueueOverflow`, `LioResultDiscarded`, `ImuGap`, `ImuDuplicate`, `ImuRateTooHigh`, `AllocationFailed`. Runner:
 `LioClockFailed`, `LioBackendFailed`. Catalogue đầy đủ ở đầu `uavnav/lio/types.hpp`.
 
 **Bằng chứng.** `LioLifecycleTable.NoEdgeFromLostToTracking`, `LioLifecycle.TransitionsAlwaysFollowTheTable`,
 `LioLifecycle.LidarGapOnImuTicksAloneReachesLost`, `LioLifecycle.LostGoodScanStartsRestarting`,
 `LioLifecycle.CorrectionRejectedCountsLikeDegenerateButKeepsTheGapReference`,
-`LioFrontend.ResultOlderThanGapDegradedIsARejectedCorrection`, `LioFrontend.RejectedCorrectionDoesNotHoldTracking`,
+`LioLifecycle.StaleGoodScanMovesTheGapReferenceButNeverConfirms`, `LioLifecycle.FreshGoodScansStillConfirm`,
+`LioFrontend.ResultOlderThanGapDegradedIsAppliedToTheOutput`, `LioFrontend.SaturatedBackendStaysDegradedWithACorrectedOutput`,
+`LioFrontend.ResultAgeUsesTheNewestTickedImuSample`, `LioConfig.GapDegradedBelowTwoScanPeriodsIsRejected`,
+`LioFrontend.RejectedCorrectionDoesNotHoldTracking`,
 `LioFrontend.LateRestartAnswerIsRefusedAndStaysRestarting`, `LioFrontend.StalledBackendStillReachesLostOnImuTime`,
 `LioRunner.BlockedBackendDoesNotDelayGapCheckOrStateOutput`, `LioRunner.LateRestartAnswerIsRefusedAndARetrySucceeds`,
 `LioSplit.BackendHeadersCompileWithoutTheLifecycle`, `OutputPredictor.CorrectionConvergesWithoutJump`; TSan trên
-`LioRunner` (`make sanitize`). SITL: `run:20261013T152418Z-gps-hover` (`/lio/state` 100 Hz, tuổi kết quả p99 28 ms, 0 lần
+`LioRunner` (`make sanitize` trên code của `8c9ad29`, chỉ khác hai dòng comment: `uavnav_lio_core` 236 test, không có
+cảnh báo). Kiểm đột biến guard tươi và việc bỏ quy tắc tuổi (S1c Task 2): 10/10 đột biến của lõi bị bắt. SITL: `run:20261013T152418Z-gps-hover` (`/lio/state` 100 Hz, tuổi kết quả p99 28 ms, 0 lần
 DEGRADED → TRACKING), `run:20261013T162711Z-gps-altitude_sweep` (đường DEGRADED → LOST thật ở 4.76 m).
 
 **Lệch so với thiết kế.**
 - §3.1 (sơ đồ đích D41) **chưa có trong code**: code giữ sơ đồ S1b. LOST → RESTARTING xảy ra ngay ở một scan tốt trên
   map đóng băng (`GEOMETRY_RETURNED`), không có chờ dữ liệu ổn định `restart_stable_s` (`STABLE_DATA_DWELL`), không có
-  cạnh INITIALIZING → LOST (`REINIT_NOT_CONFIRMED`), không có `LioStabilityReset`. Chờ AR3 (S1c-T6..T11, D41, O30).
-- §3.1/§3.5 D40 `CorrectionVerdict` **chưa có**: quy tắc tuổi O15 (`gap_degraded`) vẫn là bước 3 của bảng trên (AR3,
-  S1c-T1/T4/T5). DV1 (dải tuổi 0.145–0.25 s có thể flap) vẫn OPEN.
+  cạnh INITIALIZING → LOST (`REINIT_NOT_CONFIRMED`). Chờ S1c Task 3 (D41, AR4).
+- §3.1/§3.5 D40 (AR4): **đã có** ở `8c9ad29`: không còn quy tắc tuổi; từ chối duy nhất là `on_correction` của predictor;
+  guard tươi trên cạnh xác nhận. Không có hàm `CorrectionVerdict` (AR4 bỏ nó). DV1 (dải tuổi 0.145–0.25 s) vẫn OPEN:
+  kết quả trong dải là tươi và được đếm.
 - §3.2 nói ngưỡng suy biến "có hysteresis": `evaluate_degeneracy` **không có hysteresis** (so sánh từng scan với một
   ngưỡng); chỉ chuỗi 3 scan / 5 scan của lifecycle làm giảm dao động.
 - §3.4: lệnh restart "do frontend phát" (D41) chưa có; `restart()` chỉ được gọi từ test. Không có seed `SYNC`/`SELF`.
@@ -386,10 +403,10 @@ DEGRADED → TRACKING), `run:20261013T162711Z-gps-altitude_sweep` (đường DEG
 
 **Chưa xây / giới hạn.** Không có test cho đường worker chết (`LioBackendFailed`). Trong RESTARTING không ai gọi
 `restart`, nên ở S1b một lần LOST rồi có scan tốt sẽ **đứng ở RESTARTING tới hết chuyến** (đúng O25: "LIO LOST ở lại
-RESTARTING"). Trong LOST, `kScanGood` trên map đóng băng vẫn được đưa vào predictor (bước 4) trước khi lifecycle chuyển
+RESTARTING"). Trong LOST, `kScanGood` trên map đóng băng vẫn được đưa vào predictor (bước 3) trước khi lifecycle chuyển
 RESTARTING.
 
-Verified at: `d3eed88`
+Verified at: `8c9ad29`
 
 ## uavnav_lio
 
@@ -422,7 +439,7 @@ flowchart LR
 | Frame (tầng a, `lio_node/limits.hpp`) | `lio_odom`, `base_link`, `livox_frame`, `livox_imu_frame` |
 | `kStatePeriod` | 10 ms ô SensorTime tuyệt đối → `/lio/state` 100 Hz (IMU 200 Hz) |
 | `kScanImuWaitMax` | 100 ms RosTime: một scan chưa được IMU phủ được giữ (một chỗ), hết hạn thì `LioScanDropped` `IMU_COVERAGE_TIMEOUT`; scan mới hơn thay thế (`SUPERSEDED`) |
-| `kMaxStampAhead` | 500 ms: stamp > ROS now + 0.5 s bị từ chối `STAMP_IN_FUTURE` |
+| `kMaxStampAhead` | 50 ms (D40, AR4): stamp > ROS now + 0.05 s bị từ chối `STAMP_IN_FUTURE`; `static_assert(kMaxStampAhead < kGapDegradedMin − kScanPeriod)` (0.1 s) nên một stamp được nhận không tự gây DEGRADED |
 | Tầng (b) node | 6 khoá mount `extrinsic_base_lidar_{x,y,z}_m`, `_{roll,pitch,yaw}_rad` (SITL: z 0.28 m); `base_T_imu = base_T_lidar · imu_T_lidar⁻¹` |
 
 **`/lio/state` như trong code** (`OutputCollector`): pose `base_link` trong `lio_odom`, vận tốc `base_link` trong
@@ -447,23 +464,24 @@ Ngoại lệ trong callback: `LioNodeFailed`, ném lại cho executor, `main` th
 `LioIngestReentered`, `LioPublishFailed`, `LioNodeFailed`, `LioNodeSummary`, `IngestSummary` (bản ghi cuối của JSONL).
 
 **Bằng chứng.** `LioIngest.ScanWaitsForImuCoverageThenIsPushed`, `LioIngest.ScanWaitingForImuIsDroppedAfterTheBoundedWait`,
-`LioIngest.FutureStampIsRefused`, `LioIngest.ConcurrentCallsAreRefusedNotRaced`, `LioIngest.StateIsBaseLinkPoseAndBodyVelocity`,
+`LioIngest.FutureStampIsRefused`, `LioIngest.OneImuStampFourHundredMsAheadIsRefusedAndNeverReachesLost`,
+`LioIngest.ConcurrentCallsAreRefusedNotRaced`, `LioIngest.StateIsBaseLinkPoseAndBodyVelocity`,
 `LioNode.InProcessSyntheticRunPublishesAllTopics`, `LioNode.NoRosTimeRefusesEveryMessageBeforeTheIngest`,
 `LioNode.ShutdownJoinsTheBackendThenFlushesEvents`, `LioNode.MultiThreadedExecutorKeepsCallbacksSerialised`,
 `LioRosConversion.PointCloudDropsNonFinitePointsAndCountsThem`. SITL: `run:20261013T163717Z-gps-hover` (cloud thật 10.00 Hz,
 `rejected_wrong_frame` 0, `rejected_malformed_cloud` 0), `run:20261013T152418Z-gps-hover` (`/lio/state` 100 Hz, p99 12 ms).
 
 **Lệch so với thiết kế.**
-- §3.5 "Ngưỡng stamp tương lai" (D40, `kClockMode` theo chế độ đồng hồ, < `gap_degraded` − chu kỳ scan, kiểm khi khởi
-  động) **chưa có**: code giữ hằng 500 ms của O20, bằng `gap_lost` (O28 đã ghi rủi ro).
-- §3.5 "chờ IMU 100 ms": D40 định bỏ hạn chờ này; code còn giữ (S1c-T4/T5).
+- §3.5 "Ngưỡng stamp tương lai" (D40, AR4): **đã có** ở `8c9ad29` (50 ms, `static_assert` ở compile time thay vì kiểm khi
+  khởi động). `kClockMode` của node thuộc phần cứng (P8), chưa có.
+- §3.5 "chờ IMU 100 ms": AR4 giữ nguyên hạn chờ này; code khớp.
 - Không có đường nhận offer seed (O29) hay lệnh restart (D41): `LioIngest` không gọi `LioRunner::restart`.
 - Chờ IMU 100 ms và từ chối stamp tương lai chưa từng được kích hoạt trong SITL (TRACEABILITY, dòng O20).
 
 **Chưa xây / giới hạn.** `/lio/scan` (O25, S3). Thời gian chờ của publish reliable (`/lio/health`, `/lio/odometry`) khi
 reader chậm chưa được đo (ghi trong header). `SharedRosTime` đóng băng khi callback dừng; nó chỉ đóng dấu event của backend.
 
-Verified at: `d3eed88`
+Verified at: `8c9ad29`
 
 ## uavnav_px4_bridge
 
