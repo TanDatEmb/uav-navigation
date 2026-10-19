@@ -542,12 +542,26 @@ rồi bắt đầu lại tích luỹ; health không TRACKING ở INIT bắt đ�
 lọc `alpha = clamp(dt, 1 ms, 200 ms) / alignment_tau_s` (2.0 s); không có cặp PX4 trong ±`kPairingWindow` 50 ms →
 `NO_PX4_SAMPLE`. `go()` từ chối cạnh không có trong bảng (assert ở debug).
 
+**Scan chờ mẫu PX4 (DV2, [đo](../analysis/2026-10-s1c-dv2.md)).** Scan có stamp sau mẫu PX4 mới nhất trong buffer (buffer
+không rỗng) thì **chờ**: `on_lio` trả `NONE`, không đổi gì. Chỉ một scan chờ (`waiting_`, dữ liệu input, không phải trạng
+thái). Kết thúc:
+
+| Sự kiện | Kết quả |
+|---|---|
+| mẫu PX4 được nhận, stamp ≥ scan, không mang reset | ghép như ở `on_lio` (`PAIR_ACCEPTED`, `PAIRS_CONSISTENT`, `PAIR_REJECTED_JUMP`), hoặc `NO_PX4_SAMPLE` nếu một phía vượt 50 ms |
+| mẫu PX4 stamp < scan, hoặc mẫu mang reset | vẫn chờ (mẫu kế tiếp quyết, trên buffer đã áp G) |
+| input LIO mới hơn qua kiểm 1–2 | bỏ scan chờ; nếu chính scan mới phải chờ thì báo `NO_PX4_SAMPLE` cho scan bị bỏ |
+| đổi trạng thái (`go()`) | bỏ scan chờ (cặp chỉ quyết trong trạng thái scan tới) |
+
+Vì vậy cạnh INIT → VALID có thể xảy ra trong `on_px4`; bảng cạnh không đổi. Bridge báo kết quả đó trên luồng odometry
+(`input` 0, `sensor_time_s` = stamp scan); scan chờ chưa đóng đợt từ chối của odometry, cặp được nhận mới đóng.
+
 **Cổng EV và ghép input (`Px4Bridge`, `bridge.hpp`).**
 
 | Input | Quy tắc trong code |
 |---|---|
 | mọi input | stamp > tick mới nhất + 500 ms (`kMaxStampAhead`) → từ chối `STAMP_IN_FUTURE` trước mọi kiểm khác |
-| `/lio/odometry` | **bị chặn** (`EvGated`, `HEALTH_NOT_TRACKING`) khi health mới nhất **cùng epoch** không TRACKING và stamp health ≥ stamp odometry; không thì `encode_ev` (epoch của chính mẫu, F14) và độc lập `on_lio(tracking = true)` với pose FRD |
+| `/lio/odometry` | **bị chặn** (`EvGated`, `HEALTH_NOT_TRACKING`) khi health mới nhất **cùng epoch** không TRACKING và stamp health ≥ stamp odometry; không thì `encode_ev` (epoch của chính mẫu, F14; EV gửi ngay cả khi cặp phải chờ, D42) và độc lập `on_lio(tracking = true)` với pose FRD |
 | `/lio/health` | health cũ hơn health đã lưu cùng epoch → `OUT_OF_ORDER`, không đổi gì; mọi health không TRACKING → `on_lio(false)`; TRACKING chỉ cập nhật cổng |
 | `vehicle_local_position` | `!xy_valid` hoặc `!z_valid` → `Px4SampleRejected` `PX4_POSITION_INVALID` (bộ đếm reset chưa tiêu); hợp lệ → `on_px4` |
 | tick | `on_tick(now)` mỗi `kTickPeriod` 100 ms: hai timeout của alignment |
@@ -573,7 +587,12 @@ Tắt (`shutdown()`, từ pre-shutdown callback hoặc destructor): (1) đóng c
 `EvEncoder.LabelsFrdNotNed`, `EvEncoder.UsesSampleEpochAsResetCounter`, `Px4Bridge.NewerNonTrackingHealthBlocksEv`,
 `Px4Bridge.LioLostStopsEvAndFreezesAlignment`, `Px4Bridge.EachFaultEpisodeIsReported`,
 `Px4BridgeNode.PublishesEvAndAlignmentFromLioAndPx4Streams`, `Px4BridgeNode.MultiThreadedExecutorKeepsCallbacksSerialised`,
-`Px4Time.NegativeRejected`. SITL: bốn hover F34 (`run:20261013T154709Z-gps-hover`, `run:20261013T154923Z-gps-hover-yaw1.2`,
+`Px4Time.NegativeRejected`; DV2: `Alignment.ScanAheadOfTheNewestPx4SampleWaitsAndPairsWithTheNextSampleAfterIt`,
+`Alignment.WaitingScanInInitCompletesTheAccumulation`, `Alignment.NewerScanDropsTheWaitingScanAsNoPx4Sample`,
+`Alignment.StateChangeDropsTheWaitingScan`, `Alignment.ResetSampleDoesNotDecideTheWaitingScanTheNextSampleDoes`,
+`Alignment.PairingWindowIsFiftyMillisecondsOnEachSide`, `Px4Bridge.OdometryAheadOfPx4IsPairedByTheNextPx4Sample`,
+`Px4Bridge.WaitingOdometryWithoutAPx4SampleInTheWindowIsReported`,
+`Px4Bridge.WaitingOdometryDroppedByANewerOneIsReportedWithItsStamp` (fuzz có thêm scan phải chờ). SITL: bốn hover F34 (`run:20261013T154709Z-gps-hover`, `run:20261013T154923Z-gps-hover-yaw1.2`,
 `run:20261013T155144Z-no_gps-hover`, `run:20261013T155429Z-no_gps-hover-yaw1.2`: `yaw_T` dao động ≤ 0.08°, drift ≤ 0.034 m),
 `run:20261013T163717Z-gps-hover` (2 reset PX4 không phá VALID), `run:20261013T162711Z-gps-altitude_sweep` (EV dừng,
 `T` VALID → FROZEN → INVALID).
@@ -581,19 +600,16 @@ Tắt (`shutdown()`, từ pre-shutdown callback hoặc destructor): (1) đóng c
 **Lệch so với thiết kế.**
 - §4.1 "`timestamp_sample` đổi sang đồng hồ PX4 qua timesync": code chỉ có `kSimulationIdentity`; `kRealtime` bị từ chối
   (beta là SITL, §0). Phần cứng cần bộ ước lượng offset chưa có.
-- §4.1 "Đồng bộ lại sau epoch mới" (D41, D42, O33: cửa sổ đồng bộ lại, FROZEN → INIT `RESYNC_DISCONTINUITY`, reset PX4
-  trong cửa sổ giữ FROZEN) **chưa có**: code vẫn FROZEN → INVALID khi reset PX4 lúc FROZEN.
+- §4.1 "`T` gắn với một epoch LIO" (D47) và bỏ `frozen_max` (D48) **chưa có** (S1c Task 4 Steps 1–4): FROZEN → VALID
+  nhận mọi epoch, cạnh `FROZEN_TOO_LONG` và `alignment_frozen_max_s` vẫn còn.
 - §4.1/O22/O25: odometry của epoch cũ đến sau health của epoch mới **không bị chặn** (ghi trong `bridge.hpp`).
-- §4.1/D42 "`EKF2_EV_CTRL=15` ở cả hai profile": `config/px4/profiles/gps.yaml` vẫn `EKF2_EV_CTRL: 7` (EV yaw tắt, D20);
-  chờ đo SITL ở S1c-T2/T3. Xem `uavnav_bringup`.
-- DV2 OPEN: số cặp `NO_PX4_SAMPLE` dao động 0–113 event/cửa sổ (tới ~19% số cặp) chưa được giải thích.
-- Offer seed cho LIO (O29) chưa có.
+- §4.1 chưa ghi quy tắc scan chờ mẫu PX4 (DV2, ở trên); code thực hiện đúng câu "pose PX4 nội suy tại đúng thời điểm đó".
 
 **Chưa xây / giới hạn.** Mã state health ngoài phạm vi bị node từ chối (`NOT_FINITE`) nên không đóng băng `T` (carry-over
 S2). Hai reset PX4 trong cùng một cửa sổ mẫu bị mất chỉ áp delta cuối; cổng nhảy là lớp chặn cuối. Thời gian chờ publish
 `/alignment` (reliable) khi reader chậm chưa đo.
 
-Verified at: `d3eed88`
+Verified at: `409c4b9`
 
 ## uavnav_bringup
 
