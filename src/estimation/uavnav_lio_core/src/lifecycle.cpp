@@ -1,5 +1,7 @@
 #include "uavnav/lio/lifecycle.hpp"
 
+#include <algorithm>
+
 namespace uavnav::lio {
 
 namespace {
@@ -48,6 +50,7 @@ Transition LioLifecycle::go(LioState to, LioReason reason) noexcept {
 
 Transition LioLifecycle::on(const LioEvent& e) noexcept {
   if (is_scan(e.kind)) last_scan_ = e.t;
+  if (e.kind == LioEvent::Kind::kImuTick) last_imu_t_ = std::max(last_imu_t_, e.t);
   switch (state_) {
     case LioState::kInitializing: return on_initializing(e);
     case LioState::kTracking: return on_tracking(e);
@@ -68,7 +71,11 @@ Transition LioLifecycle::on_initializing(const LioEvent& e) noexcept {
   }
   if (init_phase_ == InitPhase::kWaitingForMap) return unchanged();  // scans are not counted before the map is ready
   if (e.kind == Kind::kScanGood) {
-    if (++good_run_ >= cfg_.confirm_scans) return go(LioState::kTracking, LioReason::kConfirmationReached);
+    if (!fresh(e)) {
+      good_run_ = 0;  // D40/AR4: applied, but too old to confirm; the run is of consecutive fresh scans
+    } else if (++good_run_ >= cfg_.confirm_scans) {
+      return go(LioState::kTracking, LioReason::kConfirmationReached);
+    }
   } else if (is_bad_scan(e.kind)) {
     good_run_ = 0;  // confirmation needs consecutive good scans
   }
@@ -102,8 +109,12 @@ Transition LioLifecycle::on_degraded(const LioEvent& e) noexcept {
     return go(LioState::kLost, LioReason::kCovarianceExceeded);
   }
   if (e.kind == Kind::kScanGood) {
-    degenerate_since_.reset();
-    if (++good_run_ >= cfg_.confirm_scans) return go(LioState::kTracking, LioReason::kConfirmationReached);
+    degenerate_since_.reset();  // the output was corrected up to e.t, fresh or not
+    if (!fresh(e)) {
+      good_run_ = 0;  // D40/AR4: too old to confirm (O15 flapping); the run is of consecutive fresh scans
+    } else if (++good_run_ >= cfg_.confirm_scans) {
+      return go(LioState::kTracking, LioReason::kConfirmationReached);
+    }
   } else if (is_bad_scan(e.kind)) {
     good_run_ = 0;
     if (!degenerate_since_) degenerate_since_ = e.t;

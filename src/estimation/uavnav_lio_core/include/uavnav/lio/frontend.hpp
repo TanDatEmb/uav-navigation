@@ -33,20 +33,22 @@
 // (time::from_stamp<SensorTag>), as in lifecycle.hpp. The TimeSnapshot `now` stamps the events of
 // that call; nothing here reads a clock.
 //
-// Gap semantics (F22, D31, D33/O15): the lifecycle's last-scan time advances only when a scan
+// Gap semantics (F22, D31, D40, AR4): the lifecycle's last-scan time advances only when a scan
 // RESULT is applied; its time is the scan end. Admitted, refused, unprocessed and discarded scans
 // do not count, and neither does a kScanGood result that is a rejected correction (fed as
-// kScanCorrectionRejected, no odometry). A kScanGood result is a rejected correction when
-// (1) its age when applied is greater than lifecycle.gap_degraded (equal is accepted); it is then
-// NOT offered to the output predictor ("ScanResultTooOld", kResultTooOld); or
-// (2) the output predictor rejected its correction ("PredictorCorrectionRejected").
-// The age is newest IMU time - scan end, where the newest IMU time is the newest accepted sample
-// already TICKED: push_imu and push_scan apply the results once their input passed its checks
-// (before anything else; poll_results at once), so the sample of the current push_imu call does
-// not count yet. A too-old result can only arrive outside
-// TRACKING: its scan end is not before the gap reference, so the tick that made it too old already
-// fired the TRACKING -> DEGRADED gap rule. A stalled, slow or saturated backend therefore reads as
-// a LiDAR gap: DEGRADED, then LOST, on IMU time alone, and old results never confirm TRACKING.
+// kScanCorrectionRejected, no odometry, "PredictorCorrectionRejected"): one the output predictor
+// cannot place (OutputPredictor::on_correction: older than its 300 ms buffer, newer than the output,
+// not finite; or no snapshot). That typed result is the only refusal of a correction (D40): an age
+// never refuses one. An applied kScanGood always corrects the output and moves the gap reference; the
+// lifecycle counts it toward confirm_scans only when (newest ticked IMU time - scan end) <=
+// gap_degraded (the freshness guard, lifecycle.hpp). The newest ticked IMU time is the newest
+// accepted sample already TICKED: push_imu and push_scan apply the results once their input passed
+// its checks (before anything else; poll_results at once), so the sample of the current push_imu
+// call does not count yet. A result older than gap_degraded can only arrive outside TRACKING: its
+// scan end is not before the gap reference, so the tick that made it that old already fired the
+// TRACKING -> DEGRADED gap rule. A saturated backend therefore stays DEGRADED with a corrected
+// output and no odometry; a stalled one, or one whose results cannot be placed, reads as a LiDAR
+// gap: DEGRADED, then LOST, on IMU time alone.
 //
 // Never throws: inputs are checked at the boundary (EstimatorReason); an allocation failure of a
 // state output drops that output with an "AllocationFailed" event.
@@ -174,7 +176,7 @@ class LioFrontend {
   std::optional<time::SensorTime> last_scan_end_;  // newest admitted scan end (ordering check only)
   std::optional<time::SensorTime> next_health_t_;  // next point of the health grid
   std::optional<time::SensorTime>
-      last_good_scan_t_;                  // end of the newest applied kScanGood (correction age)
+      last_good_scan_t_;                  // end of the newest applied kScanGood (correction age, measured)
   std::optional<SeedPose> pending_seed_;  // seed of the pending restart (LioRestart event)
   std::array<Spam, kSpamSlots> spam_{};
   DegeneracyReport last_report_{0.0, 0.0, true, 0};

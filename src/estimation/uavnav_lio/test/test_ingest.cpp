@@ -392,11 +392,59 @@ TEST(LioIngest, FutureStampIsRefused) {
   EXPECT_DOUBLE_EQ(Value(rejected[0], "sensor_time_s"), time::to_seconds(ahead));
   EXPECT_DOUBLE_EQ(Value(rejected[0], "count"), 1.0);
 
-  // The bound itself (now + 0.5 s) is not in the future.
+  // The bound itself (now + kMaxStampAhead, 50 ms) is not in the future.
   const time::SensorTime edge = t + node_limits::kMaxStampAhead;
   const auto at_edge = Bounded([&] { return rig.ingest().on_imu(room::imu(edge), now); });
   ASSERT_TRUE(at_edge.has_value());
   EXPECT_EQ(rig.Frontend().imu_accepted, accepted + 1);
+}
+
+// Review Focus 5 (D40, AR4). One IMU sample stamped 0.4 s ahead of ROS now, accepted, would become the newest IMU
+// stamp: every true sample of the next 0.4 s is out of order and the gap rule sees a LiDAR gap 0.4 s longer
+// (DEGRADED, then LOST at gap_lost 0.5 s). The 50 ms bound refuses it at ingest, so TRACKING goes on untouched.
+TEST(LioIngest, OneImuStampFourHundredMsAheadIsRefusedAndNeverReachesLost) {
+  Rig rig;
+  const Eigen::Isometry3d imu_T_lidar = lio_node::imu_T_lidar(SimLioConfig());
+  std::int64_t k = rig.FeedUntilAligned(0);
+  ASSERT_GT(k, 0) << "the predictor never aligned";
+
+  std::optional<lio::LioState> state;
+  bool injected = false;
+  int periods_after = 0;
+  std::vector<lio::LioState> after;
+  const auto keep = [&](const IngestOutputs& o) {
+    if (o.health) state = o.health->state;
+    if (injected && o.health) after.push_back(o.health->state);
+  };
+  for (int period = 0; period < 80 && periods_after < 20; ++period) {
+    for (int i = 0; i < 20; ++i, ++k) {  // one scan period of IMU
+      const time::SensorTime t = room::imu_time(kT0, k);
+      const auto r = Bounded([&] { return rig.ingest().on_imu(room::imu(t), At(t)); });
+      ASSERT_TRUE(r.has_value()) << to_string(r.error());
+      keep(*r);
+      if (!injected && state == lio::LioState::kTracking && i == 10) {
+        const std::uint64_t accepted = rig.Frontend().imu_accepted;
+        const time::SensorTime ahead = t + time::milliseconds(400);
+        const auto bad = Bounded([&] { return rig.ingest().on_imu(room::imu(ahead), At(t)); });
+        ASSERT_FALSE(bad.has_value()) << "a stamp 0.4 s ahead of ROS now was accepted";
+        EXPECT_EQ(bad.error(), IngestReason::kStampInFuture);
+        EXPECT_EQ(rig.Frontend().imu_accepted, accepted) << "nothing reached the core";
+        injected = true;
+      }
+    }
+    const time::SensorTime end = room::imu_time(kT0, k - 1);
+    const std::uint64_t answered = rig.ResultsPushed();
+    const auto s = Bounded([&] { return rig.ingest().on_scan(room::scan(end, imu_T_lidar), At(end)); });
+    ASSERT_TRUE(s.has_value()) << to_string(s.error());
+    keep(*s);
+    ASSERT_TRUE(Eventually([&] { return rig.ResultsPushed() > answered; })) << "no backend answer within 10 s";
+    if (injected) ++periods_after;
+  }
+  ASSERT_TRUE(injected) << "TRACKING never reached";
+  EXPECT_EQ(periods_after, 20);
+  ASSERT_FALSE(after.empty());
+  for (const lio::LioState s : after) EXPECT_EQ(s, lio::LioState::kTracking) << "left TRACKING after the injection";
+  EXPECT_EQ(rig.Events("LioInputRejected").size(), 1U);
 }
 
 // Review Focus 4.

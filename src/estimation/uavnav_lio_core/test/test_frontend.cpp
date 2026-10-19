@@ -719,10 +719,9 @@ TEST(LioFrontend, RejectedCorrectionDoesNotHoldTracking) {
   for (const StepOutputs& o : h.outputs()) EXPECT_FALSE(o.odometry && o.odometry->t > Ms(10'000));
 }
 
-// D31 at the beta thresholds: a stale good result arriving while DEGRADED does not delay LOST.
-// D33/O15: 0.31 s is older than gap_degraded (0.25 s), so the result-age rule rejects it before the
-// predictor is asked (ScanResultTooOld, not PredictorCorrectionRejected/OLDER_THAN_BUFFER): at the
-// beta thresholds every result older than the 300 ms buffer is caught by the age rule first.
+// D31 at the beta thresholds: a good result the predictor cannot place, arriving while DEGRADED,
+// does not delay LOST. D40: 0.31 s is older than the 300 ms predictor buffer, so the predictor
+// refuses it (OLDER_THAN_BUFFER), the one technical refusal left; its age alone refuses nothing.
 TEST(LioFrontend, RejectedCorrectionDoesNotMoveTheGapReference) {
   Rig h;
   h.ToTracking();  // last applied scan end 10.0 s
@@ -732,8 +731,9 @@ TEST(LioFrontend, RejectedCorrectionDoesNotMoveTheGapReference) {
       h.Scan(Ms(9'940), Ms(10'040)).has_value());  // 0.31 s old: older than the predictor buffer
   h.backend().AnswerScan(BackendResultKind::kScanGood);
   h.Poll();
-  ASSERT_EQ(h.Events("ScanResultTooOld").size(), 1U);
-  EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());
+  const auto rejected = h.Events("PredictorCorrectionRejected");
+  ASSERT_EQ(rejected.size(), 1U);
+  EXPECT_EQ(rejected[0].reason, "OLDER_THAN_BUFFER");
   EXPECT_EQ(
       ImuUntilState(h, Ms(10'600), LioState::kLost, LioReason::kLidarGapLost),
       std::optional<time::SensorTime>(Ms(10'505)));  // from 10.0 s, not from the rejected 10.04 s
@@ -1197,19 +1197,18 @@ TEST(LioFrontend, GoodResultsThePredictorCannotUseAreRejectedCorrections) {
   }
 }
 
-// --- D33/O15: the result-age rule ---------------------------------------------------------------
+// --- D40, AR4: no age rule; the freshness guard on confirmation ---------------------------------
 //
-// A kScanGood result counts as corrected only if its age when applied (newest ticked IMU time -
-// scan end) is <= gap_degraded (beta 0.25 s); an older one is a rejected correction that is never
-// offered to the predictor. Such a result can only arrive outside TRACKING: its scan end is not
-// before the gap reference (results come back in admission order), so the IMU tick that made it
-// older than gap_degraded already fired the TRACKING -> DEGRADED gap rule. Most tests therefore run
-// in DEGRADED, where it counts like a degenerate scan: it breaks the confirmation run and does not
-// move the gap reference. Only kScanGood is aged; the other scan kinds are fed as before.
+// A kScanGood result is refused only when the output predictor cannot place it (on_correction's
+// Result<void, PredictorReason>: older than the 300 ms buffer, newer than the output, not finite).
+// Its age is never a reason to refuse it: an applied correction moves the output and the gap
+// reference. It counts toward confirm_scans only while (newest ticked IMU time - scan end) <=
+// gap_degraded (LioLifecycle, the guard of D40/AR4); a stale one also breaks the confirmation run.
+// Results come back in admission order, so a result older than gap_degraded can only arrive after
+// the gap rule already left TRACKING: most tests run in DEGRADED.
 
 /// TRACKING (last applied scan end 10.0 s), DEGRADED by the LiDAR gap at 10.255 s, then four fresh
-/// good scans ending 10.3 .. 10.6 s (applied at age 0): one more applied good scan confirms
-/// TRACKING.
+/// good scans ending 10.3 .. 10.6 s (applied at age 0): one more fresh good scan confirms TRACKING.
 void DegradedOneScanFromConfirmation(Rig& h) {
   h.ToTracking();
   ASSERT_EQ(ImuUntilState(h, Ms(10'300), LioState::kDegraded, LioReason::kLidarGapDegraded),
@@ -1220,7 +1219,7 @@ void DegradedOneScanFromConfirmation(Rig& h) {
   }
 }
 
-TEST(LioFrontend, ResultOlderThanGapDegradedIsARejectedCorrection) {
+TEST(LioFrontend, ResultOlderThanGapDegradedIsAppliedToTheOutput) {
   Rig h;
   DegradedOneScanFromConfirmation(h);  // last applied scan end 10.6 s
   h.ImuUntil(Ms(10'900));              // a health grid point
@@ -1230,157 +1229,97 @@ TEST(LioFrontend, ResultOlderThanGapDegradedIsARejectedCorrection) {
   EXPECT_NEAR(before->correction_age_s, 0.3, 1e-9);
 
   // Scan (10.6, 10.7] answered when the newest IMU is 10.97 s: 0.27 s old, inside the 300 ms
-  // predictor buffer (the S1a/D30 frontend applied it: a fifth good scan, TRACKING with 0.27 s old
-  // odometry). Its snapshot is 1 m away, so applying it would move the output and the tracking
-  // error.
+  // predictor buffer. The registration puts the vehicle 1 m from the output (the synthetic truth).
   h.ImuUntil(Ms(10'970));
+  const Eigen::Vector3d truth(1.0, 0.0, 0.0);
+  ASSERT_TRUE(h.LastState().has_value());
+  const double error_before = (h.LastState()->sample.p_world_m - truth).norm();
+  EXPECT_NEAR(error_before, 1.0, 1e-6);
   ASSERT_TRUE(h.Scan(Ms(10'600), Ms(10'700)).has_value());
-  h.backend().AnswerScan(BackendResultKind::kScanGood, Still(Ms(10'700), Eigen::Vector3d(1, 0, 0)));
+  h.backend().AnswerScan(BackendResultKind::kScanGood, Still(Ms(10'700), truth));
   const StepOutputs out = h.Poll();
-  EXPECT_FALSE(out.odometry.has_value());
+  EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());  // applied
+  // Stale for confirmation: it would have been the fifth good scan, but DEGRADED stays, no odometry.
   EXPECT_EQ(h.fe().state(), LioState::kDegraded);
-  const auto too_old = h.Events("ScanResultTooOld");
-  ASSERT_EQ(too_old.size(), 1U);
-  EXPECT_EQ(too_old[0].reason, "RESULT_TOO_OLD");
-  EXPECT_NEAR(Value(too_old[0], "sensor_time_s"), 10.7, 1e-9);
-  EXPECT_NEAR(Value(too_old[0], "age_s"), 0.27, 1e-9);
-  EXPECT_NEAR(Value(too_old[0], "gap_degraded_s"), 0.25, 1e-12);
-  EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());  // the predictor was not asked
+  EXPECT_FALSE(out.odometry.has_value());
 
-  // The predictor is untouched and the correction age still runs from 10.6 s, not from 10.7 s.
+  // The correction reached the output: the error shrinks by one PI step (no jump), and the
+  // correction age now runs from 10.7 s.
   h.ImuUntil(Ms(11'000));
   const std::optional<HealthOutput> after = h.LastHealth();
   ASSERT_TRUE(after.has_value());
   ASSERT_EQ(after->t, Ms(11'000));
-  EXPECT_NEAR(after->correction_age_s, 0.4, 1e-9);
-  EXPECT_EQ(after->output_tracking_error, before->output_tracking_error);
+  EXPECT_NEAR(after->correction_age_s, 0.3, 1e-9);
+  EXPECT_NEAR(after->output_tracking_error.z(), 1.0, 1e-6);  // position error seen at 10.7 s
   ASSERT_TRUE(h.LastState().has_value());
-  EXPECT_LT(h.LastState()->sample.p_world_m.norm(), 1e-6);
+  const double error_after = (h.LastState()->sample.p_world_m - truth).norm();
+  EXPECT_LT(error_after, error_before - 0.01);
+  EXPECT_GT(error_after, 0.5);  // a small step towards the snapshot, never to it
 
-  // It broke the confirmation run like a degenerate scan: five more applied good scans are needed.
+  // It broke the confirmation run: five more fresh good scans are needed.
   for (std::int64_t end = 11'000; end <= 11'300; end += 100) {
-    EXPECT_FALSE(h.ScanAnswered(Ms(end), BackendResultKind::kScanGood).odometry.has_value()) << end;
+    EXPECT_FALSE(h.ScanAnswered(Ms(end), BackendResultKind::kScanGood, Still(Ms(end), truth))
+                     .odometry.has_value())
+        << end;
     EXPECT_EQ(h.fe().state(), LioState::kDegraded) << end;
   }
-  const StepOutputs confirmed = h.ScanAnswered(Ms(11'400), BackendResultKind::kScanGood);
+  const StepOutputs confirmed =
+      h.ScanAnswered(Ms(11'400), BackendResultKind::kScanGood, Still(Ms(11'400), truth));
   EXPECT_EQ(h.fe().state(), LioState::kTracking);
   ASSERT_TRUE(confirmed.odometry.has_value());
   EXPECT_EQ(confirmed.odometry->t, Ms(11'400));
-  EXPECT_EQ(h.Events("ScanResultTooOld").size(), 1U);
 }
 
-// The boundary is inclusive ("older than gap_degraded" rejects): age exactly 0.25 s is applied.
-TEST(LioFrontend, ResultAgeEqualToGapDegradedCounts) {
+// Review Focus 1 (O15, C4). A saturated backend (ICP ~120-150 ms with two scans waiting) answers
+// every scan 0.27 s after its end. S1a/D30 applied and counted them: TRACKING with 0.27 s old
+// odometry, then DEGRADED on the next tick (flapping). S1b refused them by age: LOST, a new epoch,
+// a CPU load turned into a fault of four layers. Now they are applied but never confirm: DEGRADED
+// for the whole saturation, the output corrected, no odometry (no EV), no LOST.
+TEST(LioFrontend, SaturatedBackendStaysDegradedWithACorrectedOutput) {
   Rig h;
-  DegradedOneScanFromConfirmation(h);
-  h.ImuUntil(Ms(10'950));
-  ASSERT_TRUE(h.Scan(Ms(10'600), Ms(10'700)).has_value());  // age 10.95 - 10.7 = 0.25 s exactly
-  h.backend().AnswerScan(BackendResultKind::kScanGood);
-  const StepOutputs out = h.Poll();
-  EXPECT_EQ(h.fe().state(), LioState::kTracking);  // the fifth applied good scan
-  ASSERT_TRUE(out.health.has_value());
-  EXPECT_EQ(out.health->reason, LioReason::kConfirmationReached);
-  ASSERT_TRUE(out.odometry.has_value());
-  EXPECT_EQ(out.odometry->t, Ms(10'700));
-  EXPECT_TRUE(h.Events("ScanResultTooOld").empty());
-  EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());
-}
-
-// One nanosecond past the boundary is a rejected correction.
-TEST(LioFrontend, ResultOneNanosecondOlderThanGapDegradedIsRejected) {
-  Rig h;
-  DegradedOneScanFromConfirmation(h);
-  h.ImuUntil(Ms(10'950));
-  ASSERT_TRUE(h.Scan(Ms(10'600), Ms(10'700) - time::nanoseconds(1)).has_value());
-  h.backend().AnswerScan(BackendResultKind::kScanGood);
-  const StepOutputs out = h.Poll();
-  EXPECT_EQ(h.fe().state(), LioState::kDegraded);
-  EXPECT_FALSE(out.odometry.has_value());
-  const auto too_old = h.Events("ScanResultTooOld");
-  ASSERT_EQ(too_old.size(), 1U);
-  EXPECT_EQ(too_old[0].reason, "RESULT_TOO_OLD");
-  EXPECT_GT(Value(too_old[0], "age_s"), 0.25);
-  EXPECT_NEAR(Value(too_old[0], "age_s"), 0.250000001, 1e-12);
-  EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());
-}
-
-// O15: a saturated backend (ICP ~120-150 ms with two scans waiting) answers every scan 0.27 s after
-// its end. The S1a/D30 frontend applied those results: five of them confirmed TRACKING with 0.27 s
-// old odometry, the next IMU tick degraded again (gap > 0.25 s), and LOST never came. Now they are
-// rejected corrections: never TRACKING, and LOST on IMU time alone (F22).
-TEST(LioFrontend, SaturatedBackendReachesLostInsteadOfFlapping) {
-  Rig h;
-  h.ToTracking();  // last applied scan end 10.0 s
+  h.ToTracking();  // last applied scan end 10.0 s, output at the origin
   ASSERT_EQ(ImuUntilState(h, Ms(10'300), LioState::kDegraded, LioReason::kLidarGapDegraded),
             std::optional<time::SensorTime>(Ms(10'255)));
-  std::optional<time::SensorTime> lost;
+  // The synthetic truth: the registration puts the (still) vehicle 0.3 m from the output.
+  const Eigen::Vector3d truth(0.3, 0.0, 0.0);
   bool tracking = false;
+  bool lost = false;
   int results = 0;
+  double max_error_last_second = 0.0;
   for (time::SensorTime t = Ms(10'305); t <= Ms(13'300); t = t + kImuPeriod) {
-    const LioState before = h.fe().state();
     const auto r = h.Imu(t);
     ASSERT_TRUE(r.has_value());
     EXPECT_EQ(r->states.size(), 1U) << t.ns;
-    if (!lost && before != LioState::kLost && h.fe().state() == LioState::kLost) {
-      lost = t;
-      ASSERT_TRUE(r->health.has_value());
-      EXPECT_EQ(r->health->reason, LioReason::kLidarGapLost);
-    }
-    tracking = tracking || h.fe().state() == LioState::kTracking;
     if ((t.ns - Ms(10'000).ns) % kScanPeriod.ns == 0) {  // every 100 ms, a result 0.27 s old
       const time::SensorTime end = t - time::milliseconds(270);
       ASSERT_TRUE(h.Scan(end - kScanPeriod, end).has_value()) << t.ns;
-      h.backend().AnswerScan(BackendResultKind::kScanGood);
+      h.backend().AnswerScan(BackendResultKind::kScanGood, Still(end, truth));
       EXPECT_FALSE(h.Poll().odometry.has_value()) << t.ns;
       ++results;
-      tracking = tracking || h.fe().state() == LioState::kTracking;
     }
+    tracking = tracking || h.fe().state() == LioState::kTracking;
+    lost = lost || h.fe().state() == LioState::kLost;
+    if (t >= Ms(12'300) && !r->states.empty())
+      max_error_last_second =
+          std::max(max_error_last_second, (r->states.back().sample.p_world_m - truth).norm());
   }
   EXPECT_FALSE(tracking);
-  EXPECT_EQ(lost, std::optional<time::SensorTime>(Ms(10'505)));  // first IMU t > 10.0 + 0.5 s
-  EXPECT_EQ(h.fe().state(), LioState::kLost);  // a rejected correction is no GEOMETRY_RETURNED
-  EXPECT_EQ(results, 30);                      // 10.4 .. 13.3 s
-  EXPECT_EQ(h.Events("ScanResultTooOld").size(), 30U);
+  EXPECT_FALSE(lost);
+  EXPECT_EQ(h.fe().state(), LioState::kDegraded);
+  EXPECT_EQ(results, 30);  // 10.4 .. 13.3 s
   EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());
+  const auto transitions = h.Events("StateTransition");
+  ASSERT_FALSE(transitions.empty());
+  EXPECT_EQ(transitions.back().reason, "LIDAR_GAP_DEGRADED");  // the only change since TRACKING
   for (const StepOutputs& o : h.outputs()) EXPECT_FALSE(o.odometry && o.odometry->t > Ms(10'000));
+  // The output follows the registration: < 0.05 m from the truth over the last second.
+  EXPECT_LT(max_error_last_second, 0.05);
+  ASSERT_TRUE(h.LastHealth().has_value());
+  EXPECT_LE(h.LastHealth()->correction_age_s, 0.37 + 1e-9);  // the newest applied scan end
 }
 
-// Only kScanGood is aged. Degenerate and empty results 0.27 s old are fed as before and move the
-// gap reference; a map-ready result 0.3 s old still starts the confirmation.
-TEST(LioFrontend, ResultAgeRuleTouchesOnlyGoodScans) {
-  for (const BackendResultKind kind :
-       {BackendResultKind::kScanDegenerate, BackendResultKind::kScanEmpty}) {
-    Rig h;
-    h.ToTracking();  // gap reference 10.0 s
-    ASSERT_EQ(ImuUntilState(h, Ms(10'400), LioState::kDegraded, LioReason::kLidarGapDegraded),
-              std::optional<time::SensorTime>(Ms(10'255)));
-    ASSERT_TRUE(h.Scan(Ms(10'030), Ms(10'130)).has_value());  // 0.27 s old at 10.4 s
-    h.backend().AnswerScan(kind);
-    h.Poll();
-    EXPECT_EQ(h.fe().state(), LioState::kDegraded) << to_string(kind);
-    // The gap reference moved to 10.13 s: LOST at the first IMU t > 10.63 s, not at 10.505 s.
-    EXPECT_EQ(ImuUntilState(h, Ms(10'700), LioState::kLost, LioReason::kLidarGapLost),
-              std::optional<time::SensorTime>(Ms(10'635)))
-        << to_string(kind);
-    EXPECT_TRUE(h.Events("ScanResultTooOld").empty()) << to_string(kind);
-  }
-  Rig h;
-  h.Initialise(Ms(9'000));
-  h.ImuUntil(Ms(9'500));
-  ASSERT_TRUE(h.Scan(Ms(9'100), Ms(9'200)).has_value());  // 0.3 s old at 9.5 s
-  h.backend().AnswerScan(BackendResultKind::kMapReady);
-  h.Poll();
-  for (std::int64_t end = 9'600; end <= 9'900; end += 100) {
-    h.ScanAnswered(Ms(end), BackendResultKind::kScanGood);
-    EXPECT_EQ(h.fe().state(), LioState::kInitializing) << end;
-  }
-  h.ScanAnswered(Ms(10'000), BackendResultKind::kScanGood);
-  EXPECT_EQ(h.fe().state(), LioState::kTracking);  // the map was ready: five good scans confirm
-  EXPECT_TRUE(h.Events("ScanResultTooOld").empty());
-}
-
-// The age uses the newest IMU sample already ticked: push_imu applies the queued results before it
-// ticks its own sample. A result 0.25 s old at 10.95 s is applied by push_imu(10.955 s) although it
+// The guard uses the newest IMU sample already ticked: push_imu applies the queued results before it
+// ticks its own sample. A result 0.25 s old at 10.95 s is counted by push_imu(10.955 s) although it
 // is 0.255 s old at that new sample; the tick of 10.955 s then sees a 0.255 s gap and degrades.
 TEST(LioFrontend, ResultAgeUsesTheNewestTickedImuSample) {
   Rig h;
@@ -1390,9 +1329,8 @@ TEST(LioFrontend, ResultAgeUsesTheNewestTickedImuSample) {
   h.backend().AnswerScan(BackendResultKind::kScanGood);  // queued: the next push_imu applies it
   const auto r = h.Imu(Ms(10'955));
   ASSERT_TRUE(r.has_value());
-  ASSERT_TRUE(r->odometry.has_value());  // applied: the fifth good scan confirmed TRACKING
+  ASSERT_TRUE(r->odometry.has_value());  // counted: the fifth good scan confirmed TRACKING
   EXPECT_EQ(r->odometry->t, Ms(10'700));
-  EXPECT_TRUE(h.Events("ScanResultTooOld").empty());
   const auto transitions = h.Events("StateTransition");
   ASSERT_GE(transitions.size(), 2U);
   EXPECT_EQ(transitions[transitions.size() - 2].reason, "CONFIRMATION_REACHED");
@@ -1402,8 +1340,8 @@ TEST(LioFrontend, ResultAgeUsesTheNewestTickedImuSample) {
   EXPECT_NEAR(r->health->correction_age_s, 0.255, 1e-9);  // from the applied scan end 10.7 s
 }
 
-// INITIALIZING (no gap rule): an aged good result after the map is ready breaks the confirmation
-// run.
+// INITIALIZING (no gap rule): a stale good result after the map is ready is applied but breaks the
+// confirmation run.
 TEST(LioFrontend, ResultOlderThanGapDegradedBreaksTheInitialConfirmation) {
   Rig h;
   h.Initialise(Ms(9'000));
@@ -1418,9 +1356,10 @@ TEST(LioFrontend, ResultOlderThanGapDegradedBreaksTheInitialConfirmation) {
   const StepOutputs out = h.Poll();
   EXPECT_EQ(h.fe().state(), LioState::kInitializing);  // not the fifth confirming scan
   EXPECT_FALSE(out.odometry.has_value());
-  const auto too_old = h.Events("ScanResultTooOld");
-  ASSERT_EQ(too_old.size(), 1U);
-  EXPECT_NEAR(Value(too_old[0], "age_s"), 0.27, 1e-9);
+  EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());  // applied to the output
+  h.ImuUntil(Ms(10'300));
+  ASSERT_TRUE(h.LastHealth().has_value());
+  EXPECT_NEAR(h.LastHealth()->correction_age_s, 0.37, 1e-9);  // from 9.93 s, the stale scan end
   for (std::int64_t end = 10'300; end <= 10'600; end += 100) {
     h.ScanAnswered(Ms(end), BackendResultKind::kScanGood);
     EXPECT_EQ(h.fe().state(), LioState::kInitializing) << end;

@@ -155,6 +155,20 @@ TEST(LioConfig, PerKeyBoundsAreEnforced) {
   ExpectError(With("lifecycle_position_sigma_lost_m", "0.01"), Kind::kOutOfRange, "lifecycle_position_sigma_lost_m");
 }
 
+// AR4, D40: the lower bound of lifecycle_gap_degraded_s is two scan periods (0.2 s at 10 Hz), the bound the node's
+// future-stamp limit is asserted against (uavnav/lio_node/limits.hpp). 0.19 s is refused, 0.2 s loads.
+TEST(LioConfig, GapDegradedBelowTwoScanPeriodsIsRejected) {
+  ExpectError(With("lifecycle_gap_degraded_s", "0.19"), Kind::kOutOfRange, "lifecycle_gap_degraded_s");
+  const auto at_bound = Load(With("lifecycle_gap_degraded_s", "0.2"));
+  ASSERT_TRUE(at_bound.has_value()) << at_bound.error().key << ": " << at_bound.error().detail;
+  EXPECT_EQ(at_bound->lifecycle.gap_degraded, time::milliseconds(200));
+  for (const config::ParamSpec& spec : kLioSpecs) {
+    if (spec.key == "lifecycle_gap_degraded_s") {
+      EXPECT_DOUBLE_EQ(spec.min, 0.2);
+    }
+  }
+}
+
 TEST(LioConfig, DegeneracyKeysLoadAndAreRangeChecked) {
   const auto r = Load(With({{"degeneracy_translation_min_info", "2000"}, {"degeneracy_rotation_min_info", "3e7"}}));
   ASSERT_TRUE(r.has_value()) << r.error().key << ": " << r.error().detail;

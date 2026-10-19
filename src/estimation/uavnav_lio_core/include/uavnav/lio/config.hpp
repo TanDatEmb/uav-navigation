@@ -10,6 +10,7 @@
 #include "uavnav/lio/backend_config.hpp"
 #include "uavnav/lio/degeneracy.hpp"
 #include "uavnav/lio/frontend_config.hpp"
+#include "uavnav/lio/limits.hpp"
 
 // Typed tier-(b) configuration of the LIO core (SYSTEM_DESIGN §6.2). Later tasks append
 // their keys to kLioSpecs (N is derived from the initializer) and their section to
@@ -66,10 +67,13 @@ inline FrontendConfig frontend_config(const LioConfig& c) {
 /// [0.01, 0.08] (at least two 200 Hz periods, so one late sample is not a gap). imu_init_min_samples is
 /// capped at 800 so it stays below fast_lio_core's ImuInitializerConfig::maximum_imu_samples (1000). The range bounds do not overlap
 /// (min <= 2 m < 10 m <= max), so preprocess_max_range_m > preprocess_min_range_m needs no cross check.
+///
+/// lifecycle_gap_degraded_s: the lower bound is limits::kGapDegradedMin (0.2 s, two scan periods; D40, AR4), the bound
+/// the lio node's future-stamp limit is asserted against.
 inline constexpr auto kLioSpecs = std::to_array<config::ParamSpec>({
     {"lifecycle_confirm_scans", config::Unit::kNone, 1.0, 50.0},
     {"lifecycle_degenerate_scans", config::Unit::kNone, 1.0, 50.0},
-    {"lifecycle_gap_degraded_s", config::Unit::kSeconds, 0.05, 2.0},
+    {"lifecycle_gap_degraded_s", config::Unit::kSeconds, time::to_seconds(limits::kGapDegradedMin), 2.0},
     {"lifecycle_gap_lost_s", config::Unit::kSeconds, 0.1, 5.0},
     {"lifecycle_degeneracy_lost_s", config::Unit::kSeconds, 0.1, 10.0},
     {"lifecycle_position_sigma_lost_m", config::Unit::kMeters, 0.05, 5.0},

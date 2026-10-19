@@ -591,6 +591,121 @@ TEST(LioLifecycle, LastScanTimeIgnoresRejectedCorrections) {
   EXPECT_EQ(lc.last_scan_time(), T(100));
 }
 
+// --- D40, AR4: the freshness guard on confirmation ---------------------------------------------
+//
+// A kScanGood (a correction the predictor applied) counts toward confirm_scans only when (newest kImuTick stamp
+// seen - scan end) <= gap_degraded. A stale one still moves the gap reference and clears the degenerate run, and it
+// breaks the consecutive confirmation run.
+
+TEST(LioLifecycle, StaleGoodScanMovesTheGapReferenceButNeverConfirms) {
+  // DEGRADED: a saturated backend, every result 0.27 s old. Never TRACKING (10 > confirm_scans results), and never
+  // LOST: each stale scan moves the gap reference, so the gap on the next tick is 0.37 s < gap_lost.
+  {
+    Rig r;
+    r.ToDegraded();
+    const std::int64_t base = r.now_ms;
+    for (int i = 1; i <= 10; ++i) {
+      const std::int64_t end = base + 100 * i;
+      ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, end + 270)), LioState::kDegraded);
+      ExpectUnchanged(r.lc.on(Ev(Kind::kScanGood, end)), LioState::kDegraded);
+      EXPECT_EQ(r.lc.last_scan_time(), T(end)) << i;
+    }
+    // The gap runs from the newest stale scan end: LOST only once the ticks are gap_lost past it.
+    const std::int64_t last = base + 1'000;
+    ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, last + 500)), LioState::kDegraded);
+    ExpectChange(r.lc.on(Ev(Kind::kImuTick, last + 501)), LioState::kDegraded, LioState::kLost,
+                 LioReason::kLidarGapLost);
+  }
+  // DEGRADED: a stale good scan clears the degenerate run, like a fresh one.
+  {
+    Rig r;
+    r.ToDegraded();
+    const std::int64_t first = r.now_ms - 200;  // first degenerate scan of the run
+    ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, first + 700)), LioState::kDegraded);
+    ExpectUnchanged(r.lc.on(Ev(Kind::kScanGood, first + 400)), LioState::kDegraded);  // 0.3 s old
+    ExpectUnchanged(r.lc.on(Ev(Kind::kScanDegenerate, first + 1'001)), LioState::kDegraded);  // a new run
+  }
+  // DEGRADED: a stale good scan breaks the confirmation run (4 fresh, 1 stale, 4 fresh: not yet).
+  {
+    Rig r;
+    r.ToDegraded();
+    for (int i = 0; i < 4; ++i) ExpectUnchanged(r.Scan(Kind::kScanGood), LioState::kDegraded);
+    r.lc.on(Ev(Kind::kImuTick, r.now_ms + 360));
+    ExpectUnchanged(r.lc.on(Ev(Kind::kScanGood, r.now_ms + 100)), LioState::kDegraded);  // 0.26 s old
+    r.now_ms += 360;
+    for (int i = 0; i < 4; ++i) ExpectUnchanged(r.Scan(Kind::kScanGood), LioState::kDegraded);
+    ExpectChange(r.Scan(Kind::kScanGood), LioState::kDegraded, LioState::kTracking, LioReason::kConfirmationReached);
+  }
+  // INITIALIZING (map ready): stale good scans never confirm, and one breaks the run.
+  {
+    Rig r;
+    r.lc.on(Ev(Kind::kMapReady, 0));
+    for (int i = 1; i <= 10; ++i) {
+      r.lc.on(Ev(Kind::kImuTick, 1'000 * i));
+      ExpectUnchanged(r.lc.on(Ev(Kind::kScanGood, 1'000 * i - 300)), LioState::kInitializing);
+    }
+    r.now_ms = 10'000;
+    for (int i = 0; i < 4; ++i) ExpectUnchanged(r.Scan(Kind::kScanGood), LioState::kInitializing);
+    r.lc.on(Ev(Kind::kImuTick, r.now_ms + 400));
+    ExpectUnchanged(r.lc.on(Ev(Kind::kScanGood, r.now_ms + 100)), LioState::kInitializing);  // 0.3 s old
+    r.now_ms += 400;
+    for (int i = 0; i < 4; ++i) ExpectUnchanged(r.Scan(Kind::kScanGood), LioState::kInitializing);
+    ExpectChange(r.Scan(Kind::kScanGood), LioState::kInitializing, LioState::kTracking,
+                 LioReason::kConfirmationReached);
+  }
+  // The boundary: one nanosecond older than gap_degraded is stale (the fifth scan does not confirm).
+  {
+    Rig r;
+    r.ToDegraded();
+    for (int i = 0; i < 4; ++i) r.Scan(Kind::kScanGood);
+    const std::int64_t end = r.now_ms + 100;
+    r.lc.on(Ev(Kind::kImuTick, end + 250));
+    const LioEvent stale{Kind::kScanGood, T(end) - time::nanoseconds(1), 0.0};
+    ExpectUnchanged(r.lc.on(stale), LioState::kDegraded);
+  }
+}
+
+TEST(LioLifecycle, FreshGoodScansStillConfirm) {
+  // Age exactly gap_degraded counts (the rule is <=), in DEGRADED and in INITIALIZING.
+  {
+    Rig r;
+    r.ToDegraded();
+    const std::int64_t base = r.now_ms;
+    for (int i = 1; i <= 4; ++i) {
+      const std::int64_t end = base + 100 * i;
+      ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, end + 250)), LioState::kDegraded);  // gap 0.35 s < gap_lost
+      ExpectUnchanged(r.lc.on(Ev(Kind::kScanGood, end)), LioState::kDegraded);
+    }
+    const std::int64_t end = base + 500;
+    r.lc.on(Ev(Kind::kImuTick, end + 250));
+    ExpectChange(r.lc.on(Ev(Kind::kScanGood, end)), LioState::kDegraded, LioState::kTracking,
+                 LioReason::kConfirmationReached);
+  }
+  {
+    Rig r;
+    r.lc.on(Ev(Kind::kMapReady, 0));
+    for (int i = 1; i <= 4; ++i) {
+      r.lc.on(Ev(Kind::kImuTick, 100 * i + 250));
+      ExpectUnchanged(r.lc.on(Ev(Kind::kScanGood, 100 * i)), LioState::kInitializing);
+    }
+    r.lc.on(Ev(Kind::kImuTick, 500 + 250));
+    ExpectChange(r.lc.on(Ev(Kind::kScanGood, 500)), LioState::kInitializing, LioState::kTracking,
+                 LioReason::kConfirmationReached);
+  }
+  // Paced 10 Hz scans with 200 Hz ticks (scan end after the newest tick): five confirm, as before the guard.
+  {
+    Rig r;
+    r.ToDegraded();
+    Transition tr{};
+    for (int i = 0; i < 5; ++i) {
+      for (int k = 1; k < 20; ++k) r.lc.on(Ev(Kind::kImuTick, r.now_ms + 5 * k));
+      tr = r.Scan(Kind::kScanGood);
+      if (i < 4) ExpectUnchanged(tr, LioState::kDegraded);
+    }
+    ExpectChange(tr, LioState::kDegraded, LioState::kTracking, LioReason::kConfirmationReached);
+  }
+}
+
 // --- rule precedence (sigma first) ---------------------------------------------------------
 
 TEST(LioLifecyclePrecedence, SigmaBeatsGapLostOnTheSameImuTick) {

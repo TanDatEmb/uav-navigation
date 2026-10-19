@@ -44,9 +44,10 @@ class EnterGuard {
   bool entered_;
 };
 
-/// A stamp later than now.ros + kMaxStampAhead. Sensor and ROS time are one clock in SITL (D29), so the two int64
-/// counts are compared directly. Both come from the range-checked converters (<= 9e18 + 1e9 ns), so adding 0.5 s
-/// cannot overflow.
+/// A stamp later than now.ros + kMaxStampAhead (50 ms; derivation and harm in lio_node/limits.hpp: an accepted
+/// future IMU stamp breaks the time axis of the core, F22, and lengthens the lifecycle's LiDAR gap). Sensor and ROS
+/// time are one clock in SITL (D29), so the two int64 counts are compared directly. Both come from the range-checked
+/// converters (<= 9e18 + 1e9 ns), so adding kMaxStampAhead cannot overflow.
 bool in_future(time::SensorTime t, const time::TimeSnapshot& now) noexcept {
   return t.ns > now.ros.ns + limits::kMaxStampAhead.ns;
 }

@@ -80,13 +80,17 @@ static_assert(ReasonEnum<LioReason>);
 
 /// One per scan result or IMU-time tick.
 ///
-/// kScanCorrectionRejected (D31, D33/O15, SYSTEM_DESIGN §3.5): a kScanGood scan result whose correction the
-/// output predictor rejected (e.g. older than its 300 ms buffer), or that was older than gap_degraded when the
-/// frontend applied it (never offered to the predictor). Only a scan the predictor applied counts as a scan
+/// kScanGood: a scan whose correction the output predictor APPLIED (D31). It always moves last_scan_time() and
+/// clears the degenerate run; it counts toward confirm_scans only when fresh (see LioLifecycle::on, D40, AR4).
+///
+/// kScanCorrectionRejected (D31, D40, SYSTEM_DESIGN §3.5): a kScanGood scan result whose correction the output
+/// predictor could not place (OutputPredictor::on_correction: older than its 300 ms buffer, newer than the
+/// output, not finite). Its age alone never makes it one (D40). Only a scan the predictor applied counts as a scan
 /// with a correction, so this kind is handled exactly like kScanDegenerate by the transition rules (it counts
 /// in the TRACKING degenerate run, whose transition then has reason kCorrectionRejected, counts toward
 /// "degenerate since > degeneracy_lost" in DEGRADED, breaks the confirmation runs, is ignored in LOST and
-/// RESTARTING), but it does NOT advance last_scan_time(): a backend that stays slow ends in DEGRADED and LOST.
+/// RESTARTING), but it does NOT advance last_scan_time(): a backend whose results cannot be placed ends in
+/// DEGRADED and LOST.
 struct LioEvent {
   enum class Kind : std::uint8_t {
     kScanGood,
@@ -106,7 +110,7 @@ struct LioEvent {
 
 /// Tier (b), loaded from kLioSpecs (see config.hpp). Beta values in parentheses.
 struct LifecycleConfig {
-  std::uint32_t confirm_scans;      ///< consecutive good scans to enter TRACKING (5)
+  std::uint32_t confirm_scans;      ///< consecutive fresh good scans to enter TRACKING (5)
   std::uint32_t degenerate_scans;   ///< consecutive degenerate/empty/correction-rejected scans TRACKING -> DEGRADED (3)
   time::Duration gap_degraded;      ///< LiDAR gap TRACKING -> DEGRADED (0.25 s)
   time::Duration gap_lost;          ///< LiDAR gap DEGRADED -> LOST (0.5 s)
@@ -152,6 +156,13 @@ class LioLifecycle {
   /// Guards (in each state, in this order): position sigma first, then the event itself.
   /// LiDAR gaps are evaluated on kImuTick only; scans never evaluate a gap.
   ///
+  /// Freshness guard on confirmation (D40, AR4; SYSTEM_DESIGN §3.1). In INITIALIZING (confirming) and DEGRADED a
+  /// kScanGood counts toward confirm_scans only when (newest kImuTick stamp seen - e.t) <= gap_degraded (equal
+  /// counts); a stale one sets the run back to 0 (the run is of consecutive fresh scans). It still moves
+  /// last_scan_time() and clears the degenerate run, because the output WAS corrected up to e.t. Harm prevented:
+  /// confirming TRACKING on an output whose IMU-only horizon already breaks the gap rule; the next tick would
+  /// degrade again (O15 flapping), and odometry that old would go to PX4. No IMU tick yet: every scan is fresh.
+  ///
   /// Preconditions: every `e.t` was built by the range-checked converters (see LioEvent::t);
   /// a raw or garbage stamp can overflow the gap subtraction (undefined behaviour). "Newest scan"
   /// means most recently received (arrival order): last_scan_time() is plain assignment, so an
@@ -171,6 +182,8 @@ class LioLifecycle {
   Transition on_degraded(const LioEvent& e) noexcept;
   Transition on_lost(const LioEvent& e) noexcept;
   Transition on_restarting(const LioEvent& e) noexcept;
+  /// The freshness guard (see on()): a kScanGood whose end is at most gap_degraded before the newest tick.
+  bool fresh(const LioEvent& e) const noexcept { return last_imu_t_ - e.t <= cfg_.gap_degraded; }
 
   /// Progress inside INITIALIZING. Reset to kWaitingForMap by every state change.
   enum class InitPhase : std::uint8_t { kWaitingForMap, kConfirming };
@@ -178,12 +191,13 @@ class LioLifecycle {
   LifecycleConfig cfg_;
   LioState state_{LioState::kInitializing};  // the one and only state
   time::SensorTime last_scan_{};
+  time::SensorTime last_imu_t_{};  // newest kImuTick stamp seen (data, not a flag); never reset by go()
 
   // Counters and time points below are data about recent events, not state. Each is reset
   // by go() (a state change), except degenerate_since_, which survives TRACKING -> DEGRADED
   // because that transition does not end the degenerate run that caused it.
   InitPhase init_phase_{InitPhase::kWaitingForMap};    // INITIALIZING only: scans count once the map is ready
-  std::uint32_t good_run_{0};                         // INITIALIZING (after map ready) / DEGRADED: consecutive good scans
+  std::uint32_t good_run_{0};                         // INITIALIZING (map ready) / DEGRADED: consecutive fresh good scans
   std::uint32_t bad_run_{0};                          // TRACKING: consecutive degenerate/empty/rejected scans
   std::optional<time::SensorTime> degenerate_since_;  // first degenerate/empty/rejected scan of the current run
 };

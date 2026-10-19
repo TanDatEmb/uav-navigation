@@ -80,7 +80,7 @@ Rút ra từ spec và từ các lỗi đã kiểm chứng (F\*), không áp đ�
 | LIO-1 | `LioLifecycle` là nơi ghi duy nhất của trạng thái LIO | §3.5, D30 | `LioLifecycleTable.*`; file mang invariant: `lifecycle.*`, `frontend.cpp` |
 | LIO-2 | Backend không với tới lifecycle và không publish | §3.5, D32 | compile-time (`#error` ở cuối `.cpp` của backend, macro đánh dấu của `lifecycle.hpp`) |
 | LIO-3 | Hai thread, mỗi khối một thread sở hữu; hàng đợi giới hạn, dữ liệu bất biến, tràn thì có event và không chặn ingest | §3.5, D31 | `LioRunner.*`, TSan |
-| LIO-4 | Mọi lối vào TRACKING qua xác nhận; không có cạnh LOST → TRACKING; chỉ correction được predictor áp dụng và không quá tuổi mới tính là scan có correction | §3.1, F27, D31, D33 | `LioLifecycleTable.NoEdgeFromLostToTracking`, `LioFrontend.Result*` |
+| LIO-4 | Mọi lối vào TRACKING qua xác nhận; không có cạnh LOST → TRACKING; chỉ correction được predictor áp dụng mới tính là scan có correction, và xác nhận chỉ đếm scan đó khi luật gap còn giữ | §3.1, F27, D31, D40, AR4 | `LioLifecycleTable.NoEdgeFromLostToTracking`, `LioLifecycle.StaleGoodScanMovesTheGapReferenceButNeverConfirms`, `LioFrontend.SaturatedBackendStaysDegradedWithACorrectedOutput`, `LioFrontend.Result*` |
 | PX4-1 | `T` đo tại vị trí xe; mọi cạnh đổi trạng thái của `T` nằm trong bảng cạnh của spec; đầu vào xấu thì từ chối | §4.1, D30 | `Alignment.TransitionTableIsTheSpecDiagram`, `AlignmentFuzz.*` |
 | PX4-2 | EV chỉ từ odometry TRACKING, nhãn FRD, `reset_counter` theo epoch của mẫu; reset của PX4 áp tất định | §4.1, F13, F14, F34 | `EvEncoder.*`, `Alignment.*Reset*` |
 | SUP-1 | (kế hoạch, S2) Supervisor là nơi ghi duy nhất của điều khiển bay; thêm trạng thái phải qua review thiết kế | §2.2 | review; `check_change` bắt enumerator mới |

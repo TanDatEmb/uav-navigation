@@ -54,7 +54,8 @@
 // in SITL sensor time is ROS (sim) time (D29). For a scan the end stamp is checked (start > end is the core's
 // kOutOfOrder).
 // ROS time zero. With use_sim_time before the first /clock (or a snapshot whose ROS time could not be converted)
-// now.ros is 0, so every sensor stamp above 0.5 s is refused kStampInFuture: fail closed, transient, rate-limited.
+// now.ros is 0, so every sensor stamp above kMaxStampAhead (50 ms) is refused kStampInFuture: fail closed,
+// transient, rate-limited.
 // Each entered call also stores now.ros into SharedRosTime, so a ros{0} call rewinds the backend clock's ROS value
 // to 0 (it stamps the backend's events only). Intended node behaviour (Task 8): the node does not call on_imu or
 // on_scan before it has its first valid ROS time.

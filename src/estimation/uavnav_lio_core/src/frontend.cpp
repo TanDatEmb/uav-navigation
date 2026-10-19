@@ -223,20 +223,10 @@ void LioFrontend::apply_scan(const BackendResult& r, StepOutputs& out,
                         : r.kind == K::kMapReady  ? LioEvent::Kind::kMapReady
                                                   : LioEvent::Kind::kScanDegenerate;
   bool applied = false;
-  // D33/O15 age, see "Gap semantics" in frontend.hpp. No IMU yet is unreachable (F22 admission).
-  assert(last_imu_ && "scan result before any IMU sample");
-  const time::Duration age = last_imu_ ? last_imu_->t - r.t : time::Duration{0};
-  if (r.kind == BackendResultKind::kScanGood && age > cfg_.lifecycle.gap_degraded) {
-    // Too old: a rejected correction, never offered to the predictor (fail closed).
-    emit(event("ScanResultTooOld", now)
-             .reason(EstimatorEventReason::kResultTooOld)
-             .value("sensor_time_s", time::to_seconds(r.t))
-             .value("age_s", time::to_seconds(age))
-             .value("gap_degraded_s", time::to_seconds(cfg_.lifecycle.gap_degraded)));
-    kind = LioEvent::Kind::kScanCorrectionRejected;
-  } else if (r.kind == BackendResultKind::kScanGood) {
-    // D31: a scan counts as corrected only if the output predictor applied its snapshot (matched by
-    // stamp). A good result without a snapshot is a wiring error and fails closed the same way.
+  if (r.kind == BackendResultKind::kScanGood) {
+    // D31, D40: a scan counts as corrected only if the output predictor applied its snapshot (matched
+    // by stamp); its age is never a reason to refuse it (see "Gap semantics" in frontend.hpp). A good
+    // result without a snapshot is a wiring error and fails closed the same way.
     const Result<void, PredictorReason> c =
         r.snapshot ? predictor_.on_correction(*r.snapshot)
                    : Result<void, PredictorReason>(std::unexpected(PredictorReason::kNonFinite));
@@ -247,7 +237,9 @@ void LioFrontend::apply_scan(const BackendResult& r, StepOutputs& out,
       emit(event("PredictorCorrectionRejected", now)
                .reason(c.error())
                .value("sensor_time_s", time::to_seconds(r.t)));
-      kind = LioEvent::Kind::kScanCorrectionRejected;  // like degenerate; gap reference stays
+      // The predictor cannot place it, so the output was not corrected: like degenerate, and the gap
+      // reference stays (a backend whose results cannot be placed reads as a LiDAR gap).
+      kind = LioEvent::Kind::kScanCorrectionRejected;
     }
   }
   const Transition tr = lifecycle_.on(LioEvent{kind, r.t, position_sigma_m_});

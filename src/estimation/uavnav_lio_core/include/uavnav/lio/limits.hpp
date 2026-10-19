@@ -36,6 +36,18 @@ static_assert(static_cast<std::int64_t>(kPredictorBufferCapacity - 1) * kPredict
 inline constexpr time::Duration kPredictorDtMin = time::nanoseconds(100'000);
 inline constexpr time::Duration kPredictorDtMax = time::milliseconds(30);
 
+// --- lifecycle (SYSTEM_DESIGN §3.1, §3.5, D40, AR4) ---------------------------------------------
+
+/// Scan period of the Mid-360 at its 10 Hz frame rate (the rate SITL and the hardware run, §0).
+inline constexpr time::Duration kScanPeriod = time::milliseconds(100);
+
+/// Lower bound of lifecycle_gap_degraded_s (kLioSpecs): two scan periods. One scan period is the gap of a healthy
+/// stream between two scans, so a threshold at or below it would degrade on every scan; the second period is the
+/// margin a sensor stamp may be ahead of ROS time without causing DEGRADED by itself: the lio node's
+/// kMaxStampAhead (uavnav/lio_node/limits.hpp) is asserted to stay below kGapDegradedMin - kScanPeriod.
+inline constexpr time::Duration kGapDegradedMin = time::milliseconds(200);
+static_assert(kGapDegradedMin.ns == 2 * kScanPeriod.ns, "kGapDegradedMin is two scan periods");
+
 // --- frontend / backend (SYSTEM_DESIGN §3, §3.5) ----------------------------------------------
 
 /// IMU samples kept for the ESKF prediction between scans. 1024 samples = 5.1 s at 200 Hz, which covers the
