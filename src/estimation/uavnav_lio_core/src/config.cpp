@@ -130,6 +130,16 @@ Result<LioConfig, ConfigError> load_lio_config(const config::ParamValues& values
                     ") must be greater than lifecycle_gap_degraded_s (" +
                     std::to_string(time::to_seconds(*gap_degraded)) + ")");
   }
+  // A saturated backend whose results the predictor still places (age <= kPredictorBufferSpan) moves the gap
+  // reference once per result; with one scan refused BACKEND_BUSY between two results the largest gap is that age +
+  // 2 scan periods. Below this bound such a backend would reach LOST although every result is applied.
+  constexpr time::Duration kGapLostMin = limits::kPredictorBufferSpan + limits::kScanPeriod + limits::kScanPeriod;
+  if (*gap_lost < kGapLostMin) {
+    return fail(Kind::kOutOfRange, "lifecycle_gap_lost_s",
+                "lifecycle_gap_lost_s (" + std::to_string(time::to_seconds(*gap_lost)) +
+                    ") must be at least kPredictorBufferSpan + 2 x kScanPeriod (" +
+                    std::to_string(time::to_seconds(kGapLostMin)) + ")");
+  }
   if (static_cast<std::uint64_t>(*degenerate) > static_cast<std::uint64_t>(*confirm) * 10U) {
     return fail(Kind::kOutOfRange, "lifecycle_degenerate_scans",
                 "lifecycle_degenerate_scans (" + std::to_string(*degenerate) +

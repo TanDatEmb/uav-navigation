@@ -20,6 +20,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -406,7 +407,14 @@ TEST(LioNode, ShutdownJoinsTheBackendThenFlushesEvents) {
   EXPECT_NE(after_shutdown.back().find(EventKey("IngestSummary")), std::string::npos)
       << "the JSONL ends with IngestSummary: " << after_shutdown.back();
   ASSERT_GE(after_shutdown.size(), 2U);
-  EXPECT_NE(after_shutdown[after_shutdown.size() - 2].find(EventKey("LioNodeSummary")), std::string::npos);
+  // LioNodeSummary precedes IngestSummary (lio_node.hpp shutdown order). Not necessarily adjacent: the estimator thread
+  // runs until LioIngest::stop() joins it, so a step in progress may still record LioScan or ImuInitialized between
+  // the two summaries (review T2 I2).
+  ASSERT_EQ(CountEvent(after_shutdown, "LioNodeSummary"), 1U);
+  const auto node_summary = std::find_if(after_shutdown.begin(), after_shutdown.end(), [](const std::string& l) {
+    return l.find(EventKey("LioNodeSummary")) != std::string::npos;
+  });
+  EXPECT_LT(node_summary - after_shutdown.begin(), static_cast<std::ptrdiff_t>(after_shutdown.size()) - 1);
   EXPECT_GE(CountEvent(after_shutdown, "ImuInitialized"), 1U) << "the backend ran before the shutdown";
 
   BoundedShutdown(*node);  // idempotent

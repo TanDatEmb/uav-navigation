@@ -40,15 +40,16 @@
 // cannot place (OutputPredictor::on_correction: older than its 300 ms buffer, newer than the output,
 // not finite; or no snapshot). That typed result is the only refusal of a correction (D40): an age
 // never refuses one. An applied kScanGood always corrects the output and moves the gap reference; the
-// lifecycle counts it toward confirm_scans only when (newest ticked IMU time - scan end) <=
-// gap_degraded (the freshness guard, lifecycle.hpp). The newest ticked IMU time is the newest
-// accepted sample already TICKED: push_imu and push_scan apply the results once their input passed
-// its checks (before anything else; poll_results at once), so the sample of the current push_imu
-// call does not count yet. A result older than gap_degraded can only arrive outside TRACKING: its
+// lifecycle counts it toward confirm_scans only when (newest ticked IMU time - scan end) +
+// limits::kScanPeriod <= gap_degraded (the freshness guard, lifecycle.hpp). The newest ticked IMU
+// time is the newest accepted sample already TICKED: push_imu and push_scan apply the results once
+// their input passed its checks (before anything else; poll_results at once), so the sample of the
+// current push_imu call does not count yet. A result older than gap_degraded can only arrive outside TRACKING: its
 // scan end is not before the gap reference, so the tick that made it that old already fired the
-// TRACKING -> DEGRADED gap rule. A saturated backend therefore stays DEGRADED with a corrected
-// output and no odometry; a stalled one, or one whose results cannot be placed, reads as a LiDAR
-// gap: DEGRADED, then LOST, on IMU time alone.
+// TRACKING -> DEGRADED gap rule. A saturated backend whose results stay placeable (age <= 300 ms)
+// and are older than gap_degraded - kScanPeriod therefore stays DEGRADED with a corrected output and
+// no odometry, without flapping; a stalled one, or one whose results cannot be placed, reads as a
+// LiDAR gap: DEGRADED, then LOST, on IMU time alone.
 //
 // Never throws: inputs are checked at the boundary (EstimatorReason); an allocation failure of a
 // state output drops that output with an "AllocationFailed" event.

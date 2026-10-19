@@ -24,7 +24,9 @@ inline constexpr time::Duration kScanImuWaitMax = time::milliseconds(100);
 /// A sensor stamp later than ROS now + this is refused (kStampInFuture, O20, D40, AR4). The refusal is a technical
 /// impossibility, not an age rule: an accepted IMU stamp ahead of the true time by delta becomes the newest IMU
 /// stamp, every true sample of the next delta is then out of order (F22), and the lifecycle's gap rule sees a LiDAR
-/// gap longer by delta. Derivation: in SITL sensor time IS ROS (sim) time (D29) and a message is stamped before it
+/// gap longer by delta. The refused true samples also leave a delta-long hole in the backend's IMU: above
+/// imu_max_gap_s (0.02 s) that is one failed prediction (EskfRebased, covariance x10, one degenerate scan; not
+/// DEGRADED, which needs 3). Derivation: in SITL sensor time IS ROS (sim) time (D29) and a message is stamped before it
 /// is received, so the skew is 0 plus transport jitter (measured in two S1b probe runs: /lidar/imu stamp - newest
 /// /clock at arrival, max 0 ms over ~9.7k samples each); 50 ms covers that jitter. Harm bound: kGapDegradedMin -
 /// kScanPeriod = 0.1 s, the margin a healthy 10 Hz stream leaves under the smallest allowed

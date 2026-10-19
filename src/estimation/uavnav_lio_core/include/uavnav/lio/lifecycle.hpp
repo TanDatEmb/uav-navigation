@@ -12,6 +12,7 @@
 
 #include "uavnav/core/result.hpp"
 #include "uavnav/core/time.hpp"
+#include "uavnav/lio/limits.hpp"  // kScanPeriod (the freshness guard's margin)
 
 // LIO lifecycle state machine (SYSTEM_DESIGN §3.1, D20, D12 rule 1).
 //
@@ -157,11 +158,14 @@ class LioLifecycle {
   /// LiDAR gaps are evaluated on kImuTick only; scans never evaluate a gap.
   ///
   /// Freshness guard on confirmation (D40, AR4; SYSTEM_DESIGN §3.1). In INITIALIZING (confirming) and DEGRADED a
-  /// kScanGood counts toward confirm_scans only when (newest kImuTick stamp seen - e.t) <= gap_degraded (equal
-  /// counts); a stale one sets the run back to 0 (the run is of consecutive fresh scans). It still moves
-  /// last_scan_time() and clears the degenerate run, because the output WAS corrected up to e.t. Harm prevented:
-  /// confirming TRACKING on an output whose IMU-only horizon already breaks the gap rule; the next tick would
-  /// degrade again (O15 flapping), and odometry that old would go to PX4. No IMU tick yet: every scan is fresh.
+  /// kScanGood counts toward confirm_scans only when (newest kImuTick stamp seen - e.t) + limits::kScanPeriod <=
+  /// gap_degraded (equal counts; 0.15 s at the beta 0.25 s): the gap rule must still hold when the next scan's
+  /// result is as late as this one. A stale one sets the run back to 0 (the run is of consecutive fresh scans). It
+  /// still moves last_scan_time() and clears the degenerate run, because the output WAS corrected up to e.t. Harm
+  /// prevented: confirming TRACKING on an output whose IMU-only horizon breaks the gap rule before the next result;
+  /// the next ticks would degrade again (O15 flapping; with the margin this covers results younger than
+  /// gap_degraded too, the DV1 band of a backend saturated with two scans in flight), and that old odometry would
+  /// go to PX4. No IMU tick yet: every scan is fresh.
   ///
   /// Preconditions: every `e.t` was built by the range-checked converters (see LioEvent::t);
   /// a raw or garbage stamp can overflow the gap subtraction (undefined behaviour). "Newest scan"
@@ -182,8 +186,11 @@ class LioLifecycle {
   Transition on_degraded(const LioEvent& e) noexcept;
   Transition on_lost(const LioEvent& e) noexcept;
   Transition on_restarting(const LioEvent& e) noexcept;
-  /// The freshness guard (see on()): a kScanGood whose end is at most gap_degraded before the newest tick.
-  bool fresh(const LioEvent& e) const noexcept { return last_imu_t_ - e.t <= cfg_.gap_degraded; }
+  /// The freshness guard (see on()): a kScanGood whose end is at most gap_degraded - kScanPeriod before the
+  /// newest tick.
+  bool fresh(const LioEvent& e) const noexcept {
+    return last_imu_t_ - e.t + limits::kScanPeriod <= cfg_.gap_degraded;
+  }
 
   /// Progress inside INITIALIZING. Reset to kWaitingForMap by every state change.
   enum class InitPhase : std::uint8_t { kWaitingForMap, kConfirming };

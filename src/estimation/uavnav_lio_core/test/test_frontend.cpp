@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <fstream>
 #include <future>
 #include <limits>
@@ -1270,11 +1271,12 @@ TEST(LioFrontend, ResultOlderThanGapDegradedIsAppliedToTheOutput) {
   EXPECT_EQ(confirmed.odometry->t, Ms(11'400));
 }
 
-// Review Focus 1 (O15, C4). A saturated backend (ICP ~120-150 ms with two scans waiting) answers
-// every scan 0.27 s after its end. S1a/D30 applied and counted them: TRACKING with 0.27 s old
-// odometry, then DEGRADED on the next tick (flapping). S1b refused them by age: LOST, a new epoch,
-// a CPU load turned into a fault of four layers. Now they are applied but never confirm: DEGRADED
-// for the whole saturation, the output corrected, no odometry (no EV), no LOST.
+// Review Focus 1 (O15, C4), results older than gap_degraded: every scan answered 0.27 s after its
+// end. S1a/D30 applied and counted them: TRACKING with 0.27 s old odometry, then DEGRADED on the
+// next tick (flapping). S1b refused them by age: LOST, a new epoch, a CPU load turned into a fault of
+// four layers. Now they are applied but never confirm: DEGRADED for the whole saturation, the output
+// corrected, no odometry (no EV), no LOST. The DV1 band (younger than gap_degraded, but too old for
+// the next scan period) is SaturatedBackendWithTwoScansInFlightNeverFlaps.
 TEST(LioFrontend, SaturatedBackendStaysDegradedWithACorrectedOutput) {
   Rig h;
   h.ToTracking();  // last applied scan end 10.0 s, output at the origin
@@ -1319,25 +1321,83 @@ TEST(LioFrontend, SaturatedBackendStaysDegradedWithACorrectedOutput) {
 }
 
 // The guard uses the newest IMU sample already ticked: push_imu applies the queued results before it
-// ticks its own sample. A result 0.25 s old at 10.95 s is counted by push_imu(10.955 s) although it
-// is 0.255 s old at that new sample; the tick of 10.955 s then sees a 0.255 s gap and degrades.
+// ticks its own sample. A result 0.15 s old at 10.85 s (gap_degraded - kScanPeriod: the boundary,
+// counted) is counted by push_imu(10.855 s) although it is 0.155 s old at that new sample. Because
+// the guard leaves one scan period of margin, the tick of 10.855 s (gap 0.155 s) keeps TRACKING.
 TEST(LioFrontend, ResultAgeUsesTheNewestTickedImuSample) {
   Rig h;
   DegradedOneScanFromConfirmation(h);
-  h.ImuUntil(Ms(10'950));
+  h.ImuUntil(Ms(10'850));
   ASSERT_TRUE(h.Scan(Ms(10'600), Ms(10'700)).has_value());
   h.backend().AnswerScan(BackendResultKind::kScanGood);  // queued: the next push_imu applies it
-  const auto r = h.Imu(Ms(10'955));
+  const auto r = h.Imu(Ms(10'855));
   ASSERT_TRUE(r.has_value());
   ASSERT_TRUE(r->odometry.has_value());  // counted: the fifth good scan confirmed TRACKING
   EXPECT_EQ(r->odometry->t, Ms(10'700));
   const auto transitions = h.Events("StateTransition");
-  ASSERT_GE(transitions.size(), 2U);
-  EXPECT_EQ(transitions[transitions.size() - 2].reason, "CONFIRMATION_REACHED");
-  EXPECT_EQ(transitions.back().reason, "LIDAR_GAP_DEGRADED");
-  EXPECT_EQ(h.fe().state(), LioState::kDegraded);
+  ASSERT_FALSE(transitions.empty());
+  EXPECT_EQ(transitions.back().reason, "CONFIRMATION_REACHED");
+  EXPECT_EQ(h.fe().state(), LioState::kTracking);
   ASSERT_TRUE(r->health.has_value());
-  EXPECT_NEAR(r->health->correction_age_s, 0.255, 1e-9);  // from the applied scan end 10.7 s
+  // The confirmation's health is stamped at the newest ticked sample (10.85 s), as is its age.
+  EXPECT_EQ(r->health->t, Ms(10'850));
+  EXPECT_NEAR(r->health->correction_age_s, 0.15, 1e-9);
+}
+
+// Review Focus 1, the realistic saturation (review T2 I1, the DV1 band): ICP 135 ms per scan, one
+// at a time, at most limits::kMaxScansInFlight (2) admitted scans without a result. Every fourth scan
+// is refused BACKEND_BUSY and the results come back 0.17-0.26 s after their scan end: most are younger
+// than gap_degraded, but every one is too old for the gap rule to hold one scan period later. The
+// S1c Task 2 guard (age <= gap_degraded) confirmed TRACKING on five of them and degraded on the next
+// tick, again and again. The guard with the scan-period margin never confirms: one TRACKING ->
+// DEGRADED by the gap rule, then DEGRADED for the whole saturation, no LOST, no odometry.
+TEST(LioFrontend, SaturatedBackendWithTwoScansInFlightNeverFlaps) {
+  Rig h;
+  h.ToTracking();  // last applied scan end 10.0 s; one StateTransition (CONFIRMATION_REACHED)
+  constexpr time::Duration kIcp = time::milliseconds(135);
+  std::deque<time::SensorTime> finish;  // when the backend finishes each admitted scan, in order
+  std::vector<double> ages;             // age of each result when applied (newest ticked IMU - end)
+  int refused = 0;
+  std::optional<time::SensorTime> degraded_at;
+  for (time::SensorTime t = Ms(10'005); t <= Ms(13'000); t = t + kImuPeriod) {
+    ASSERT_TRUE(h.Imu(t).has_value());
+    while (!finish.empty() && finish.front() <= t) {  // the answer is ready: this poll applies it
+      const FakeBackend::Job job = h.backend().AnswerScan(BackendResultKind::kScanGood);
+      finish.pop_front();
+      h.Poll();
+      ages.push_back(time::to_seconds(t - job.end));
+    }
+    if ((t.ns - Ms(10'000).ns) % kScanPeriod.ns == 0) {
+      const auto admitted = h.Scan(t - kScanPeriod, t);
+      if (admitted) {
+        finish.push_back((finish.empty() ? t : std::max(t, finish.back())) + kIcp);
+      } else {
+        EXPECT_EQ(admitted.error(), EstimatorReason::kBackendBusy) << t.ns;
+        ++refused;
+      }
+    }
+    if (!degraded_at && h.fe().state() == LioState::kDegraded) degraded_at = t;
+    EXPECT_NE(h.fe().state(), LioState::kLost) << t.ns;
+  }
+  ASSERT_EQ(degraded_at, std::optional<time::SensorTime>(Ms(10'355)));  // gap 0.255 s from 10.1 s
+  EXPECT_EQ(h.fe().state(), LioState::kDegraded);
+  const auto transitions = h.Events("StateTransition");
+  ASSERT_EQ(transitions.size(), 2U) << "no TRACKING <-> DEGRADED flapping";
+  EXPECT_EQ(transitions[1].reason, "LIDAR_GAP_DEGRADED");
+  EXPECT_GE(refused, 5);  // the two-in-flight limit binds
+  EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());  // every result was placeable
+  // The pattern is the DV1 band: after the first result, every age is above gap_degraded - kScanPeriod,
+  // and there are runs of >= 5 consecutive results at or below gap_degraded.
+  ASSERT_GE(ages.size(), 20U);
+  int run = 0, longest = 0;
+  for (std::size_t i = 1; i < ages.size(); ++i) {
+    EXPECT_GT(ages[i], 0.15 + 1e-9) << i;
+    EXPECT_LT(ages[i], 0.3) << i;
+    run = ages[i] <= 0.25 + 1e-9 ? run + 1 : 0;
+    longest = std::max(longest, run);
+  }
+  EXPECT_GE(longest, 5);
+  for (const StepOutputs& o : h.outputs()) EXPECT_FALSE(o.odometry && o.odometry->t > Ms(10'100));
 }
 
 // INITIALIZING (no gap rule): a stale good result after the map is ready is applied but breaks the

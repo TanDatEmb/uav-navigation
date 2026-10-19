@@ -116,7 +116,23 @@ TEST(LioConfig, GapLostEqualToGapDegradedIsRejected) {
 }
 
 TEST(LioConfig, GapLostJustAboveGapDegradedIsAccepted) {
-  EXPECT_TRUE(Load(With("lifecycle_gap_lost_s", "0.26")).has_value());
+  // gap_lost 0.5 s is also the smallest value the buffer cross-check allows (GapLostBelowBufferPlusTwoScansIsRejected).
+  const auto r = Load(With({{"lifecycle_gap_lost_s", "0.5"}, {"lifecycle_gap_degraded_s", "0.49"}}));
+  EXPECT_TRUE(r.has_value()) << (r ? "" : r.error().detail);
+}
+
+// A saturated backend whose results the predictor can still place (age <= kPredictorBufferSpan) moves the gap
+// reference once per result; with one scan refused BACKEND_BUSY the largest gap is that age + 2 scan periods. So
+// lifecycle_gap_lost_s >= kPredictorBufferSpan + 2 * kScanPeriod (0.5 s), or such a backend reaches LOST although
+// every result is applied (review T2, "the margin to LOST"). The beta 0.5 s is exactly the bound.
+TEST(LioConfig, GapLostBelowBufferPlusTwoScansIsRejected) {
+  const auto r = Load(With("lifecycle_gap_lost_s", "0.49"));
+  ASSERT_FALSE(r.has_value());
+  EXPECT_EQ(r.error().kind, Kind::kOutOfRange);
+  EXPECT_EQ(r.error().key, "lifecycle_gap_lost_s");
+  EXPECT_NE(r.error().detail.find("kPredictorBufferSpan"), std::string::npos) << r.error().detail;
+  const auto at_bound = Load(With("lifecycle_gap_lost_s", "0.5"));
+  EXPECT_TRUE(at_bound.has_value()) << (at_bound ? "" : at_bound.error().detail);
 }
 
 TEST(LioConfig, DegenerateScansAboveTenTimesConfirmNamesBothKeys) {

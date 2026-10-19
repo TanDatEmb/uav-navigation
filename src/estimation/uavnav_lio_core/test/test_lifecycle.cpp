@@ -594,8 +594,9 @@ TEST(LioLifecycle, LastScanTimeIgnoresRejectedCorrections) {
 // --- D40, AR4: the freshness guard on confirmation ---------------------------------------------
 //
 // A kScanGood (a correction the predictor applied) counts toward confirm_scans only when (newest kImuTick stamp
-// seen - scan end) <= gap_degraded. A stale one still moves the gap reference and clears the degenerate run, and it
-// breaks the consecutive confirmation run.
+// seen - scan end) + kScanPeriod <= gap_degraded: the gap rule must still hold when the next scan is as late as this
+// one (review T2 I1, the DV1 band). With the beta 0.25 s the boundary is 0.15 s. A stale one still moves the gap
+// reference and clears the degenerate run, and it breaks the consecutive confirmation run.
 
 TEST(LioLifecycle, StaleGoodScanMovesTheGapReferenceButNeverConfirms) {
   // DEGRADED: a saturated backend, every result 0.27 s old. Never TRACKING (10 > confirm_scans results), and never
@@ -653,31 +654,32 @@ TEST(LioLifecycle, StaleGoodScanMovesTheGapReferenceButNeverConfirms) {
     ExpectChange(r.Scan(Kind::kScanGood), LioState::kInitializing, LioState::kTracking,
                  LioReason::kConfirmationReached);
   }
-  // The boundary: one nanosecond older than gap_degraded is stale (the fifth scan does not confirm).
-  {
+  // The boundary: one nanosecond older than gap_degraded - kScanPeriod (0.15 s) is stale (the fifth scan does not
+  // confirm), and so is a scan 0.2 s old, inside gap_degraded (the DV1 band).
+  for (const std::int64_t age_ms : {150, 200}) {
     Rig r;
     r.ToDegraded();
     for (int i = 0; i < 4; ++i) r.Scan(Kind::kScanGood);
     const std::int64_t end = r.now_ms + 100;
-    r.lc.on(Ev(Kind::kImuTick, end + 250));
-    const LioEvent stale{Kind::kScanGood, T(end) - time::nanoseconds(1), 0.0};
+    r.lc.on(Ev(Kind::kImuTick, end + age_ms));
+    const LioEvent stale{Kind::kScanGood, T(end) - time::nanoseconds(age_ms == 150 ? 1 : 0), 0.0};
     ExpectUnchanged(r.lc.on(stale), LioState::kDegraded);
   }
 }
 
 TEST(LioLifecycle, FreshGoodScansStillConfirm) {
-  // Age exactly gap_degraded counts (the rule is <=), in DEGRADED and in INITIALIZING.
+  // Age exactly gap_degraded - kScanPeriod (0.15 s) counts (the rule is <=), in DEGRADED and in INITIALIZING.
   {
     Rig r;
     r.ToDegraded();
     const std::int64_t base = r.now_ms;
     for (int i = 1; i <= 4; ++i) {
       const std::int64_t end = base + 100 * i;
-      ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, end + 250)), LioState::kDegraded);  // gap 0.35 s < gap_lost
+      ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, end + 150)), LioState::kDegraded);  // gap 0.25 s < gap_lost
       ExpectUnchanged(r.lc.on(Ev(Kind::kScanGood, end)), LioState::kDegraded);
     }
     const std::int64_t end = base + 500;
-    r.lc.on(Ev(Kind::kImuTick, end + 250));
+    r.lc.on(Ev(Kind::kImuTick, end + 150));
     ExpectChange(r.lc.on(Ev(Kind::kScanGood, end)), LioState::kDegraded, LioState::kTracking,
                  LioReason::kConfirmationReached);
   }
@@ -685,10 +687,10 @@ TEST(LioLifecycle, FreshGoodScansStillConfirm) {
     Rig r;
     r.lc.on(Ev(Kind::kMapReady, 0));
     for (int i = 1; i <= 4; ++i) {
-      r.lc.on(Ev(Kind::kImuTick, 100 * i + 250));
+      r.lc.on(Ev(Kind::kImuTick, 100 * i + 150));
       ExpectUnchanged(r.lc.on(Ev(Kind::kScanGood, 100 * i)), LioState::kInitializing);
     }
-    r.lc.on(Ev(Kind::kImuTick, 500 + 250));
+    r.lc.on(Ev(Kind::kImuTick, 500 + 150));
     ExpectChange(r.lc.on(Ev(Kind::kScanGood, 500)), LioState::kInitializing, LioState::kTracking,
                  LioReason::kConfirmationReached);
   }

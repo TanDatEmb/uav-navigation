@@ -400,8 +400,9 @@ TEST(LioIngest, FutureStampIsRefused) {
 }
 
 // Review Focus 5 (D40, AR4). One IMU sample stamped 0.4 s ahead of ROS now, accepted, would become the newest IMU
-// stamp: every true sample of the next 0.4 s is out of order and the gap rule sees a LiDAR gap 0.4 s longer
-// (DEGRADED, then LOST at gap_lost 0.5 s). The 50 ms bound refuses it at ingest, so TRACKING goes on untouched.
+// stamp: every true sample of the next 0.4 s would be refused as out of order and the lifecycle's gap would be
+// measured from a false time. The 50 ms bound refuses it at ingest: nothing reaches the core, every later true
+// sample is accepted, and TRACKING goes on untouched (what this test shows; it does not drive the accepted case).
 TEST(LioIngest, OneImuStampFourHundredMsAheadIsRefusedAndNeverReachesLost) {
   Rig rig;
   const Eigen::Isometry3d imu_T_lidar = lio_node::imu_T_lidar(SimLioConfig());
