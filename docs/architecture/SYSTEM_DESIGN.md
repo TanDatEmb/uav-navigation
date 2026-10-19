@@ -357,9 +357,9 @@ Thread khác:
 - **Node `px4_bridge` (D33/O22):** một callback group loại trừ nhau cho ba subscription và timer 100 ms. Khởi động: `on_tick` chạy một lần trước khi tạo subscription (nếu ROS time còn 0, mỗi callback tự tick trước khi vào bridge; `first_tick` trong `BridgeNodeSummary` ghi lần tick đầu đến từ đâu). Tắt: đóng cổng callback, `flush(now)`, phát `BridgeNodeSummary` (bản ghi cuối), rồi huỷ bridge và recorder. Chuyển đổi message chặt: NaN ở vị trí/heading bị từ chối `NOT_FINITE` kể cả khi cờ hợp lệ false (chưa kiểm chứng EKF2 có phát NaN lúc đó không; T11 báo số lần). Event của node: `BridgeNoRosTime`, `BridgePublishFailed`, `BridgeNodeFailed`, `BridgeNodeSummary`; giá trị đếm của node là tổng (`count_total`). Giới hạn đã biết: hai lần reset PX4 trong cùng một cửa sổ mẫu bị bỏ chỉ áp delta cuối; cổng nhảy của alignment là lớp chặn cuối.
 - **Tham số EKF2 theo profile (D20, D28, D33/O23):**
   - cả hai profile: `EKF2_EV_DELAY=0` (vì `timestamp_sample` đã là thời điểm đo), `EKF2_DELAY_MAX=200`, `EKF2_EV_NOISE_MD=0`, `EKF2_EV_QMIN=0`;
-  - có GPS: `EKF2_EV_CTRL=7`, `EKF2_GPS_CTRL=7`, `EKF2_HGT_REF=1`;
+  - có GPS: `EKF2_GPS_CTRL=7`, `EKF2_HGT_REF=1`;
   - không GPS: `EKF2_GPS_CTRL=0`, `EKF2_HGT_REF=3`;
-  - `EKF2_EV_CTRL=15` ở cả hai profile (D42; trước đây có GPS là 7 theo D20). Còn chờ lần đo SITL của S1c; nếu cấu hình đầy đủ hỏng ở một profile thì đề xuất ngoại lệ kèm số đo, owner quyết.
+  - `EKF2_EV_CTRL=15` ở cả hai profile (D42; trước đây có GPS là 7 theo D20). Đã đo ở S1c Task 1 (hai profile PASS, [báo cáo](../analysis/2026-10-s1c-ev-full.md)): ở có GPS PX4 giữ compass, ở không GPS EV yaw tiếp quản kèm reset heading khoảng 20° trước khi `T` VALID. Mất GNSS khi EV đầy đủ chưa đo (UNVERIFIED, để phần cứng); tham số PX4 không bao giờ đổi khi đang bay.
   - Đọc code PX4 v1.17 (`ev_yaw_control.cpp`) để biết trước điều cần đo: EV yaw với frame FRD bắt đầu bằng một reset heading về EV và đặt `yaw_align` = false; khi GNSS đang fuse và `yaw_align` đúng thì EV yaw FRD không được bắt đầu hay tiếp tục; khi EV yaw đang fuse thì compass không được fuse (`mag_control.cpp`). Vì vậy nguồn heading cuối cùng và các lần reset heading phụ thuộc thứ tự GNSS, compass và EV lúc khởi động và khi mất GNSS.
 
 **Alignment `T_px4←lio`, 4-DoF (x, y, z, yaw)**

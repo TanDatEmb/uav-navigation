@@ -308,7 +308,7 @@ Spec §4.1. **Gates: O34 for Steps 1–3; O35 for Step 4.**
   - Test `Alignment.FrozenStaysFrozenWithoutAPx4Reset` (600 s).
   - `AlignmentConfig.RemovedFrozenMaxKeyIsRejectedAsUnknown`.
   - Commit with `Arch-Level: 1`.
-- [ ] **Step 5: DV2** from `log/sitl/20261013T155144Z-no_gps-hover`, offline. Measure:
+- [ ] **Step 5: DV2 (runs right after Task 2, before Task 3)** over ALL hover runs of S1b and S1c (about 11: S1b `...T152418Z`, `...T154709Z`, `...T154923Z`, `...T155144Z`, `...T155429Z`, `...T155805Z`, `...T163717Z`, `...T232211Z` and S1c `...20261014T061438Z`, `...T062206Z`, `...T062427Z`), offline. The run `20261014T062427Z-gps-hover-yaw1.2-gnssout10` reached STALE at 32.90 s; alignment.cpp rejects a scan newer than the newest buffered sample at once and never defers it (`alignment.cpp:158-165`). Measure:
   - the `vehicle_local_position` inter-arrival and lag around each `NO_PX4_SAMPLE`;
   - the pair's stamp against the newest buffered sample;
   - the buffer span.
@@ -499,7 +499,7 @@ def evaluate_drift(run_dir) -> dict   # LIO=/lio/odometry, PX4=vehicle_local_pos
   - capable: the harness code of Tasks 1, 5 and 6;
   - mid-tier: Task 7 Steps 3–6.
   - Reviewers: the most capable model for Tasks 2–4 and the final review.
-- **Order:** 1 → 2 → 3 → 4 → 5 → 6 → 7. If AR4 or O34 is still open after Task 1, do Task 6 first.
+- **Order:** 1 → 2 → **Task 4 Step 5 (DV2, offline, first)** → 3 → 4 (Steps 1–4, 6) → 5 → 6 → 7. DV2 moved up after the Task 1 review: `T` went STALE inside a 60 s hover, so Task 5's recovery verdicts would be noisy until DV2 is understood. Tasks 5–7 need SITL and wait for a free machine.
 - **Machine:** Makefile only, `-j3`. SITL never overlaps a build, a test or sanitize.
 - **SITL time:** 3 + 3 (+ at most 2 re-runs) + 6 + 1 runs, about 95 min.
 - **TSan:** Tasks 2 and 3 run `make sanitize`. No thread is added.
