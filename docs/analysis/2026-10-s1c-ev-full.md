@@ -6,36 +6,50 @@ D42 và plan [S1c v2](../plans/2026-10-14-s1c-recovery-heading-drift.md) Task 1.
 
 **Kết quả.**
 - Lần 1 (gps) và lần 2 (no_gps) **PASS** đủ mọi kiểm cùng `phases_ok`.
-- Lần 3 (gps, mất GNSS 10 s) **không thực hiện được**: PX4 v1.17 với Gazebo không xử lý lệnh tiêm lỗi GNSS. Không có
-  ack, và GNSS vẫn được fuse suốt cửa sổ. Theo plan, lần 3 bị bỏ khỏi quy tắc quyết định.
-- **Cấu hình EV đầy đủ được giữ** ở cả hai profile. Không có ngoại lệ theo profile, và không cần lần so sánh
-  `EXPERIMENT_EV_CTRL=7`. Hành vi khi mất GNSS ở profile gps **chưa kiểm chứng**.
+- Lần 3 (gps, mất GNSS 10 s) **không thực hiện được**: PX4 v1.17 với Gazebo **bỏ qua** lệnh tiêm lỗi GNSS (không có
+  ack), và GNSS vẫn được fuse suốt cửa sổ. Theo plan, lần 3 bị bỏ khỏi quy tắc quyết định.
+- **EV đầy đủ được giữ làm mặc định D42** ở cả hai profile. Vế lần 3 của quy tắc plan (`T` vẫn VALID khi mất GNSS,
+  drift ≤ 0.5 m) **không được đánh giá**, vì lệnh tiêm không có tác dụng. Không có ngoại lệ theo profile, và không
+  cần lần so sánh `EXPERIMENT_EV_CTRL=7`. Hành vi khi mất GNSS ở profile gps **chưa kiểm chứng**, và không task nào
+  của plan đảm nhận việc này: để lại cho phần cứng.
+- **Vòng sửa sau review (commit `52fbf46`):** tuỳ chọn tiêm mất GNSS bị gỡ (không tạo được tác dụng, D44); luật F34
+  tách cửa sổ ở mỗi reset heading (mục 1); profile tắt la bàn bị từ chối.
 - Một phát hiện ngoài phạm vi: ở lần 3, `T` rơi VALID→INVALID (STALE) trong cửa sổ do chuỗi `NO_PX4_SAMPLE` dài hơn
-  1 s (DV2, mục 6).
+  1 s (DV2, mục 6). Nguyên nhân của DV2 vẫn **mở**.
 
 ## 1. Thay đổi
 
 - `config/px4/profiles/gps.yaml`: `EKF2_EV_CTRL` 7 → 15. `tools/uavnav/px4_profile.py` chốt 15 ở cả hai profile (D42).
 - Bộ chấm `tools/uavnav/sitl_checks.py`:
-  - **`f34_values` (D42):** PASS khi độ trải `yaw_T` trong cửa sổ ≤ 1°, và `T` ở VALID sau mọi `Px4ResetApplied`
-    kể từ lần VALID đầu tiên. Giá trị `yaw_T` tuyệt đối và độ lệch so với π/2 − yaw spawn chỉ được báo cáo.
+  - **`f34_values` (D42), luật sau vòng sửa:** cửa sổ được tách ở mỗi `Px4ResetApplied` và ở mỗi output
+    `/alignment` không VALID (output đó không phải mẫu `yaw_T` của đoạn VALID). PASS khi độ trải `yaw_T` ≤ 1° **trong
+    từng đoạn VALID**, và `T` ở VALID sau mọi `Px4ResetApplied` kể từ lần VALID đầu tiên. Một reset heading mà `T` hấp
+    thụ (`yaw_T` nhảy một lần) vì thế PASS; một đoạn trôi 1.5° thì FAIL. Cửa sổ không có output VALID nào là thiếu
+    dữ liệu (FAIL). Giá trị `yaw_T` tuyệt đối và độ lệch so với π/2 − yaw spawn chỉ được báo cáo. (Luật gốc của
+    `a693bcf` lấy độ trải trên cả cửa sổ; nó FAIL đúng trường hợp hấp thụ đúng, review Important 2.)
   - **`ekf2_heading`** (thay `ekf2_ev_yaw` của D20): chỉ báo cáo, không chấm. Gồm tỉ lệ thời gian theo từng nguồn
     heading (`cs_mag_hdg`, `cs_mag_3d`, `cs_ev_yaw`), dòng thời gian của nguồn, và mọi lần reset heading (thời
     điểm, độ lớn, trước hay sau VALID đầu tiên).
-  - **`gnss_consistency`** (chỉ gps): `cs_gnss_pos` ≥ 95% thời gian cửa sổ, trừ khoảng mất GNSS được tiêm. Một yêu
-    cầu tiêm mà PX4 không ack ACCEPTED thì FAIL.
+  - **`gnss_consistency`** (chỉ gps): `cs_gnss_pos` ≥ 95% thời gian cửa sổ. (Bản `a693bcf` còn trừ khoảng mất GNSS
+    được tiêm và đòi ack ACCEPTED; phần đó đã gỡ ở vòng sửa.)
   - **`ev_variance`**: chỉ báo cáo σ EV đã gửi, so với sàn của PX4.
   - **`events`** FAIL thêm khi có `LioNodeFailed`, `BridgeNodeFailed`, `LioPublishFailed`, `BridgePublishFailed`,
     `LioIngestReentered`, hoặc `LioNodeSummary.publish_failed` khác 0.
   - **Minor của S1b:** T11 M2 (báo thêm khoảng cách đến theo thời gian thực bên cạnh thời gian `/clock`); T11 M3 (tỉ
     lệ cờ tính theo thời gian, mỗi mẫu giữ tới mẫu sau, không theo số mẫu).
 - Harness:
-  - `GNSS_OUTAGE_S=<s>` (gps, hover): ở giây 20 của hover gửi `VEHICLE_CMD_INJECT_FAILURE` (GPS, OFF), `s` giây sau
-    gửi OK, ghi ack vào `hover_meta.json`. `SYS_FAILURE_EN=1` chỉ đặt cho lần chạy này.
   - Recorder ghi thêm `cs_mag_hdg`, `cs_mag_3d`, `cs_yaw_align`, `delta_heading` và phương sai EV.
-- Commit `a693bcf`. Test: `Px4ProfileTest.test_d42_ev_ctrl_is_full_in_both_profiles`, `SitlChecksTest.test_f34_passes_on_any_stable_offset`,
-  `test_f34_fails_on_unstable_t`, `test_heading_sources_are_reported`, `test_gnss_dropout_outside_the_outage_fails_gps`,
-  `test_ev_variance_is_reported`, `test_events_fail_on_publish_failures`. Kiểm đột biến: 16/16 mutant bị bắt.
+  - Ở `a693bcf` có thêm `GNSS_OUTAGE_S=<s>` (tiêm `VEHICLE_CMD_INJECT_FAILURE` cho GPS, đặt `SYS_FAILURE_EN=1` cho
+    lần chạy đó). Tuỳ chọn này, ack, bản ghi `gnss_outage` và các dòng `SYS_FAILURE_EN` ở `run_px4_mid360.sh` đã **bị
+    gỡ** ở `52fbf46`: PX4 bỏ qua lệnh nên tuỳ chọn không tạo được tác dụng.
+- Vòng sửa `52fbf46`: `px4_profile.py` từ chối `SYS_HAS_MAG=0` và `EKF2_MAG_TYPE=5` (D42: la bàn bắt buộc); launcher đặt
+  `SYS_HAS_MAG=1` (mặc định PX4, giờ được đặt tường minh và in trong log khởi động).
+- Commit `a693bcf` và `52fbf46`. Test: `Px4ProfileTest.test_d42_ev_ctrl_is_full_in_both_profiles`,
+  `Px4ProfileTest.test_compass_is_mandatory`, `SitlChecksTest.test_f34_passes_on_any_stable_offset`,
+  `test_f34_fails_on_unstable_t`, `test_f34_splits_the_window_at_resets_and_non_valid_outputs`,
+  `test_heading_sources_are_reported`, `test_gnss_fused_in_95_percent_of_the_window_gps`,
+  `test_ev_variance_is_reported`, `test_events_fail_on_publish_failures`. Kiểm đột biến: 16/16 mutant bị bắt ở
+  `a693bcf`; 7/7 ở `52fbf46` (bốn mutant luật F34, ngưỡng GNSS, kiểm la bàn, dòng `SYS_HAS_MAG` của launcher).
 
 ## 2. Chấm lại bốn lần F34 của S1b (không bay)
 
@@ -48,7 +62,8 @@ Bốn lần này chạy với `EKF2_EV_CTRL=7` ở gps. Chấm trên bản sao s
 | `20261013T155144Z-no_gps-hover` | PASS | 0.031° | 0.006° | 0 |
 | `20261013T155429Z-no_gps-hover-yaw1.2` | PASS | 0.035° | 0.005° | 0 |
 
-Kết quả toàn lần là FAIL chỉ vì hai kiểm báo cáo mới thiếu dữ liệu và fail-closed: bản ghi S1b chưa có
+Các số trong bảng là của luật `a693bcf` (độ trải trên cả cửa sổ); không lần nào có reset trong cửa sổ nên luật từng
+đoạn cho cùng kết quả. Kết quả toàn lần là FAIL chỉ vì hai kiểm báo cáo mới thiếu dữ liệu và fail-closed: bản ghi S1b chưa có
 `cs_mag_hdg` và `position_variance`. `gnss_consistency` PASS ở cả hai lần gps.
 
 ## 3. Ba lần bay
@@ -86,7 +101,7 @@ script bọc. Load 1 phút lúc bắt đầu lần lượt là 0.78, 0.10 và 1.
 - **Drift** 0.007 m. `cs_ev_pos` 100%.
 - **σ EV:** vị trí p50 1.30 mm, max 1.34 mm; vận tốc p50 4.6 mm/s; 100% dưới sàn 0.1 m.
 
-### Lần 3: gps, mất GNSS 10 s (`20261014T062427Z-gps-hover-yaw1.2-gnssout10`): PX4 từ chối việc tiêm lỗi
+### Lần 3: gps, mất GNSS 10 s (`20261014T062427Z-gps-hover-yaw1.2-gnssout10`): PX4 bỏ qua việc tiêm lỗi (không ack)
 
 - `SYS_FAILURE_EN=1` đã được áp: `px4_gz.log` ghi `SYS_FAILURE_EN: curr: 0 -> new: 1`.
 - OFF gửi ở 45.512 s, OK ở 55.536 s. Không có `VehicleCommandAck` nào cho lệnh 420, và log PX4 không có dòng nào về
@@ -97,10 +112,12 @@ script bọc. Load 1 phút lúc bắt đầu lần lượt là 0.78, 0.10 và 1.
   - harness Gazebo lấy GNSS từ `gz_bridge` (`GZBridge.cpp:93`, navsat), mà `gz_bridge` không xử lý lỗi;
   - `FailureInjector` của commander chỉ xử lý motor, và không ack các unit khác;
   - Commander bỏ qua lệnh 420 (`Commander.cpp:1530`).
-- Bộ chấm FAIL `gnss_consistency` ("injection was not accepted") như thiết kế. Theo plan, **lần 3 bị bỏ** khỏi quy
-  tắc quyết định, và không có vòng sửa harness: đây là giới hạn của PX4, không phải lỗi harness.
+- Bộ chấm `a693bcf` FAIL `gnss_consistency` ("injection was not accepted") như thiết kế. Theo plan, **lần 3 bị
+  bỏ** khỏi quy tắc quyết định, và không có vòng sửa harness lúc đó: đây là giới hạn của PX4, không phải lỗi harness.
+  Ở vòng sửa, tuỳ chọn tiêm bị gỡ hẳn.
 - Các kiểm còn lại của lần 3 (heading, σ EV, drift 0.027 m) giống lần 1. Riêng `alignment_valid` và `f34_values`
-  FAIL vì sự cố DV2 ở mục 6.
+  FAIL vì sự cố DV2 ở mục 6. Chấm lại offline bằng luật từng đoạn của `52fbf46`: `f34_values` PASS (93 output không
+  VALID bị loại khỏi mẫu; hai đoạn VALID có độ trải 0.018° và 0.040°), còn `alignment_valid` vẫn FAIL, đúng với sự cố.
 
 ## 4. Tổng hợp theo yêu cầu của plan
 
@@ -109,28 +126,30 @@ script bọc. Load 1 phút lúc bắt đầu lần lượt là 0.78, 0.10 và 1.
 | Nguồn heading trong cửa sổ | `mag_3d` 100% | `ev_yaw` 100% | `mag_3d` 100% |
 | Reset heading (sau VALID) | 1 (+0.014°, ngoài cửa sổ) | 0 | 1 (+0.019°, ngoài cửa sổ) |
 | Trạng thái `T` qua các reset | VALID→VALID | không có reset | VALID→VALID |
-| Độ trải `yaw_T` | 0.075° | 0.053° | 19.54° (INIT/INVALID trong cửa sổ, mục 6) |
+| Độ trải `yaw_T` (luật `a693bcf`, cả cửa sổ) | 0.075° | 0.053° | 19.54° (output INIT trong cửa sổ, mục 6) |
 | Drift ngang so với ground truth | 0.028 m | 0.007 m | 0.027 m |
 | σ vị trí EV p50 / sàn PX4 | 1.33 mm / 0.1 m | 1.30 mm / 0.1 m | 1.35 mm / 0.1 m |
-| Kết quả | PASS | PASS | bỏ (tiêm lỗi bị từ chối) |
+| Kết quả | PASS | PASS | bỏ (PX4 bỏ qua lệnh tiêm lỗi) |
 
-## 5. Quyết định theo quy tắc của plan
+## 5. Quyết định
 
-- **Quy tắc:** cấu hình EV đầy đủ được giữ khi mọi lần chạy PASS, và ở lần 3 `T` vẫn VALID với drift ngang
+- **Quy tắc của plan:** cấu hình EV đầy đủ được giữ khi mọi lần chạy PASS, và ở lần 3 `T` vẫn VALID với drift ngang
   ≤ 0.5 m. Nếu không, không đổi profile mà bay một lần so sánh `EXPERIMENT_EV_CTRL=7`, rồi mở mục O cho owner.
-- **Áp dụng:**
-  - lần 1 và lần 2 PASS;
-  - lần 3 bị bỏ, vì PX4 từ chối việc tiêm lỗi.
-- **Kết luận:** `EKF2_EV_CTRL=15` được giữ ở cả hai profile.
+- **Đã đánh giá:** lần 1 và lần 2 PASS.
+- **Không được đánh giá:** vế lần 3 (`T` VALID khi mất GNSS, drift ≤ 0.5 m). PX4 bỏ qua lệnh tiêm (không ack), GNSS
+  vẫn được fuse, nên không có số đo nào cho vế này. Quy tắc **không** được thoả; nó chưa được đánh giá.
+- **Quyết định:** EV đầy đủ (`EKF2_EV_CTRL=15`) được giữ làm mặc định D42 ở cả hai profile, vì D42 chỉ cho ngoại lệ
+  khi có số đo cho thấy nó hỏng và không có số đo nào như vậy.
   - Không cần lần so sánh, nên tuỳ chọn `EXPERIMENT_EV_CTRL` không được xây (D44.6).
-  - Ở profile gps, PX4 tự chọn la bàn và không bao giờ bắt đầu EV yaw. Vì vậy, khi GNSS còn, EV đầy đủ cho đúng
-    hành vi của D20 cũ.
-- **Chưa kiểm chứng:** khi mất GNSS, EKF2 có chuyển sang EV yaw không (kèm một reset heading cỡ 20°), và `T` có
-  hấp thụ reset đó khi đang VALID không. Phần `T` có test thành phần ở Task 4
-  (`Px4Bridge.LargeHeadingResetAfterReinitKeepsTheVehiclePointContinuous`).
-- **Cách khác để tạo mất GNSS** (chưa làm, cần controller quyết):
-  - ngắt topic navsat phía Gazebo (ví dụ một bridge chặn có điều khiển);
-  - hoặc dùng `simulator_mavlink` thay `gz_bridge` cho GNSS.
+  - Khi GNSS còn, ở gps PX4 chọn la bàn và không bắt đầu EV yaw (hai chuyến bay), nên EV đầy đủ cho đúng hành vi của
+    D20 cũ.
+- **Chưa kiểm chứng:** khi mất GNSS, EKF2 có chuyển sang EV yaw không (kèm một reset heading cỡ 20°), và `T` có hấp
+  thụ reset đó khi đang VALID không. Phần `T` có test thành phần ở Task 4
+  (`Px4Bridge.LargeHeadingResetAfterReinitKeepsTheVehiclePointContinuous`). Việc đo trong SITL không có task nào
+  đảm nhận; để lại cho phần cứng. Luật F34 từng đoạn đã sẵn để chấm một reset như vậy khi có số đo.
+- **Cách khác để tạo mất GNSS trong SITL** (không làm, không task nào đảm nhận): ngắt topic navsat phía Gazebo, hoặc
+  dùng `simulator_mavlink` thay `gz_bridge` cho GNSS. Cả hai cần đổi harness, và owner không cho đổi tham số PX4
+  khi đang bay.
 
 ## 6. Phát hiện: `T` rơi STALE trong cửa sổ hover (DV2)
 
@@ -147,8 +166,8 @@ script bọc. Load 1 phút lúc bắt đầu lần lượt là 0.78, 0.10 và 1.
 - **LIO:** TRACKING suốt lần chạy, không có transition nào.
 - **Luồng dữ liệu đều:** `/lio/odometry` đến đều (khoảng cách lớn nhất 120 ms); `vehicle_local_position` đến đều
   (lớn nhất 24 ms, mẫu `timestamp_sample` cách nhau tối đa 24 ms).
-- **Số đo gợi ý nguyên nhân:** stamp của odometry LIO **mới hơn** `timestamp_sample` mới nhất của PX4 tại lúc
-  odometry đến.
+- **Số đo phù hợp với một cơ chế, chưa chứng minh nó:** ở ba lần bay này, stamp của odometry LIO **mới hơn**
+  `timestamp_sample` mới nhất của PX4 tại lúc odometry đến (đo ở recorder).
 
   | Lần | Cặp có stamp LIO mới hơn mẫu PX4 mới nhất (trong 600 cặp của cửa sổ) | Bản ghi đầu đợt `NO_PX4_SAMPLE` trong cửa sổ |
   |---|---|---|
@@ -158,11 +177,18 @@ script bọc. Load 1 phút lúc bắt đầu lần lượt là 0.78, 0.10 và 1.
 
   Mức chênh tối đa chỉ 4–8 ms, tức một tới hai bước mô phỏng. Khi cặp rơi vào phía "chưa có mẫu PX4" liên tục hơn
   1 s, `T` hết hạn (`alignment_valid_stale_s` 1.0 s).
-- **Độ trải 19.54°** của lần 3 không phải `T` trôi: đó là các output INIT/INVALID trong cửa sổ, có yaw 0.0 khi `T`
-  chưa VALID.
-- **Xếp loại:** hành vi của alignment và bridge, không phải của harness, của EV đầy đủ hay của GNSS. Đây chính là DV2
-  (plan Task 4 Step 5: đo stamp của cặp so với mẫu buffer mới nhất). Ở S1b nó chỉ làm rơi cặp; lần này nó lần đầu
-  đưa `T` ra khỏi VALID trong cửa sổ hover. Không sửa ở Task 1.
+- **Số đo này không giải thích mọi lần chạy.** Hai lần gps S1b với `EKF2_EV_CTRL=7`, `20261013T152418Z-gps-hover` và
+  `20261013T232211Z-gps-hover`, có 167 và 163 bản ghi đầu đợt `NO_PX4_SAMPLE`, nhưng chỉ 8 và 19 cặp (trong 600) có
+  stamp LIO mới hơn mẫu PX4 mới nhất ở recorder (số của review T1). Vậy **nguyên nhân của DV2 còn mở**: có thể có
+  đường thứ hai, hoặc thứ tự đến ở recorder khác thứ tự đến ở bridge. Chỉ có thể nói số đo "phù hợp với" cơ chế
+  trên, không phải "đây là nguyên nhân".
+- **Độ trải 19.54°** của lần 3 không phải `T` trôi: đó là các output không VALID trong cửa sổ. Chỉ **một** mẫu (32.92 s,
+  output INVALID→INIT) có yaw 0.0; 91 mẫu INIT còn lại mang yaw cỡ 19.5°. Với luật từng đoạn, các output này không
+  được tính là mẫu `yaw_T` của đoạn VALID.
+- **Xếp loại:** hành vi của alignment và bridge, không phải của harness, của EV đầy đủ hay của GNSS (DV2 đã có ở các
+  lần S1b với EV=7). Đây là DV2 (plan Task 4 Step 5: đo stamp của cặp so với mẫu buffer mới nhất). Ở S1b nó chỉ làm
+  rơi cặp; lần này nó lần đầu đưa `T` ra khỏi VALID trong cửa sổ hover. Vì vậy dòng DV2 trong TRACEABILITY ("chưa thấy
+  ảnh hưởng ở hover") **không còn đúng**. Không sửa ở Task 1.
 
 ## 7. Lệch so với plan
 
@@ -171,16 +197,21 @@ script bọc. Load 1 phút lúc bắt đầu lần lượt là 0.78, 0.10 và 1.
 - `ekf2_ev_yaw` (kỳ vọng của D20: gps không EV yaw, no_gps ≥ 95%) được thay bằng `ekf2_heading` chỉ báo cáo. Theo
   D42, PX4 tự chọn nguồn heading.
 - Ngoài danh sách file của plan:
-  - `Makefile` (biến `GNSS_OUTAGE_S`, cần cho lệnh của plan);
+  - `Makefile` (biến `GNSS_OUTAGE_S`, cần cho lệnh của plan; gỡ ở `52fbf46`);
   - comment của `config/px4/profiles/no_gps.yaml` (bỏ trích dẫn D20).
-- Độ trải F34 tính trên mọi mẫu `/alignment` trong cửa sổ, kể cả khi `T` không VALID. Như luật của plan, một reset
-  heading lớn trong cửa sổ sẽ làm độ trải vượt 1° dù `T` hấp thụ đúng. Vì vậy bộ chấm báo thêm
-  `max_spread_between_resets_rad` (độ trải trong từng đoạn giữa các reset), chỉ để báo cáo. Ba lần bay không có
-  reset nào trong cửa sổ.
+- Độ trải F34 của `a693bcf` tính trên mọi mẫu `/alignment` trong cửa sổ, theo luật của plan; một reset heading lớn
+  mà `T` hấp thụ đúng sẽ làm nó FAIL (review Important 2). Vòng sửa `52fbf46` đổi thành luật từng đoạn (mục 1) và bỏ
+  `max_spread_between_resets_rad`. Ba lần bay không có reset nào trong cửa sổ, nên kết quả của chúng không đổi.
 
 ## 8. Chưa kiểm chứng (UNVERIFIED)
 
-- Hành vi của EV đầy đủ khi mất GNSS ở profile gps (nguồn heading, reset, `T`, drift): chưa tiêm được lỗi (mục 3).
+- Hành vi của EV đầy đủ khi mất GNSS ở profile gps (nguồn heading, reset, `T`, drift): chưa tiêm được lỗi (mục 3),
+  tuỳ chọn tiêm đã gỡ, không task nào đảm nhận; để lại cho phần cứng.
+- Luật F34 từng đoạn chỉ được thử trên dữ liệu tổng hợp (một reset 20° trong cửa sổ), chưa có chuyến bay nào có reset
+  trong cửa sổ.
 - Mỗi cấu hình chỉ bay một lần với yaw spawn 1.2. Thứ tự la bàn rồi EV yaw ở no_gps giống lần 4 của S1b.
-- Cơ chế chính xác của DV2 (bridge tra buffer PX4 thế nào khi stamp LIO mới hơn mẫu PX4 mới nhất): mới đo ở mức lúc
-  dữ liệu đến tại recorder, chưa đọc từ trạng thái buffer của bridge.
+- Nguyên nhân của DV2 còn mở (mục 6): số đo ở recorder không giải thích hai lần S1b EV=7; chưa đọc từ trạng thái
+  buffer của bridge.
+- Nguồn la bàn là bắt buộc (D42) và nay được kiểm ở cấu hình (profile tắt la bàn bị từ chối, launcher đặt
+  `SYS_HAS_MAG=1`), nhưng ở no_gps PX4 bỏ la bàn sau khi chuyển sang EV yaw (lần 2); bộ chấm không đòi la bàn còn
+  được dùng.

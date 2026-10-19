@@ -585,7 +585,7 @@ flowchart TB
   P3 --> L2["gz_lidar_bridge: /lidar/points"]
   P3 --> L3["lio_node: config/lio/sim.yaml, config/lio/node_sim.yaml"]
   P3 --> L4["px4_bridge_node: config/px4_bridge/sim.yaml"]
-  P3 --> P4["4 sitl_hover.py: wait_ready, mode and arm, climb, hover 60 s (optional GNSS injection at 20 s), land"]
+  P3 --> P4["4 sitl_hover.py: wait_ready, mode and arm, climb, hover 60 s, land"]
   P4 --> TD["teardown: SIGINT, SIGTERM, SIGKILL per process group, reverse start order, pgrep verify"]
   TD --> V["sitl_checks.py --hover: 16 checks (gps) or 15 (no_gps), summary.json, exit 0 PASS or 1 FAIL"]
 ```
@@ -604,7 +604,7 @@ flowchart TB
 | `src/sim/uav_simulation/bridge/px4_mid360_control_bridge.yaml` | `parameter_bridge` (`/clock` từ `/world/px4_lio_smoke/clock`, `/lidar/imu` từ `/sim/mid360/imu`, ground truth) |
 | `config/runtime/*` (di sản `main`) | không có loader nào trên nhánh (grep) |
 
-**Tham số PX4 như được áp** (`px4_gz.log` của mỗi run in dòng `PX4 parameter`; `px4_profile.py` từ chối mọi giá trị khác):
+**Tham số PX4 như được áp** (`px4_gz.log` của mỗi run in dòng `PX4 parameter`; `px4_profile.py` từ chối mọi giá trị khác, và từ chối riêng profile tắt la bàn: `SYS_HAS_MAG=0` hay `EKF2_MAG_TYPE=5`):
 
 | Tham số | `gps` | `no_gps` | Nguồn |
 |---|---|---|---|
@@ -613,33 +613,33 @@ flowchart TB
 | `EKF2_HGT_REF` | 1 | 3 | profile (O23) |
 | `EKF2_EV_QMIN`, `EKF2_EV_DELAY`, `EKF2_EV_NOISE_MD` | 0 | 0 | profile (D28, O23) |
 | `EKF2_DELAY_MAX` | 200 | 200 | profile (O23) |
-| `UXRCE_DDS_SYNCT` 0, `SIM_GZ_EN_ODOM` 0, `SIM_GZ_EN_GPS` 1, `COM_RC_IN_MODE` 1 | có | có | harness (`run_px4_mid360.sh`) |
-| `SYS_FAILURE_EN` 1 | chỉ khi `GNSS_OUTAGE_S` | không | harness |
+| `UXRCE_DDS_SYNCT` 0, `SIM_GZ_EN_ODOM` 0, `SIM_GZ_EN_GPS` 1, `COM_RC_IN_MODE` 1, `SYS_HAS_MAG` 1 (la bàn bắt buộc, D42) | có | có | harness (`run_px4_mid360.sh`) |
+| `NAV_DLL_ACT` 0 (mặc định x500 là 2, từ chối mọi lệnh arm khi không có GCS), `CBRK_SUPPLY_CHK` 894281 (SITL này không phát `system_power`) | có | có | harness (`px4_mid360_startup.sh`, đặt sau rcS) |
 
 Mọi tham số EKF2 khác giữ mặc định PX4 (thư mục làm việc PX4 mới mỗi lần chạy). Sàn EV mà bộ chấm báo cáo
 (`EKF2_EVP_NOISE` 0.1 m, `EKF2_GPS_P_NOISE` 0.5 m) là mặc định đó, không phải tham số của profile.
 
 **Nguồn heading PX4 thật sự dùng** (đo, [báo cáo EV đầy đủ](../analysis/2026-10-s1c-ev-full.md)): `gps` chọn la bàn
-(`mag_hdg` rồi `mag_3d`) và không bao giờ bắt đầu EV yaw; `no_gps` căn la bàn trước, rồi chuyển sang EV yaw với một
+(`mag_hdg` rồi `mag_3d`) và, khi GNSS còn được fuse, không bao giờ bắt đầu EV yaw (hai chuyến bay); `no_gps` căn la bàn trước, rồi chuyển sang EV yaw với một
 reset heading khoảng −20° trước VALID đầu tiên của `T`.
 
 **Pha của driver (`sitl_hover.py`).** `wait_ready` ≤ 90 s (LIO TRACKING, `/alignment` VALID, `cs_ev_pos`, `xy_valid`/`z_valid`)
 → mode + arm (POSCTL bằng stick giữa trên `/fmu/in/manual_control_input` 20 Hz; `--hover-mode hold`: NAV_TAKEOFF rồi Hold)
-→ climb ≤ 20 s lên 2.5 m → hover 60 s thời gian `/clock` (cửa sổ chấm) → land. `--gnss-outage-s S` (`GNSS_OUTAGE_S`, gps,
-0 < S ≤ 30): ở giây 20 của hover gửi `VEHICLE_CMD_INJECT_FAILURE` (GPS, OFF), S giây sau gửi OK; `hover_meta.json` ghi
-`gnss_outage` (thời điểm, ack). PX4 v1.17 với GNSS của `gz_bridge` **không xử lý** lệnh này (không ack, GNSS vẫn fuse;
-`run:20261014T062427Z-gps-hover-yaw1.2-gnssout10`), nên harness hiện không tạo được mất GNSS. `--pattern
+→ climb ≤ 20 s lên 2.5 m → hover 60 s thời gian `/clock` (cửa sổ chấm) → land. Tuỳ chọn tiêm mất GNSS (`GNSS_OUTAGE_S`,
+`--gnss-outage-s`, `SYS_FAILURE_EN`) đã **gỡ** ở `52fbf46`: PX4 v1.17 với GNSS của `gz_bridge` bỏ qua `VEHICLE_CMD_INJECT_FAILURE`
+(không ack, GNSS vẫn fuse; `run:20261014T062427Z-gps-hover-yaw1.2-gnssout10`) và owner không cho đổi tham số PX4 khi đang
+bay, nên harness không tạo được mất GNSS. `--pattern
 altitude_sweep`: bước 2.5 m tới 20 m, giữ 10 s mỗi bước, chỉ kiểm dữ liệu.
 
-Bộ chấm hover (`a693bcf`): `<mode>_accepted`, `ekf2_ev_pos` (≥ 95% thời gian, mỗi mẫu cờ giữ tới mẫu sau),
+Bộ chấm hover (`52fbf46`): `<mode>_accepted`, `ekf2_ev_pos` (≥ 95% thời gian, mỗi mẫu cờ giữ tới mẫu sau),
 `ekf2_heading` (báo cáo: tỉ lệ nguồn heading, dòng thời gian, mọi reset heading), `lio_tracking`, `lio_flap_rate`,
 `alignment_valid`, `alignment_rate` (≥ 9 Hz), `alignment_jump_rejections` (≤ 1%), `drift` (≤ 0.3 m so ground truth),
 `lio_state_rate` (kèm khoảng cách đến theo wall time để đối chiếu), `ev_age`, `px4_time_identity`, `events` (0
 `LioQueueOverflow`, `LioBackendFailed`, `ImuRateTooHigh`, `EventsDropped`, `LioNodeFailed`, `BridgeNodeFailed`,
 `LioPublishFailed`, `BridgePublishFailed`, `LioIngestReentered`; `LioNodeSummary.publish_failed` 0), `f34_values`
-(D42: độ trải `yaw_T` ≤ 1° và `T` VALID sau mọi `Px4ResetApplied`; giá trị `yaw_T` chỉ báo cáo), `ev_variance` (báo
-cáo σ EV so với sàn PX4), và chỉ ở gps `gnss_consistency` (`cs_gnss_pos` ≥ 95% thời gian, trừ khoảng tiêm; tiêm không
-được ack ACCEPTED thì FAIL). Check nào thiếu dữ liệu thì FAIL, kể cả check chỉ báo cáo. Giới hạn cứng 300 s (hover),
+(D42: cửa sổ tách ở mỗi `Px4ResetApplied` và mỗi output không VALID; độ trải `yaw_T` ≤ 1° trong từng đoạn VALID,
+và `T` VALID sau mọi `Px4ResetApplied`; giá trị `yaw_T` chỉ báo cáo), `ev_variance` (báo
+cáo σ EV so với sàn PX4), và chỉ ở gps `gnss_consistency` (`cs_gnss_pos` ≥ 95% thời gian cửa sổ). Check nào thiếu dữ liệu thì FAIL, kể cả check chỉ báo cáo. Giới hạn cứng 300 s (hover),
 240 s (probe).
 
 **Bằng chứng.** `test_s1_estimation_launch.py` (`test_required_arguments_have_no_default`,
@@ -647,14 +647,17 @@ cáo σ EV so với sàn PX4), và chỉ ở gps `gnss_consistency` (`cs_gnss_po
 [sổ SITL](../analysis/2026-10-s1b-sitl-runs.md), hover cuối S1b `run:20261013T232211Z-gps-hover`; EV đầy đủ (S1c-T1,
 [sổ S1c](../analysis/2026-10-s1c-sitl-runs.md)): `run:20261014T061438Z-gps-hover-yaw1.2`,
 `run:20261014T062206Z-no_gps-hover-yaw1.2` (PASS); test `Px4ProfileTest.test_d42_ev_ctrl_is_full_in_both_profiles`,
-`SitlChecksTest.test_f34_passes_on_any_stable_offset`, `SitlChecksTest.test_gnss_dropout_outside_the_outage_fails_gps`. Lần
+`Px4ProfileTest.test_compass_is_mandatory`, `SitlChecksTest.test_f34_passes_on_any_stable_offset`,
+`SitlChecksTest.test_f34_splits_the_window_at_resets_and_non_valid_outputs`, `SitlChecksTest.test_gnss_fused_in_95_percent_of_the_window_gps`. Lần
 `run:20261013T151158Z-gps-hover` FAIL do thiếu profile Fast DDS (mất ~15% cloud), là lý do có `fastdds_sitl.xml`.
 
 **Lệch so với thiết kế.**
-- §0/§4.1 (D42): khớp từ `a693bcf` (`EKF2_EV_CTRL=15` ở cả hai profile; F34 theo độ ổn định của `T`). Hành vi khi mất
-  GNSS ở gps chưa đo được: harness không tiêm được lỗi GNSS (xem trên).
+- §0/§4.1 (D42): khớp từ `a693bcf` (`EKF2_EV_CTRL=15` ở cả hai profile; F34 theo độ ổn định của `T`, từng đoạn VALID từ
+  `52fbf46`). Hành vi khi mất GNSS ở gps **chưa kiểm chứng**: PX4 bỏ qua lệnh tiêm, vế lần 3 của quy tắc plan không được
+  đánh giá, và để lại cho phần cứng (không task nào đảm nhận). EV đầy đủ được giữ làm mặc định D42.
 - §4.1 (DV2): ở `run:20261014T062427Z-gps-hover-yaw1.2-gnssout10`, chuỗi `NO_PX4_SAMPLE` dài hơn 1 s đưa `T` VALID→INVALID
-  (STALE) rồi INIT→VALID trong cửa sổ hover; LIO vẫn TRACKING. Thuộc DV2 (S1c Task 4).
+  (STALE) rồi INIT→VALID trong cửa sổ hover; LIO vẫn TRACKING. Thuộc DV2 (S1c Task 4); nguyên nhân còn mở (số đo ở
+  recorder không giải thích hai lần S1b EV=7).
 - §6.2 tầng (c): "Runner đặt tham số PX4 theo profile" có, nhưng chỉ trong harness SITL; không có runner sản phẩm.
 - Profile Fast DDS là cấu hình harness, không phải sản phẩm: đường truyền cloud trên phần cứng (Livox driver, S2) chưa
   được kiểm (ghi trong comment của XML).
@@ -664,7 +667,7 @@ cáo σ EV so với sàn PX4), và chỉ ở gps `gnss_consistency` (`cs_gnss_po
 (nav_state 2) có ngay từ bản ghi đầu, chưa phân biệt do stick hay mặc định PX4 (TRACEABILITY O24). Chưa có fault injection
 (cắt LiDAR) trong harness (S1c Task 5).
 
-Verified at: `a693bcf`
+Verified at: `52fbf46`
 
 ## Updating this document
 
