@@ -123,8 +123,8 @@ Spec §0, §4.1. There is no gate.
 - `tools/uavnav/sitl_hover.py`:
   - record from `estimator_status_flags`: `cs_mag_hdg`, `cs_mag_3d`, `cs_yaw_align`, `cs_ev_yaw`, `cs_gnss_pos`;
   - record `position_variance`, `velocity_variance` and `orientation_variance` of the EV sent (critique §1a).
-- `tools/uavnav/sitl_hover.sh`: `GNSS_OUTAGE_S=<s>`, gps only. At 20 s of hover it sends `VEHICLE_CMD_INJECT_FAILURE` (unit GPS, `OFF`), then `OK` after the outage.
-- `tools/simulation/run_px4_mid360.sh`: `SYS_FAILURE_EN=1` only when the harness asks for it.
+- ~~`GNSS_OUTAGE_S`~~ (removed after the Task 1 review: PX4 ignores the injection in this SITL and parameters are never changed in flight; GNSS loss under EV-full is UNVERIFIED and left to hardware).
+- `tools/simulation/run_px4_mid360.sh`: exports `PX4_PARAM_SYS_HAS_MAG=1` (compass mandatory, D42).
 - `tools/uavnav/sitl_checks.py` and its tests.
 - Create docs/analysis/2026-10-s1c-ev-full.md and docs/analysis/2026-10-s1c-sitl-runs.md.
 
@@ -145,21 +145,19 @@ Spec §0, §4.1. There is no gate.
   - `SitlChecksTest.test_f34_passes_on_any_stable_offset` (0° and 21° steady → PASS);
   - `SitlChecksTest.test_f34_fails_on_unstable_t` (1.5° spread → FAIL);
   - `SitlChecksTest.test_heading_sources_are_reported`;
-  - `SitlChecksTest.test_gnss_dropout_outside_the_outage_fails_gps`;
+  - `SitlChecksTest.test_gnss_fused_in_95_percent_of_the_window_gps`;
   - `SitlChecksTest.test_ev_variance_is_reported`;
   - `SitlChecksTest.test_events_fail_on_publish_failures`.
 
   Run: `tools/uavnav/gate.sh python`. Expected: `GATE_RESULT=FAIL` on the new tests.
 - [ ] **Step 2: Implement.** Run: `tools/uavnav/gate.sh python`. Expected: `GATE_RESULT=PASS`. Re-judge the four S1b F34 runs offline. Expected: PASS.
-- [ ] **Step 3: Three runs**, one at a time:
+- [x] **Step 3: Two runs** (the third, a GNSS outage, was dropped: see above), one at a time:
 
   ```bash
   make sitl-hover PROFILE=gps SPAWN_YAW_RAD=1.2
   make sitl-hover PROFILE=no_gps SPAWN_YAW_RAD=1.2
-  make sitl-hover PROFILE=gps SPAWN_YAW_RAD=1.2 GNSS_OUTAGE_S=10
   ```
 
-  If PX4 refuses the injection, report it and leave out run 3.
 - [ ] **Step 4: Report** (ev-full.md, in Vietnamese). Per run:
   - the heading source over time and every heading reset;
   - the `T` spread and states across the resets;
@@ -356,7 +354,7 @@ Spec §3.4, §4.1, §7.2. There is no product change. It needs Tasks 2–4.
 
   Run: `tools/uavnav/gate.sh python`. Expected: `GATE_RESULT=FAIL`.
 - [ ] **Step 2: Implement.** Run: `tools/uavnav/gate.sh python && make sitl-build && make sitl-hover PROFILE=gps PATTERN=lidar_cut CUT_S=2 DRY_RUN=1`. Expected: PASS; the dry run lists the separate LiDAR group.
-- [ ] **Step 3: Three runs**, one at a time:
+- [x] **Step 3: Two runs** (the third, a GNSS outage, was dropped: see above), one at a time:
 
   ```bash
   make sitl-hover PROFILE=gps PATTERN=lidar_cut CUT_S=2
