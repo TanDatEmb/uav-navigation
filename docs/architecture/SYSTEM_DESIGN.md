@@ -178,7 +178,7 @@ NavAvailability:  AVAILABLE ──LIO LOST──► LOST(since) ──LIO TRACKI
 
 ### §3.1 State machine
 
-Sơ đồ đích theo D41 (không thêm trạng thái; chi tiết ở AR4, đã được owner xác nhận). Phần hiệu chỉnh và guard tươi (D40) đã có trong code từ S1c Task 2. Phần LOST chờ ổn định rồi tự khởi động lại (S1c Task 3) **chưa có**: code vẫn giữ sơ đồ S1b, trong đó LOST → RESTARTING khi một scan tốt trên map đóng băng và RESTARTING chờ lệnh restart từ ngoài mà chưa ai gọi:
+Sơ đồ đích theo D41 (không thêm trạng thái; chi tiết ở AR4, đã được owner xác nhận). Phần hiệu chỉnh và guard tươi (D40) đã có trong code từ S1c Task 2. Phần LOST chờ ổn định rồi tự khởi động lại đã có trong code từ S1c Task 3 (`e063bfd`, chưa chạy SITL). Phần `T` theo epoch (S1c Task 4) **chưa có**:
 
 ```text
 INITIALIZING ──map đủ ∧ 5 scan tốt (tươi) liên tiếp──► TRACKING ◄──5 scan tốt (tươi)──┐
@@ -241,7 +241,7 @@ Làm theo đủ cơ chế của EKF2 (F35):
 ### §3.4 Khởi động lại
 
 - **LIO tự khởi động lại (D41).** Lệnh restart là effect do frontend phát; không có bên gọi từ ngoài. Quy tắc theo mức: khi lifecycle ở RESTARTING và không có lệnh restart nào đang chờ, frontend phát một lệnh. Quy tắc này phủ cả lần phát đầu và lần phát lại sau `LioRestartRejected`.
-- **Seed (D38 sửa bởi O34, chờ owner).**
+- **Seed (D38 sửa bởi D47).**
   - Seed là pose mới nhất của predictor: vị trí và yaw; roll, pitch và vận tốc cũng từ predictor.
   - Seed của một map mới chỉ là **chọn gauge**, không mang thông tin cho LIO. Thông tin của PX4 (GNSS ở profile có GPS) tới hệ qua bước INIT của `T` từ các cặp (§4.1), như nhau với mọi seed.
   - Ở profile không GPS, PX4 sau khi mất EV chỉ còn IMU. Seed lấy từ PX4 khi đó chính là LIO trôi đi một vòng qua PX4.
@@ -252,7 +252,7 @@ Làm theo đủ cơ chế của EKF2 (F35):
 - **Câu trả lời restart tới muộn (D33/O16):** nếu buffer predictor không còn khớp được thời điểm của lệnh (backend trả lời sau hơn 300 ms), frontend từ chối câu trả lời, phát `LioRestartRejected` với lý do stale, ở lại RESTARTING và không kéo lùi output. Lệnh mới được phát theo quy tắc theo mức ở trên.
 - Khi đang chờ câu trả lời restart, frontend chỉ áp dụng chính câu trả lời đó; kết quả scan mang epoch của một câu trả lời đã bị từ chối bị bỏ (`kStaleEpoch`).
 
-**Chuỗi khôi phục (D38, D41, AR4).** LOST không phải điểm cuối và LIO không bỏ cuộc. Bảng dưới đây là toàn bộ chuỗi, trên các state machine sẵn có, không thêm trạng thái, message hay cờ. Dòng guard tươi và hiệu chỉnh đã có trong code (S1c Task 2); các dòng còn lại của `LioLifecycle` (S1c Task 3); dòng seed và `T` chờ O34.
+**Chuỗi khôi phục (D38, D41, AR4).** LOST không phải điểm cuối và LIO không bỏ cuộc. Bảng dưới đây là toàn bộ chuỗi, trên các state machine sẵn có, không thêm trạng thái, message hay cờ. Dòng guard tươi và hiệu chỉnh đã có trong code (S1c Task 2); các dòng của `LioLifecycle` và seed (S1c Task 3, đã có); dòng `T` (S1c Task 4, D47, D48) chưa có.
 
 | # | Bước | Nơi ghi | Cạnh hoặc hành động | Điều kiện | Event |
 |---|---|---|---|---|---|
@@ -387,7 +387,7 @@ INIT ──20 cặp nhất quán liên tiếp──► VALID ──LIO LOST─�
 
 - Cạnh INVALID → INIT (LIO TRACKING) có trong `kAlignmentTransitions` từ S1a; sơ đồ ghi lại cho khớp code. Sau INIT, `T` là một phép biến đổi mới: frame LIO cũ và mới không còn liên tục qua `T`.
 - "LIO LOST" ở trên nghĩa là mọi health không TRACKING (D33/O22).
-- **`T` gắn với một epoch LIO (D41, D42; đề xuất O34, O35, chờ owner).** Một epoch mới là một gauge mới, nên `T` phải được đo lại; bên đồng bộ quyết như sau:
+- **`T` gắn với một epoch LIO (D41, D42, D47, D48; chưa có trong code, S1c Task 4).** Một epoch mới là một gauge mới, nên `T` phải được đo lại; bên đồng bộ quyết như sau:
   - `T` giữ epoch LIO của nó, đặt khi INIT → VALID;
   - cặp đang TRACKING của một epoch mới hơn: VALID hoặc FROZEN → INIT (`NEW_LIO_EPOCH`); ở INIT thì bắt đầu lại phép tích luỹ; INVALID → INIT như cũ;
   - FROZEN → VALID (`LIO_TRACKING`) chỉ với mẫu cùng epoch của `T`.
