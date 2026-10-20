@@ -47,6 +47,7 @@ Những điều dưới đây là giới hạn của thông tin, không phải c
 | Liên tục frame qua khởi động lại | Không thể tốt hơn tham chiếu lúc đó (nhiễu GNSS ở gps, IMU trôi ở no_gps); seed của map mới chỉ chọn gốc | `T` về INIT theo epoch mới; điều hướng neo lại (S2/S3) |
 | Mép của vùng có hình học | Quy tắc chỉ giãn cách các lần thử (thời gian giữ cố định, D41) | Xe phải di chuyển: quyết định của điều hướng, không phải của LIO |
 | Covariance của EV | EKF2 nâng sai số EV lên sàn riêng (`EKF2_EVP_NOISE`, `EKF2_GPS_P_NOISE` khi có GNSS) | Cổng nhị phân "chỉ gửi EV khi TRACKING" là kênh trung thực; không nới covariance |
+| Độ trễ kết quả ICP | Guard tươi (D40) chỉ cho một scan tốt được đếm xác nhận khi tuổi + một chu kỳ scan ≤ `gap_degraded`; độ trễ kết quả trên 0.15 s ở beta nghĩa là LIO không bao giờ vào được TRACKING (kể cả lúc khởi động). SITL đo khoảng 20 đến 28 ms | Điều kiện vận hành: độ trễ kết quả ≤ 0.15 s; đo trên phần cứng (P8) |
 | Mô phỏng | Không có bias IMU, thời gian theo điểm LiDAR, nhiễu góc | Mọi số drift và khôi phục từ SITL là **cận lạc quan**, phải ghi vậy |
 
 ### Hành vi an toàn không được nới
@@ -190,6 +191,7 @@ INITIALIZING ──map đủ ∧ 5 scan tốt (tươi) liên tiếp──► TRA
   │ epoch mới, map mới, seed = pose predictor            │ LOST là trạng thái chờ, không có lối ra "bỏ cuộc":
   │                                                      │ scan tới đều và không rỗng liên tục restart_dwell_s
  RESTARTING ◄────────────────────────────────────────────┘ (STABLE_DATA_DWELL; frontend tự phát lệnh restart)
+  └── backend từ chối seed ──► LOST (RESTART_REJECTED; lần thử kế tiếp chờ đủ một dwell)
 ```
 
 - **LiDAR gap** tính theo **sensor time trên mỗi mẫu IMU** (stamp IMU − điểm cuối scan gần nhất).
@@ -199,7 +201,7 @@ INITIALIZING ──map đủ ∧ 5 scan tốt (tươi) liên tiếp──► TRA
   - Kết quả ICP với map đóng băng không được đọc ở LOST: prior IMU đã trôi nên trị riêng của nó vô nghĩa.
   - Ổn định liên tục `restart_dwell_s` (tầng b, beta 2.0 s, khoảng [0.5, 30]) thì LOST → RESTARTING (`STABLE_DATA_DWELL`).
   - Restart có thành công hay không được chính lần thử trả lời: INITIALIZING đánh giá suy biến thật trên map mới. Map đã sẵn mà chưa xác nhận sau `restart_dwell_s` thì → LOST (`REINIT_NOT_CONFIRMED`). Quy tắc này áp cả lúc khởi động, không cần dữ liệu "vào từ đâu".
-  - Hai lần thử cách nhau ít nhất hai lần `restart_dwell_s`. Không có bộ đếm số lần thử. Giới hạn bỏ cuộc thuộc Supervisor (§2.2).
+  - Hai lần thử cách nhau ít nhất hai lần `restart_dwell_s` **khi lần thử không bao giờ xác nhận**; xác nhận rồi mất thì lần kế có thể tới sau khoảng 2.6 s ở beta. Backend từ chối seed thì RESTARTING → LOST (`RESTART_REJECTED`) và phải chờ đủ một dwell; câu trả lời tới muộn (stale) vẫn được gửi lại ngay. Bảng lifecycle có 13 cạnh. Khi nạp cấu hình, `restart_dwell_s` phải ≥ (`confirm_scans` − 1) × chu kỳ scan + `gap_degraded`, nếu không từ chối (0.65 s ở beta). Không có bộ đếm số lần thử. Giới hạn bỏ cuộc thuộc Supervisor (§2.2).
 - **Hiệu chỉnh và quy tắc nhận/từ chối (D31, D40, AR4).**
   - Không từ chối vì tuổi. Một kết quả `kScanGood` bị từ chối chỉ khi predictor không đặt được nó vào buffer 300 ms hoặc nó không hữu hạn. Kết luận có kiểu duy nhất là `Result<void, PredictorReason>` của `OutputPredictor::on_correction`. Kết quả bị từ chối thành `kScanCorrectionRejected`: đếm như scan suy biến, không đẩy mốc scan cuối.
   - Sai epoch, hoặc kết quả tới khi một restart đang chờ, bị bỏ ở mọi loại kết quả (`kStaleEpoch`, D33/O16).
