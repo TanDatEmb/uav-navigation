@@ -288,7 +288,7 @@ flowchart LR
   BE -. "events" .-> REC
 ```
 
-**Lifecycle như trong code** (`lifecycle.hpp` `kLioTransitions`, 12 cạnh, `lifecycle.cpp`). Thứ tự xét trong mỗi
+**Lifecycle như trong code** (`lifecycle.hpp` `kLioTransitions`, 13 cạnh, `lifecycle.cpp`). Thứ tự xét trong mỗi
 trạng thái: sigma vị trí trước (TRACKING, DEGRADED), rồi tới sự kiện. Gap chỉ xét trên `kImuTick`. Không có trạng thái
 cuối: mọi trạng thái có cạnh ra (D41; `LioLifecycleTable.NoTerminalStateAndNoLostToTracking`).
 
@@ -303,6 +303,7 @@ stateDiagram-v2
   DEGRADED --> LOST : LIDAR_GAP_LOST or DEGENERACY_PERSISTED or COVARIANCE_EXCEEDED
   LOST --> RESTARTING : STABLE_DATA_DWELL
   RESTARTING --> INITIALIZING : RESTART_SEEDED
+  RESTARTING --> LOST : RESTART_REJECTED
 ```
 
 | Từ | Tới | Reason | Điều kiện trong code (giá trị beta `config/lio/sim.yaml`) |
@@ -317,6 +318,7 @@ stateDiagram-v2
 | DEGRADED | LOST | `LIDAR_GAP_LOST` | `kImuTick` với `t − last_scan > gap_lost` (0.5 s) |
 | LOST | RESTARTING | `STABLE_DATA_DWELL` | sự kiện đầu tiên có `t − stable_since_ ≥ restart_dwell` (2.0 s, bằng thì chuyển). `stable_since_` đặt ở scan không rỗng đầu tiên (good, degenerate, correction-rejected; kết quả đăng ký không được đọc) khi chưa có; xoá bởi `kScanEmpty`, bởi `kImuTick` có `t − last_scan > gap_degraded` (0.25 s, chặt) và khi vào LOST. Không bộ đếm, không bỏ cuộc |
 | RESTARTING | INITIALIZING | `RESTART_SEEDED` | backend trả `kRestartSeeded` cho lệnh restart do **chính frontend** phát (dưới bảng); epoch + 1 |
+| RESTARTING | LOST | `RESTART_REJECTED` | backend từ chối seed (`kRestartRejected`, hoặc câu trả lời thiếu snapshot): lần thử kế tiếp chờ đủ một dwell ở LOST (review T3 I2). Câu trả lời **trễ** không đi qua cạnh này: ở lại RESTARTING và phát lại ngay |
 
 **Guard tươi trên cạnh xác nhận (D40, AR4; `lifecycle.cpp` `fresh()`).** `LioLifecycle` giữ `last_imu_t_`, stamp
 `kImuTick` mới nhất đã thấy (dữ liệu, không phải cờ; `go()` không đặt lại). Ở INITIALIZING (đang xác nhận) và DEGRADED,
@@ -369,9 +371,12 @@ sequenceDiagram
   alt predictor covers t
     FE->>FE: reset_to (delta about 0: the seed is the output), LioRestart (STABLE_DATA_DWELL)
     FE->>LC: kRestartSeeded: RESTARTING -> INITIALIZING
-  else answer older than the 300 ms buffer, or kRestartRejected
+  else answer older than the 300 ms buffer (stale)
     FE->>FE: LioRestartRejected, no restart pending, stay RESTARTING
     FE->>BE: next push_imu: a new command with the newest pose (same epoch number)
+  else kRestartRejected (the backend refused the seed)
+    FE->>FE: LioRestartRejected, no restart pending
+    FE->>LC: kRestartRejected: RESTARTING -> LOST (RESTART_REJECTED), wait a full dwell
   end
   Note over LC: INITIALIZING: kMapReady, then 5 fresh good scans, else LOST after restart_dwell
 ```
@@ -382,15 +387,26 @@ sequenceDiagram
 - Seed (D47): `latest()` của predictor (vị trí, toàn bộ attitude) chuyển sang `base_link` bằng `base_T_imu` (tham số
   constructor mới của `LioFrontend`, cùng giá trị backend nhận): `R_wb = R_wi R_biᵀ`, `p_wb = p_wi − R_wb t_bi`; vận tốc
   và attitude cũ của lệnh cũng là của `latest()`. Thế giới epoch mới nối tiếp thế giới cũ: `ResetDelta` cỡ 1e-12.
-- Từ chối trước hàng đợi (`LioInputRejected`, stream 2, giới hạn tần suất): `NOT_FINITE` nếu output không hữu hạn,
-  `BACKEND_BUSY` nếu hàng đợi đầy; mẫu IMU kế tiếp thử lại.
-- Câu trả lời (`apply_restart`): `kRestartRejected`, thiếu snapshot, hoặc predictor không còn `covers()` thời điểm lệnh
-  (D33/O16) → `LioRestartRejected`, ở lại RESTARTING, không còn lệnh chờ, nên mẫu IMU kế tiếp phát lệnh mới với pose mới
-  nhất; ngược lại `reset_to`, epoch mới, `LioRestart` (reason `STABLE_DATA_DWELL`, giữ các trường old/new epoch, seed,
-  delta, `seed_age_s`), lifecycle `kRestartSeeded`.
-- Hai lần thử cách nhau ít nhất hai `restart_dwell`: chờ ở LOST, rồi tối đa một dwell ở INITIALIZING
-  (`LioRunner.EdgeOfGeometryAttemptsAreAtLeastTwoDwellsApart`: scan chỉ có sàn 15 s cho 3 lần thử, rồi scan rỗng 6 s
-  không có lần thử nào).
+- Từ chối trước hàng đợi (`LioInputRejected`, stream 2, giới hạn tần suất): `NOT_FINITE` nếu seed (output của predictor
+  sau khi chuyển sang `base_link`) hoặc vận tốc không hữu hạn (một hiệu chỉnh được áp có thể làm tràn buffer;
+  `LioFrontend.NonFinitePredictorOutputRefusesTheRestartWithAnEvent`), `BACKEND_BUSY` nếu hàng đợi đầy; mẫu IMU kế tiếp
+  thử lại. Thiếu mẫu IMU hay predictor chưa căn ở RESTARTING là không thể (`kImuInitialized` đi trước `kMapReady` trong
+  một FIFO): `assert` và trả về.
+- Câu trả lời (`apply_restart`):
+  - predictor không còn `covers()` thời điểm lệnh (D33/O16, trễ) → `LioRestartRejected` `RESTART_ANSWER_STALE`, ở lại
+    RESTARTING, không còn lệnh chờ, nên mẫu IMU kế tiếp phát lệnh mới với pose mới nhất;
+  - `kRestartRejected` hoặc thiếu snapshot (backend từ chối seed) → `LioRestartRejected` `RESTART_REJECTED`, rồi lifecycle
+    RESTARTING → LOST (`RESTART_REJECTED`): một lệnh mỗi dwell, không phải mỗi mẫu IMU
+    (`LioFrontend.BackendRefusingEverySeedGetsOneCommandPerDwell`: 10 lệnh trong 20 s, cách nhau ≥ 2 s);
+  - ngược lại `reset_to`, epoch mới, `LioRestart` (reason `STABLE_DATA_DWELL`, giữ các trường old/new epoch, seed, delta,
+    `seed_age_s`), lifecycle `kRestartSeeded`.
+- Khoảng cách giữa hai lần thử: hai lần thử **không xác nhận được** cách nhau ít nhất hai `restart_dwell` (chờ ở LOST, rồi
+  tối đa một dwell ở INITIALIZING; `LioRunner.EdgeOfGeometryAttemptsAreAtLeastTwoDwellsApart`: scan chỉ có sàn 15 s cho 3
+  lần thử, rồi scan rỗng 6 s không có lần thử nào). Một lần thử xác nhận được rồi lại mất (biên hình học) có thể theo sau
+  sớm hơn: ít nhất `restart_dwell` + (`confirm_scans` + 1) chu kỳ scan, khoảng 2.6 s ở beta (review T3 m3).
+- Hai chờ bắt đầu ở stamp **scan end** (`stable_since_`, `confirming_since_` = scan end của `kMapReady`) và được xét trên
+  các sự kiện sau, phần lớn là tick IMU, nên thời gian thật đã chờ sau khi kết quả tới ngắn hơn dwell đúng bằng độ trễ kết
+  quả (review T3 m9).
 
 **Phát output.** `/lio/state`: một `StateOutput` cho mỗi mẫu IMU không trùng sau khi predictor được căn
 (`kImuInitialized`). Health: ở mỗi lần đổi trạng thái và trên lưới 100 ms thời gian IMU (`kHealthPeriod`). Map: chèn khi
@@ -406,7 +422,8 @@ sequenceDiagram
 | `kRebaseCovarianceInflation`, `kEventSummaryEvery`, `kIcpThreads` | 10, 1000, 3 (1 khi TSan) |
 
 Tầng (b): 24 khoá `kLioSpecs` (`config.hpp`; mới: `lifecycle_restart_dwell_s` [0.5, 30] s, beta 2.0, một khoá cho
-cả hai chờ của chuỗi khôi phục) đọc từ `config/lio/sim.yaml` bằng `load_lio_config` (`lifecycle_gap_degraded_s`
+cả hai chờ của chuỗi khôi phục; kiểm chéo khi nạp: `lifecycle_restart_dwell_s ≥ (confirm_scans − 1) × kScanPeriod +
+gap_degraded` = 0.65 s ở beta, để một lần xác nhận vừa trong dwell, review T3 I1) đọc từ `config/lio/sim.yaml` bằng `load_lio_config` (`lifecycle_gap_degraded_s`
 trong [0.2, 2.0] s, cận dưới là `kGapDegradedMin`; kiểm chéo khi nạp: `lifecycle_gap_lost_s ≥ kPredictorBufferSpan + 2 ×
 kScanPeriod` = 0.5 s, đúng bằng giá trị beta, để backend bão hoà mà kết quả còn đặt được vào buffer không tới LOST); tách thành
 `FrontendConfig` (lifecycle, `predictor_tau_vel_s`/`_pos_s` 0.25, `imu_max_gap_s`) và `BackendConfig` (toán,
@@ -432,6 +449,10 @@ flush recorder, `std::terminate`.
 `LioRunner.RestartsItselfAfterTheDwellWithoutAnyCall`, `LioRunner.RefusedLateAnswerIsReissuedWithTheNewestPose`,
 `LioRunner.EdgeOfGeometryAttemptsAreAtLeastTwoDwellsApart`, `LioFrontend.FrozenMapResultsAreNotAppliedInLostOrRestarting`,
 `LioFrontend.RestartAppliesResetDeltaWhenTheBackendConfirms`, `LioPipeline.RestartSeedsNewEpoch`,
+`LioConfig.RestartDwellShorterThanAConfirmationIsRejected`, `LioLifecycle.RestartRejectedReturnsToLostAndWaitsADwell`,
+`LioLifecycle.RepeatedMapReadyDoesNotRestartTheDwellClock`, `LioFrontend.RestartRejectedByTheBackendReturnsToLost`,
+`LioFrontend.BackendRefusingEverySeedGetsOneCommandPerDwell`,
+`LioFrontend.NonFinitePredictorOutputRefusesTheRestartWithAnEvent`, `LioPipeline.SelfSeedHandlesARotatedMount`,
 `LioLifecycle.CorrectionRejectedCountsLikeDegenerateButKeepsTheGapReference`,
 `LioLifecycle.StaleGoodScanMovesTheGapReferenceButNeverConfirms`, `LioLifecycle.FreshGoodScansStillConfirm`,
 `LioFrontend.ResultOlderThanGapDegradedIsAppliedToTheOutput`, `LioFrontend.SaturatedBackendStaysDegradedWithACorrectedOutput`,
@@ -441,40 +462,47 @@ flush recorder, `std::terminate`.
 `LioFrontend.LateRestartAnswerIsRefusedAndStaysRestarting`, `LioFrontend.StalledBackendStillReachesLostOnImuTime`,
 `LioRunner.BlockedBackendDoesNotDelayGapCheckOrStateOutput`, `LioRunner.LateRestartAnswerIsRefusedAndARetrySucceeds`,
 `LioSplit.BackendHeadersCompileWithoutTheLifecycle`, `OutputPredictor.CorrectionConvergesWithoutJump`; TSan trên
-`LioRunner` (`make sanitize` ở `e063bfd`: `uavnav_lio_core` 243 test, không có cảnh báo). Kiểm đột biến guard tươi, biên
+`LioRunner` (`make sanitize` ở `2c7981d`: `uavnav_lio_core` 249 test, không có cảnh báo). Kiểm đột biến guard tươi, biên
 một chu kỳ scan, kiểm chéo `gap_lost` và việc bỏ quy tắc tuổi (S1c Task 2 và vòng sửa 1): 15/15 đột biến của lõi bị bắt.
 Kiểm đột biến chuỗi khôi phục (S1c Task 3: biên dwell, xoá chờ bởi scan rỗng và gap, biên gap, timeout INITIALIZING và
 biên của nó, `go()` giữ mốc chờ, áp kết quả ở LOST/RESTARTING, không phát lệnh, seed thiếu tay đòn, phát khi đang chờ,
 không mang vận tốc, cận khoá): 15/15 đột biến không tương đương bị bắt (1 đột biến tương đương: nhánh `kScanEmpty` đứng
-trước). SITL: `run:20261013T152418Z-gps-hover` (`/lio/state` 100 Hz, tuổi kết quả p99 28 ms, 0 lần
+trước); vòng sửa 1 (kiểm chéo dwell và biên của nó, từ chối seed không về LOST, câu trả lời trễ cũng về LOST, RESTARTING
+bỏ qua từ chối, `kMapReady` lặp lại đặt lại đồng hồ, chiều xoay của mount trong seed, bỏ kiểm hữu hạn của seed): 8/8 bị
+bắt. SITL: `run:20261013T152418Z-gps-hover` (`/lio/state` 100 Hz, tuổi kết quả p99 28 ms, 0 lần
 DEGRADED → TRACKING), `run:20261013T162711Z-gps-altitude_sweep` (đường DEGRADED → LOST thật ở 4.76 m).
 
 **Lệch so với thiết kế.**
 - §3.1, §3.4 (D41, D47, AR4): **đã có** ở `e063bfd`: LOST chờ `restart_dwell_s`, LIO tự phát lệnh restart, seed là pose
-  mới nhất của predictor, INITIALIZING → LOST `REINIT_NOT_CONFIRMED`. Spec §3.1 còn câu "code vẫn giữ sơ đồ S1b" và
-  §3.4 còn "chờ owner / chờ O34" (chờ controller cập nhật).
+  mới nhất của predictor, INITIALIZING → LOST `REINIT_NOT_CONFIRMED`; từ `2c7981d` thêm RESTARTING → LOST
+  `RESTART_REJECTED` (review T3 I2) và kiểm chéo dwell khi nạp (I1).
 - Ngoài chữ của plan, theo cùng lý do (critique §1): kết quả scan cũng không được áp ở RESTARTING (map vẫn đóng băng),
-  không chỉ ở LOST. Với backend thật, scan nhận ở RESTARTING sau một câu trả lời bị từ chối mang epoch cũ và về
-  `kScanNotProcessed`, nên đây là phòng thủ.
+  không chỉ ở LOST. Ở `e063bfd` guard này giữ tải sau khi backend từ chối seed (epoch backend không đổi, scan epoch cũ
+  nhận ở RESTARTING vẫn được xử lý). Từ `2c7981d` lần từ chối đó đưa lifecycle về LOST, nên guard của LOST giữ; ở
+  RESTARTING sau một câu trả lời trễ backend đã sang epoch mới và scan epoch cũ về `kScanNotProcessed`: guard RESTARTING
+  còn là phòng thủ, vẫn có test (`LioFrontend.FrozenMapResultsAreNotAppliedInLostOrRestarting`).
+- Backend vẫn gọi `eskf.correct()` với map đóng băng ở LOST/RESTARTING (review T3 I3), và restart mang bias, trọng lực
+  của ESKF backend sang epoch mới. Không sửa trong Task 3 (đề xuất O-entry cho controller, task-3-report).
 - INITIALIZING mà map **chưa** sẵn không tính giờ (§3.1: "map đã sẵn mà chưa xác nhận"): sau một restart, nếu mọi scan
   đều rỗng thì LIO ở INITIALIZING (không phải LOST) tới khi có scan không rỗng; không có EV trong cả hai trạng thái.
 - §3.1/§3.5 D40 (AR4): **đã có** ở `8c9ad29` và `681c783`: không còn quy tắc tuổi; từ chối duy nhất là `on_correction` của
-  predictor; guard tươi trên cạnh xác nhận, có biên một chu kỳ scan. Không có hàm `CorrectionVerdict` (AR4 bỏ nó). Spec
-  §3.1 còn ghi guard không có biên `kScanPeriod` (chờ controller cập nhật). Dải DV1: kết quả cũ hơn `gap_degraded −
-  kScanPeriod` không còn được đếm vào xác nhận; trạng thái DV1 do controller ghi.
+  predictor; guard tươi trên cạnh xác nhận, có biên một chu kỳ scan. Không có hàm `CorrectionVerdict` (AR4 bỏ nó). Dải
+  DV1: kết quả cũ hơn `gap_degraded − kScanPeriod` không còn được đếm vào xác nhận; trạng thái DV1 do controller ghi.
 - §3.2 nói ngưỡng suy biến "có hysteresis": `evaluate_degeneracy` **không có hysteresis** (so sánh từng scan với một
   ngưỡng); chỉ chuỗi 3 scan / 5 scan của lifecycle làm giảm dao động.
 - §3.4: không có seed `SYNC`/`SELF` và không có message seed (D47 bỏ O29).
 - Đúng với §3.3 (predictor, buffer 300 ms, quy tắc khớp O18), §3.5 (hai khối, ranh giới D32 ở compile time, hàng đợi tràn
   là event).
 
-**Chưa xây / giới hạn.** Không có test cho đường worker chết (`LioBackendFailed`). Một backend luôn từ chối seed (chỉ
-xảy ra với output không hữu hạn hay applicator lỗi) sẽ nhận một lệnh mỗi mẫu IMU (200 Hz), mỗi lệnh một
-`RestartSeedRejected` và một `LioRestartRejected` không giới hạn tần suất. Vận tốc seed sau một khoảng dài chỉ có IMU là
+**Chưa xây / giới hạn.** Không có test cho đường worker chết (`LioBackendFailed`). Một backend luôn từ chối seed (ví dụ
+ESKF của nó đã không hữu hạn) nhận một lệnh mỗi dwell (cạnh `RESTART_REJECTED`), mãi mãi: restart không dựng lại phần
+mang theo không hữu hạn (bias, trọng lực), nên LIO không ra khỏi vòng đó; đường từ chối chỉ được lái bằng backend giả
+trong test (backend thật không còn cách bị từ chối qua API công khai khi seed là trạng thái của chính predictor).
+Vận tốc seed sau một khoảng dài chỉ có IMU là
 phần yếu nhất của seed trên phần cứng (critique §4 dòng 1); sim không có bias nên không thấy. Chuỗi chưa chạy trong SITL
 (S1c Task 5).
 
-Verified at: `e063bfd`
+Verified at: `2c7981d`
 
 ## uavnav_lio
 
