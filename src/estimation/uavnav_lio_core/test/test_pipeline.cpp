@@ -99,7 +99,7 @@ bool Finite(const StepOutputs& out) {
 enum class ScanKind { kRoom, kPlane, kCorridor, kEmpty };
 
 // Drives one pipeline (frontend + backend, synchronous) with the synthetic scene. Every output is checked for NaN, and every call that
-// changes the state is counted (at most one transition per call).
+// changes the state is counted (a call that ends the restart dwell carries two: its own restart is answered in it).
 class Harness {
  public:
   explicit Harness(const LioConfig& cfg = DefaultConfig(), time::Duration imu_period = kImuPeriod)
@@ -135,13 +135,6 @@ class Harness {
     const time::SensorTime t = scan.end;
     auto r = est_->push_scan(std::move(scan), Snap(t));
     Record(before, r);
-    return r;
-  }
-
-  Result<ResetDelta, EstimatorReason> Restart(const SeedPose& seed) {
-    const LioState before = est_->state();
-    auto r = est_->restart(seed, Snap(now()));
-    if (est_->state() != before) ++state_changes_;
     return r;
   }
 
@@ -412,12 +405,13 @@ TEST(LioPipeline, PlaneOnlyScansDegradeWithoutThrowing) {
 TEST(LioPipeline, PlaneOnlyScansNeverReachTrackingAndBlocksAreNotSwapped) {
   Harness h;
   h.Run(11);  // IMU init (1 s) and the map bootstrap scan, all faces
-  h.Run(20, ScanKind::kPlane);
+  // 0.9 s of floor scans: the confirmation stays open (D41: a ready map without confirmation for 2 s goes LOST).
+  h.Run(9, ScanKind::kPlane);
   EXPECT_EQ(h.est().state(), LioState::kInitializing);
   for (const StepOutputs& o : h.outputs()) EXPECT_FALSE(o.odometry.has_value());
 
   auto scans = h.Events("LioScan");
-  ASSERT_GE(scans.size(), 20U);
+  ASSERT_GE(scans.size(), 9U);
   const auto& plane = scans.back();
   EXPECT_EQ(plane.reason, "SCAN_DEGENERATE");
   // Floor: only z translation is observed. The smallest translation eigenvalue is not exactly zero (map
@@ -663,64 +657,62 @@ TEST(LioPipeline, TooManyPointsIsRejected) {
   EXPECT_EQ(h.est().state(), LioState::kTracking);
 }
 
+// D41, D47: LIO restarts itself after a LiDAR gap, once the scans have come back for restart_dwell (2 s); the
+// seed is the predictor's own output at the restart tick (base_link), so the new epoch's world continues the old one.
 TEST(LioPipeline, RestartSeedsNewEpoch) {
   Harness h;
   h.RunUntilTracking();
   h.Run(10, std::nullopt);  // LiDAR gap -> LOST
   ASSERT_EQ(h.est().state(), LioState::kLost);
-  h.Run(1);  // geometry returned
-  ASSERT_EQ(h.est().state(), LioState::kRestarting);
-
-  // One more IMU sample, so the newest predictor output is known exactly (the RESTARTING scan's correction
-  // shifted the buffer after the previous output was returned).
-  h.ImuUntil(h.now() + kImuPeriod);
   // Three duplicate IMU samples: one ImuDuplicate event now, a summary (count 3) at the end of the epoch.
   for (int i = 0; i < 3; ++i) ASSERT_TRUE(h.Imu(scene::make_imu({}, h.now())).has_value());
   EXPECT_EQ(h.Events("ImuDuplicate").size(), 1U);
+  for (int i = 0; i < 30 && h.est().epoch() == 1U; ++i) h.Run(1);
+  ASSERT_EQ(h.est().epoch(), 2U);
+  EXPECT_EQ(h.est().state(), LioState::kInitializing);
 
-  // The predictor's newest output before the restart (the old epoch's IMU state at the newest IMU time).
-  std::optional<StateOutput> old_state;
-  for (const StepOutputs& o : h.outputs()) {
-    if (!o.states.empty()) old_state = o.states.back();
+  // The restart tick and the predictor's output there.
+  std::optional<double> restart_s;
+  for (const auto& e : h.Events("StateTransition")) {
+    if (e.state_after == "RESTARTING") restart_s = Value(e, "sensor_time_s");
   }
-  ASSERT_TRUE(old_state.has_value());
-  ASSERT_EQ(old_state->sample.t, h.now());
-
-  const double yaw = 0.3;
-  const SeedPose seed{Eigen::Vector3d(1.0, 2.0, 0.5),
-                      Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()))};
-  const auto delta = h.Restart(seed);
+  ASSERT_TRUE(restart_s.has_value());
+  std::optional<StateOutput> at_restart;
+  std::optional<Result<ResetDelta, EstimatorReason>> delta;
+  for (const StepOutputs& o : h.outputs()) {
+    for (const StateOutput& s : o.states) {
+      if (static_cast<double>(s.sample.t.ns) / 1e9 == *restart_s) at_restart = s;
+    }
+    if (o.restart) delta = o.restart;
+  }
+  ASSERT_TRUE(at_restart.has_value());
   ASSERT_TRUE(delta.has_value());
-  // ResetDelta = new - old output at the newest IMU time: the seeded IMU pose minus the old one.
-  const Eigen::Vector3d new_imu_p = seed.p_world_m + seed.q_world_base * scene::base_T_imu().translation();
-  EXPECT_LT((delta->position_m - (new_imu_p - old_state->sample.p_world_m)).norm(), 1e-9);
-  // The old velocity (near zero) is carried into the seed's world: v_new = R(seed) R(old)^-1 v_old.
-  const Eigen::Vector3d v_old = old_state->sample.v_world_mps;
-  const Eigen::Vector3d v_new = (seed.q_world_base * old_state->sample.q_world_imu.conjugate()) * v_old;
-  EXPECT_LT((delta->velocity_mps - (v_new - v_old)).norm(), 1e-9);
-  EXPECT_LT(delta->velocity_mps.norm(), 0.01);
-  const Eigen::Matrix3d r_old = old_state->sample.q_world_imu.toRotationMatrix();
-  EXPECT_NEAR(delta->yaw_rad, yaw - std::atan2(r_old(1, 0), r_old(0, 0)), 1e-9);
+  ASSERT_TRUE(delta->has_value());
+  // ResetDelta = new - old output: the seed is the old output itself.
+  EXPECT_LT((*delta)->position_m.norm(), 1e-6);
+  EXPECT_LT((*delta)->velocity_mps.norm(), 1e-6);
+  EXPECT_NEAR((*delta)->yaw_rad, 0.0, 1e-9);
+  const Eigen::Quaterniond q_seed =
+      (at_restart->sample.q_world_imu * Eigen::Quaterniond(scene::base_T_imu().linear()).conjugate()).normalized();
+  const Eigen::Vector3d p_seed = at_restart->sample.p_world_m - q_seed * scene::base_T_imu().translation();
   const auto duplicates = h.Events("ImuDuplicate");
   ASSERT_EQ(duplicates.size(), 2U);
   EXPECT_EQ(Value(duplicates.back(), "count"), 3.0);
   EXPECT_EQ(duplicates.back().identity.lio_epoch, 1U);
-  EXPECT_EQ(h.est().epoch(), 2U);
-  EXPECT_EQ(h.est().state(), LioState::kInitializing);
 
   const auto restarts = h.Events("LioRestart");
   ASSERT_EQ(restarts.size(), 1U);
+  EXPECT_EQ(restarts[0].reason, "STABLE_DATA_DWELL");
   EXPECT_EQ(Value(restarts[0], "old_epoch"), 1.0);
   EXPECT_EQ(Value(restarts[0], "new_epoch"), 2.0);
-  EXPECT_DOUBLE_EQ(Value(restarts[0], "seed_x_m"), 1.0);
-  EXPECT_DOUBLE_EQ(Value(restarts[0], "seed_y_m"), 2.0);
-  EXPECT_DOUBLE_EQ(Value(restarts[0], "seed_z_m"), 0.5);
-  EXPECT_NEAR(Value(restarts[0], "seed_yaw_rad"), yaw, 1e-12);
+  EXPECT_NEAR(Value(restarts[0], "seed_x_m"), p_seed.x(), 1e-9);
+  EXPECT_NEAR(Value(restarts[0], "seed_y_m"), p_seed.y(), 1e-9);
+  EXPECT_NEAR(Value(restarts[0], "seed_z_m"), p_seed.z(), 1e-9);
   EXPECT_EQ(restarts[0].identity.lio_epoch, 2U);
 
   const std::size_t from = h.outputs().size();
   h.RunUntilTracking();
-  // reset_counter + 1 on the first state output of the new epoch, and on the odometry.
+  // reset_counter + 1 on every state output of the new epoch, and on the odometry.
   bool saw_state = false;
   std::optional<OdometryOutput> odom;
   for (std::size_t i = from; i < h.outputs().size(); ++i) {
@@ -729,7 +721,6 @@ TEST(LioPipeline, RestartSeedsNewEpoch) {
       EXPECT_EQ(s.epoch, 2U);
       saw_state = true;
     }
-    if (h.outputs()[i].odometry) odom = h.outputs()[i].odometry;
   }
   EXPECT_TRUE(saw_state);
   h.Run(2);
@@ -739,56 +730,34 @@ TEST(LioPipeline, RestartSeedsNewEpoch) {
   ASSERT_TRUE(odom.has_value());
   EXPECT_EQ(odom->epoch, 2U);
   EXPECT_EQ(odom->reset_counter, 1U);
-  // The new epoch's world is the seed's: a stationary vehicle stays at the seed pose.
-  EXPECT_LT((odom->p_world_m - seed.p_world_m).norm(), 0.05) << odom->p_world_m.transpose();
-  EXPECT_LT(odom->q_world_base.angularDistance(seed.q_world_base), 0.01);
+  // The new epoch's world continues the old one: a stationary vehicle stays at the seed pose.
+  EXPECT_LT((odom->p_world_m - p_seed).norm(), 0.05) << odom->p_world_m.transpose();
+  EXPECT_LT(odom->q_world_base.angularDistance(q_seed), 0.01);
   EXPECT_TRUE(h.all_finite());
 }
 
-// The backend answers within the restart call itself (synchronous driver): the ResetDelta, the new epoch and the
-// INITIALIZING state are all visible on return, as with the S1a facade.
+// The synchronous driver answers the frontend's own restart inside the push_imu that issued it: the ResetDelta, the
+// new epoch and the INITIALIZING state are all visible on its return.
 TEST(LioPipeline, RestartReturnsTheResetDeltaInTheSameCall) {
   Harness h;
   h.RunUntilTracking();
   h.Run(10, std::nullopt);  // LiDAR gap -> LOST
   ASSERT_EQ(h.est().state(), LioState::kLost);
-  h.Run(1);  // geometry returned
-  ASSERT_EQ(h.est().state(), LioState::kRestarting);
-  h.ImuUntil(h.now() + kImuPeriod);  // the newest predictor output is known exactly
-
-  std::optional<StateOutput> old_state;
-  for (const StepOutputs& o : h.outputs()) {
-    if (!o.states.empty()) old_state = o.states.back();
-  }
-  ASSERT_TRUE(old_state.has_value());
-  ASSERT_EQ(old_state->sample.t, h.now());
-
-  // Seed the pose shifted by (2, 0, 0) from the dead-reckoned one: the IMU pose moves by the same offset.
-  const Eigen::Quaterniond q_old = old_state->sample.q_world_imu * Eigen::Quaterniond(scene::base_T_imu().linear()).conjugate();
-  const Eigen::Vector3d p_base_old = old_state->sample.p_world_m - q_old * scene::base_T_imu().translation();
-  const SeedPose seed{p_base_old + Eigen::Vector3d(2.0, 0.0, 0.0), q_old};
-
+  const time::SensorTime first = h.now() + kScanPeriod;  // the next scan end: the dwell starts there
+  h.Run(20);                                             // scans up to first + 1.9 s
+  ASSERT_EQ(h.est().state(), LioState::kLost);
   ASSERT_EQ(h.est().epoch(), 1U);
-  const auto delta = h.Restart(seed);
-  ASSERT_TRUE(delta.has_value());
-  EXPECT_LT((delta->position_m - Eigen::Vector3d(2.0, 0.0, 0.0)).norm(), 1e-6) << delta->position_m.transpose();
+  h.ImuUntil(first + time::seconds(2) - kImuPeriod);
+  ASSERT_EQ(h.est().state(), LioState::kLost);
+  const auto r = h.Imu(scene::make_imu({}, first + time::seconds(2)));  // the tick that ends the dwell
+  ASSERT_TRUE(r.has_value());
+  ASSERT_TRUE(r->restart.has_value());
+  ASSERT_TRUE(r->restart->has_value());
+  EXPECT_LT((*r->restart)->position_m.norm(), 1e-6) << (*r->restart)->position_m.transpose();
   EXPECT_EQ(h.est().epoch(), 2U);
   EXPECT_EQ(h.est().state(), LioState::kInitializing);
-}
-
-TEST(LioPipeline, RestartRejectedOutsideRestarting) {
-  Harness h;
-  const SeedPose seed{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()};
-  auto r = h.Restart(seed);  // INITIALIZING, not even IMU-initialised
-  ASSERT_FALSE(r.has_value());
-  EXPECT_EQ(r.error(), EstimatorReason::kWrongState);
-  h.RunUntilTracking();
-  r = h.Restart(seed);
-  ASSERT_FALSE(r.has_value());
-  EXPECT_EQ(r.error(), EstimatorReason::kWrongState);
-  EXPECT_EQ(h.est().state(), LioState::kTracking);
-  EXPECT_EQ(h.est().epoch(), 1U);
-  EXPECT_TRUE(h.Events("LioRestart").empty());
+  ASSERT_TRUE(r->health.has_value());
+  EXPECT_EQ(r->health->reason, LioReason::kRestartSeeded);
 }
 
 TEST(LioPipeline, OneStateTransitionEventPerTransition) {
@@ -796,12 +765,12 @@ TEST(LioPipeline, OneStateTransitionEventPerTransition) {
   h.RunUntilTracking();        // INITIALIZING -> TRACKING
   h.Run(3, ScanKind::kEmpty);  // -> DEGRADED
   h.Run(10, std::nullopt);     // -> LOST
-  h.Run(1);                    // -> RESTARTING
-  ASSERT_TRUE(h.Restart({Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()}).has_value());  // -> INIT
-  h.RunUntilTracking();                                                                           // -> TRACKING
+  for (int i = 0; i < 30 && h.est().epoch() == 1U; ++i) h.Run(1);  // -> RESTARTING -> INITIALIZING (one call)
+  h.RunUntilTracking();                                            // -> TRACKING
   const auto transitions = h.Events("StateTransition");
-  EXPECT_EQ(static_cast<int>(transitions.size()), h.state_changes());
-  EXPECT_EQ(h.state_changes(), 6);
+  // The push_imu that ends the dwell also applies its own restart's answer (synchronous driver): two transitions in
+  // one call, so one fewer call changed the state than there are transitions.
+  EXPECT_EQ(h.state_changes(), 5);
   const std::vector<std::pair<std::string_view, std::string_view>> expected{
       {"INITIALIZING", "TRACKING"}, {"TRACKING", "DEGRADED"},       {"DEGRADED", "LOST"},
       {"LOST", "RESTARTING"},       {"RESTARTING", "INITIALIZING"}, {"INITIALIZING", "TRACKING"}};

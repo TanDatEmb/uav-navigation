@@ -38,7 +38,7 @@ inline FrontendConfig frontend_config(const LioConfig& c) {
 }
 
 /// The single definition of every LIO key, its unit and its inclusive bounds. Beta values:
-/// confirm 5, degenerate 3, gap_degraded 0.25 s, gap_lost 0.5 s, degeneracy_lost 1.0 s, sigma_lost 0.5 m,
+/// confirm 5, degenerate 3, gap_degraded 0.25 s, gap_lost 0.5 s, degeneracy_lost 1.0 s, sigma_lost 0.5 m, restart_dwell 2.0 s,
 /// degeneracy_translation_min_info 1.1e5, degeneracy_rotation_min_info 2.8e6,
 /// predictor_tau_vel_s 0.25 s, predictor_tau_pos_s 0.25 s (SYSTEM_DESIGN §3.3: τ_vel = τ_pos = 0.25 s).
 ///
@@ -68,6 +68,10 @@ inline FrontendConfig frontend_config(const LioConfig& c) {
 /// capped at 800 so it stays below fast_lio_core's ImuInitializerConfig::maximum_imu_samples (1000). The range bounds do not overlap
 /// (min <= 2 m < 10 m <= max), so preprocess_max_range_m > preprocess_min_range_m needs no cross check.
 ///
+/// lifecycle_restart_dwell_s (D41, AR4): the one wait of the recovery chain, LOST -> RESTARTING after this long of
+/// non-empty scans without a gap, and INITIALIZING (map ready) -> LOST without a confirmation after this long. A fixed
+/// value (D44.7), bounds [0.5, 30] s: at least five scan periods, at most what a hover can wait without a decision.
+///
 /// lifecycle_gap_degraded_s: the lower bound is limits::kGapDegradedMin (0.2 s, two scan periods; D40, AR4), the bound
 /// the lio node's future-stamp limit is asserted against.
 inline constexpr auto kLioSpecs = std::to_array<config::ParamSpec>({
@@ -77,6 +81,7 @@ inline constexpr auto kLioSpecs = std::to_array<config::ParamSpec>({
     {"lifecycle_gap_lost_s", config::Unit::kSeconds, 0.1, 5.0},
     {"lifecycle_degeneracy_lost_s", config::Unit::kSeconds, 0.1, 10.0},
     {"lifecycle_position_sigma_lost_m", config::Unit::kMeters, 0.05, 5.0},
+    {"lifecycle_restart_dwell_s", config::Unit::kSeconds, 0.5, 30.0},
     {"degeneracy_translation_min_info", config::Unit::kNone, 1.0, 1e9},
     {"degeneracy_rotation_min_info", config::Unit::kNone, 1.0, 1e12},
     {"predictor_tau_vel_s", config::Unit::kSeconds, 0.05, 5.0},

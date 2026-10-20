@@ -40,10 +40,11 @@ enum class LioReason : std::uint8_t {
   kLidarGapLost,
   kDegeneracyPersisted,
   kCovarianceExceeded,
-  kGeometryReturned,
+  kStableDataDwell,  // D41, AR4: LOST -> RESTARTING after restart_dwell of non-empty scans without a gap
   kRestartSeeded,
   kMapReady,
-  kCorrectionRejected  // D31: a run of kScanGood results the output predictor did not apply
+  kCorrectionRejected,  // D31: a run of kScanGood results the output predictor did not apply
+  kReinitNotConfirmed   // D41, AR4: INITIALIZING (map ready) -> LOST, no confirmation within restart_dwell
 };
 
 constexpr std::string_view to_string(LioState s) {
@@ -68,10 +69,11 @@ constexpr std::string_view to_string(LioReason r) {
     case LioReason::kLidarGapLost: return "LIDAR_GAP_LOST";
     case LioReason::kDegeneracyPersisted: return "DEGENERACY_PERSISTED";
     case LioReason::kCovarianceExceeded: return "COVARIANCE_EXCEEDED";
-    case LioReason::kGeometryReturned: return "GEOMETRY_RETURNED";
+    case LioReason::kStableDataDwell: return "STABLE_DATA_DWELL";
     case LioReason::kRestartSeeded: return "RESTART_SEEDED";
     case LioReason::kMapReady: return "MAP_READY";
     case LioReason::kCorrectionRejected: return "CORRECTION_REJECTED";
+    case LioReason::kReinitNotConfirmed: return "REINIT_NOT_CONFIRMED";
   }
   return "";
 }
@@ -92,6 +94,10 @@ static_assert(ReasonEnum<LioReason>);
 /// "degenerate since > degeneracy_lost" in DEGRADED, breaks the confirmation runs, is ignored in LOST and
 /// RESTARTING), but it does NOT advance last_scan_time(): a backend whose results cannot be placed ends in
 /// DEGRADED and LOST.
+///
+/// In LOST every scan kind but kScanEmpty is only "a non-empty scan arrived" (D41, AR4): the frontend applies no
+/// correction there (the registration against the frozen map is not read, critique §1), so a kScanGood in LOST is
+/// the backend's verdict, not an applied correction.
 struct LioEvent {
   enum class Kind : std::uint8_t {
     kScanGood,
@@ -117,6 +123,9 @@ struct LifecycleConfig {
   time::Duration gap_lost;          ///< LiDAR gap DEGRADED -> LOST (0.5 s)
   time::Duration degeneracy_lost;   ///< degenerate run length DEGRADED -> LOST (1.0 s)
   double position_sigma_lost_m;     ///< position sigma TRACKING/DEGRADED -> LOST (0.5 m)
+  /// D41, AR4: LOST -> RESTARTING after this long of non-empty scans without a gap, and INITIALIZING with a ready map
+  /// -> LOST without a confirmation after this long (one key for both waits, lifecycle_restart_dwell_s) (2.0 s)
+  time::Duration restart_dwell;
 };
 
 struct Transition {
@@ -129,6 +138,7 @@ struct Transition {
 /// A legal state change. Anything not listed here cannot happen; in particular there is
 /// no LOST -> TRACKING edge: every way back to TRACKING goes through RESTARTING,
 /// INITIALIZING and a confirmation (SYSTEM_DESIGN §3.1: every entry to TRACKING is confirmed).
+/// No state is terminal (D41: LIO never gives up; the give-up budget belongs to the Supervisor, §3.4).
 struct TransitionEdge {
   LioState from;
   LioState to;
@@ -137,6 +147,7 @@ struct TransitionEdge {
 
 inline constexpr std::array kLioTransitions = std::to_array<TransitionEdge>({
     {LioState::kInitializing, LioState::kTracking, LioReason::kConfirmationReached},
+    {LioState::kInitializing, LioState::kLost, LioReason::kReinitNotConfirmed},
     {LioState::kTracking, LioState::kDegraded, LioReason::kDegenerateScans},
     {LioState::kTracking, LioState::kDegraded, LioReason::kLidarGapDegraded},
     {LioState::kTracking, LioState::kDegraded, LioReason::kCorrectionRejected},
@@ -145,7 +156,7 @@ inline constexpr std::array kLioTransitions = std::to_array<TransitionEdge>({
     {LioState::kDegraded, LioState::kLost, LioReason::kDegeneracyPersisted},
     {LioState::kTracking, LioState::kLost, LioReason::kCovarianceExceeded},
     {LioState::kDegraded, LioState::kLost, LioReason::kCovarianceExceeded},
-    {LioState::kLost, LioState::kRestarting, LioReason::kGeometryReturned},
+    {LioState::kLost, LioState::kRestarting, LioReason::kStableDataDwell},
     {LioState::kRestarting, LioState::kInitializing, LioReason::kRestartSeeded},
 });
 
@@ -166,6 +177,16 @@ class LioLifecycle {
   /// the next ticks would degrade again (O15 flapping; with the margin this covers results younger than
   /// gap_degraded too, the DV1 band of a backend saturated with two scans in flight), and that old odometry would
   /// go to PX4. No IMU tick yet: every scan is fresh.
+  ///
+  /// LOST waits (D41, AR4; SYSTEM_DESIGN §3.1). The wait for stable data starts at the first non-empty scan event
+  /// (any scan kind but kScanEmpty) while none is running; a kScanEmpty, or a kImuTick with t - last_scan_time() >
+  /// gap_degraded, ends it; entering LOST starts with none. The first event with t - (its start) >= restart_dwell
+  /// goes to RESTARTING (STABLE_DATA_DWELL). No counter, no give-up: LOST waits as long as the data does not hold.
+  ///
+  /// A restart attempt answers itself (D41, AR4). In INITIALIZING the confirmation is timed from kMapReady: the
+  /// first event with t - (that kMapReady) > restart_dwell goes to LOST (REINIT_NOT_CONFIRMED), checked before the
+  /// event itself counts. The same rule at boot; before kMapReady nothing is timed. So two attempts are at least
+  /// two dwells apart.
   ///
   /// Preconditions: every `e.t` was built by the range-checked converters (see LioEvent::t);
   /// a raw or garbage stamp can overflow the gap subtraction (undefined behaviour). "Newest scan"
@@ -192,9 +213,6 @@ class LioLifecycle {
     return last_imu_t_ - e.t + limits::kScanPeriod <= cfg_.gap_degraded;
   }
 
-  /// Progress inside INITIALIZING. Reset to kWaitingForMap by every state change.
-  enum class InitPhase : std::uint8_t { kWaitingForMap, kConfirming };
-
   LifecycleConfig cfg_;
   LioState state_{LioState::kInitializing};  // the one and only state
   time::SensorTime last_scan_{};
@@ -203,7 +221,8 @@ class LioLifecycle {
   // Counters and time points below are data about recent events, not state. Each is reset
   // by go() (a state change), except degenerate_since_, which survives TRACKING -> DEGRADED
   // because that transition does not end the degenerate run that caused it.
-  InitPhase init_phase_{InitPhase::kWaitingForMap};    // INITIALIZING only: scans count once the map is ready
+  std::optional<time::SensorTime> confirming_since_;  // INITIALIZING: the kMapReady; scans count from then on
+  std::optional<time::SensorTime> stable_since_;      // LOST: first non-empty scan of the current wait (D41)
   std::uint32_t good_run_{0};                         // INITIALIZING (map ready) / DEGRADED: consecutive fresh good scans
   std::uint32_t bad_run_{0};                          // TRACKING: consecutive degenerate/empty/rejected scans
   std::optional<time::SensorTime> degenerate_since_;  // first degenerate/empty/rejected scan of the current run

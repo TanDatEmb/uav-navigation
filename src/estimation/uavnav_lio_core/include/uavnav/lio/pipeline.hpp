@@ -23,8 +23,9 @@
 // Every call is: the frontend call (an error is returned as is), then LioBackend::step(now) until the
 // request queue is empty, then LioFrontend::poll_results(now), merged into the outputs (states appended; a
 // later non-empty optional replaces an earlier one, the "last wins" rule of outputs.hpp). The backend work
-// therefore completes inside the call that queued it, so the results of a scan, a restart and its
-// ResetDelta come back in the same call, as they did from the S1a facade.
+// therefore completes inside the call that queued it, so the results of a scan come back in the same call, and so
+// does the answer to a restart the frontend issued itself (D41) in that push_imu: one call can then carry two
+// transitions (LOST -> RESTARTING on the tick, RESTARTING -> INITIALIZING on the answer).
 //
 // Threading: single-threaded; the caller serialises all calls (the frontend's ingest contract), and the
 // pipeline starts no thread. The reused residual builder still forks OpenMP workers inside a scan
@@ -54,10 +55,6 @@ class LioPipeline {
   /// LioFrontend::push_scan (refusals returned as is), then the backend processes the queue and the frontend
   /// applies the results: the scan's odometry, health and state outputs come back in this call.
   Result<StepOutputs, EstimatorReason> push_scan(ScanInput&& scan, const time::TimeSnapshot& now);
-
-  /// LioFrontend::restart (errors returned as is), then the backend seeds the ESKF and the frontend applies
-  /// the answer: returns the ResetDelta (kNotFinite when the backend rejected the seed) in the same call.
-  Result<ResetDelta, EstimatorReason> restart(const SeedPose& seed, const time::TimeSnapshot& now);
 
   LioState state() const noexcept { return frontend_->state(); }
   std::uint32_t epoch() const noexcept { return frontend_->epoch(); }

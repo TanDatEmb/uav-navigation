@@ -10,6 +10,8 @@ lifecycle_gap_degraded_s: 0.25           # LiDAR gap (IMU time - last scan end) 
 lifecycle_gap_lost_s: 0.5                # LiDAR gap DEGRADED -> LOST
 lifecycle_degeneracy_lost_s: 1.0         # degenerate run length DEGRADED -> LOST
 lifecycle_position_sigma_lost_m: 0.5     # position sigma TRACKING/DEGRADED -> LOST
+lifecycle_restart_dwell_s: 2.0           # D41: LOST -> RESTARTING after this long of non-empty scans without a gap;
+                                         # INITIALIZING (map ready) -> LOST without a confirmation after this long
 
 # --- degeneracy (SYSTEM_DESIGN §3.2) --------------------------------------------------------------
 # derivation: see src/estimation/uavnav_lio_core/include/uavnav/lio/config.hpp

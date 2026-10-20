@@ -244,16 +244,6 @@ class Rig {
     return r;
   }
 
-  /// Runner: queues the command (the answer comes from a later call). Pipeline: the answer is recorded now.
-  bool Restart(const SeedPose& seed) {
-    if (runner_) return runner_->restart(seed, Snap(now())).has_value();
-    auto r = pipeline_->restart(seed, Snap(now()));
-    StepOutputs out;
-    out.restart = r;
-    Record(Result<StepOutputs, EstimatorReason>(std::move(out)));
-    return r.has_value();
-  }
-
   StepOutputs Poll() {
     StepOutputs out = runner_->poll_results(Snap(now()));
     Record(Result<StepOutputs, EstimatorReason>(out));
@@ -321,6 +311,25 @@ class Rig {
     ASSERT_EQ(state(), LioState::kTracking);
   }
 
+  /// Every StateTransition as "BEFORE>AFTER:REASON", in order.
+  std::vector<std::string> Transitions() {
+    std::vector<std::string> out;
+    for (const auto& e : Events("StateTransition")) {
+      out.push_back(std::string(e.state_before) + ">" + std::string(e.state_after) + ":" + std::string(e.reason));
+    }
+    return out;
+  }
+
+  /// The state output stamped `t` (nullopt when none).
+  std::optional<StateOutput> StateAt(time::SensorTime t) const {
+    for (const StepOutputs& o : outputs_) {
+      for (const StateOutput& s : o.states) {
+        if (s.sample.t == t) return s;
+      }
+    }
+    return std::nullopt;
+  }
+
   std::vector<events::EventRecord> Events(std::string_view name) {
     recorder_->flush();
     const std::scoped_lock lock(store_->mutex);
@@ -369,7 +378,50 @@ auto Bounded(Rig& rig, F&& fn) -> std::pair<bool, decltype(fn())> {
   return {ready, future.get()};
 }
 
-const SeedPose kSeed{Eigen::Vector3d(1.0, 2.0, 0.5), Eigen::Quaterniond(Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitZ()))};
+/// The base_link pose of a predictor output (the IMU's), as the frontend builds its restart seed (D47):
+/// R_wb = R_wi R_bi^T, p_wb = p_wi - R_wb t_bi.
+SeedPose BasePose(const StateOutput& s) {
+  const Eigen::Isometry3d base_T_imu = scene::base_T_imu();
+  const Eigen::Quaterniond q_wb =
+      (s.sample.q_world_imu * Eigen::Quaterniond(base_T_imu.linear()).conjugate()).normalized();
+  return SeedPose{s.sample.p_world_m - q_wb * base_T_imu.translation(), q_wb};
+}
+
+double Yaw(const Eigen::Quaterniond& q) {
+  const Eigen::Matrix3d r = q.toRotationMatrix();
+  return std::atan2(r(1, 0), r(0, 0));
+}
+
+/// The applied restart answer of the rig's calls, polling until one arrives (nullopt after kGuard).
+std::optional<Result<ResetDelta, EstimatorReason>> AnswerOf(Rig& rig) {
+  std::optional<Result<ResetDelta, EstimatorReason>> answer;
+  const bool got = Eventually(
+      [&] {
+        StepOutputs o = rig.Poll();
+        if (o.restart) answer = o.restart;
+        return answer.has_value();
+      },
+      &rig.aborted());
+  EXPECT_TRUE(got) << "no restart answer";
+  return answer;
+}
+
+/// TRACKING, a 1 s LiDAR gap (LOST), then 20 paced room scans (1.9 s, still LOST: the dwell runs from the first of
+/// them). The backend gate is then closed and the IMU pushed to the end of the dwell: the frontend reaches RESTARTING
+/// and queues its own restart command, which the held backend does not answer. Returns the command time.
+time::SensorTime ToRestartingHeld(Rig& rig) {
+  rig.RunUntilTracking();
+  rig.Run(10, std::nullopt);  // LiDAR gap -> LOST
+  EXPECT_EQ(rig.state(), LioState::kLost);
+  const time::SensorTime first = rig.scan_end() + kScanPeriod;
+  rig.Run(20);
+  EXPECT_EQ(rig.state(), LioState::kLost) << "1.9 s of scans: inside the dwell";
+  rig.clock().gate.close();
+  rig.ImuUntil(first + time::seconds(2));
+  EXPECT_EQ(rig.state(), LioState::kRestarting);
+  EXPECT_EQ(rig.epoch(), 1U);
+  return rig.now();
+}
 
 }  // namespace
 
@@ -571,7 +623,11 @@ TEST(LioRunner, ConcurrentIngestAndBackendAccountForEveryScan) {
   EXPECT_EQ(counts.busy, f.scans_refused_busy);
   EXPECT_EQ(counts.pushed, f.scans_admitted + f.scans_refused_busy);
   EXPECT_EQ(f.scans_in_flight, 0U);
-  EXPECT_EQ(f.results_applied + f.results_discarded, f.scans_admitted + 1U) << "+1: the IMU initialisation";
+  // The unpaced producer can outrun the backend into a LiDAR gap: LOST, then LIO restarts itself (D41). Each of its
+  // restart commands is one request and one answer.
+  const std::size_t answers = rig.Events("LioRestart").size() + rig.Events("LioRestartRejected").size();
+  RecordProperty("restart_answers", std::to_string(answers));
+  EXPECT_EQ(f.results_applied + f.results_discarded, f.scans_admitted + 1U + answers) << "+1: the IMU initialisation";
   EXPECT_EQ(req.pushed, req.popped);
   EXPECT_EQ(req.rejected, f.requests_rejected);
   EXPECT_GE(f.requests_rejected, f.imu_copies_dropped);
@@ -580,7 +636,7 @@ TEST(LioRunner, ConcurrentIngestAndBackendAccountForEveryScan) {
   // backend().stats() is valid after stop(): every queued request was processed.
   const BackendStats b = rig.runner().backend().stats();
   EXPECT_EQ(b.scans, f.scans_admitted);
-  EXPECT_EQ(b.imu_samples + b.scans, req.popped);
+  EXPECT_EQ(b.imu_samples + b.scans + answers, req.popped);
   EXPECT_EQ(b.results_dropped, 0U);
   RecordProperty("scans_admitted", std::to_string(f.scans_admitted));
   RecordProperty("imu_copies_dropped", std::to_string(f.imu_copies_dropped));
@@ -593,13 +649,10 @@ TEST(LioRunner, ResultsAndStatesMatchThePipelineWhenPaced) {
     r.Run(2, ScanKind::kPlane);
     r.Run(4);
     r.Run(10, std::nullopt);  // LiDAR gap -> LOST
-    r.Run(1);                 // geometry returned -> RESTARTING
-    ASSERT_EQ(r.state(), LioState::kRestarting);
-    r.ImuUntil(r.now() + kImuPeriod);
-    ASSERT_TRUE(r.Restart(kSeed));
-    if (r.has_runner()) {
-      ASSERT_TRUE(Eventually([&] { return r.Poll().restart.has_value(); }, &r.aborted()));
-    }
+    // Room scans until LIO has restarted itself (dwell 2 s): the paced runner applies the answer, at the latest,
+    // with the result of the scan admitted after it (one FIFO), so both drivers leave the loop at the same scan.
+    for (int i = 0; i < 30 && r.epoch() == 1U; ++i) r.Run(1);
+    ASSERT_EQ(r.epoch(), 2U);
     r.RunUntilTracking();
     r.Run(3);
   };
@@ -612,7 +665,9 @@ TEST(LioRunner, ResultsAndStatesMatchThePipelineWhenPaced) {
   });
   ASSERT_TRUE(ready);
 
-  EXPECT_EQ(runner.states(), pipeline.states());
+  // The synchronous driver answers the restart inside the call that issued it (no RESTARTING after a call), the
+  // runner a call later: compare the transitions, not the per-call states.
+  EXPECT_EQ(runner.Transitions(), pipeline.Transitions());
   EXPECT_EQ(runner.epoch(), pipeline.epoch());
   EXPECT_EQ(runner.epoch(), 2U);
   const auto count = [](const Rig& r) {
@@ -724,20 +779,13 @@ TEST(LioRunner, OutputsOfResultsAppliedByARefusedScanAreNotLost) {
 
 // D33/O16 (replaces LateRestartAnswerRestartsThePredictorAndRecovers): a kRestartSeeded applied more than
 // kPredictorBufferSpan after its command is refused (RESTART_ANSWER_STALE, kStaleAnswer), the state stays
-// RESTARTING and the output is not rewound; a retry with a fresh seed reuses epoch 2 and recovers. A scan admitted
-// while the refused restart was pending (processed by the real backend in the refused seed's world) is discarded.
+// RESTARTING and the output is not rewound; the frontend's own retry (D41: at the next IMU sample, no caller) reuses
+// epoch 2 and recovers. A scan admitted while the refused restart was pending (processed by the real backend in the
+// refused seed's world) is discarded.
 TEST(LioRunner, LateRestartAnswerIsRefusedAndARetrySucceeds) {
   Rig rig;
-  rig.RunUntilTracking();
-  rig.Run(10, std::nullopt);  // LiDAR gap -> LOST
-  rig.Run(1);                 // geometry returned -> RESTARTING
-  ASSERT_EQ(rig.state(), LioState::kRestarting);
-  rig.ImuUntil(rig.now() + kImuPeriod);
-  const time::SensorTime cmd_t = rig.now();
+  const time::SensorTime cmd_t = ToRestartingHeld(rig);
   const std::uint64_t discarded = rig.runner().frontend().stats().results_discarded;
-
-  rig.clock().gate.close();
-  ASSERT_TRUE(rig.Restart(kSeed));
   const auto [ready, ok] = Bounded(rig, [&] {
     rig.ImuUntil(cmd_t + time::milliseconds(50));
     const bool admitted = rig.Scan(rig.MakeScan(ScanKind::kRoom, rig.scan_end(), rig.now())).has_value();
@@ -750,21 +798,7 @@ TEST(LioRunner, LateRestartAnswerIsRefusedAndARetrySucceeds) {
   EXPECT_EQ(rig.epoch(), 1U);
 
   rig.clock().gate.open();
-  const auto answer_of = [&rig] {
-    std::optional<Result<ResetDelta, EstimatorReason>> answer;
-    const auto [answered, got] = Bounded(rig, [&] {
-      return Eventually(
-          [&] {
-            StepOutputs o = rig.Poll();
-            if (o.restart) answer = o.restart;
-            return answer.has_value();
-          },
-          &rig.aborted());
-    });
-    EXPECT_TRUE(answered && got) << "no restart answer";
-    return answer;
-  };
-  const auto stale = answer_of();
+  const auto stale = AnswerOf(rig);
   ASSERT_TRUE(stale.has_value());
   ASSERT_FALSE(stale->has_value()) << "the late answer was applied";
   EXPECT_EQ(stale->error(), EstimatorReason::kStaleAnswer);
@@ -776,10 +810,9 @@ TEST(LioRunner, LateRestartAnswerIsRefusedAndARetrySucceeds) {
   EXPECT_NEAR(Value(rejected[0], "seed_age_s"), 0.4, 1e-9);
   EXPECT_TRUE(rig.Events("LioRestart").empty());
 
-  // The retry: a fresh command at the newest IMU time, epoch 2 again; its answer is timely.
+  // The retry: the next IMU sample issues a fresh command at its time, epoch 2 again; its answer is timely.
   rig.ImuUntil(rig.now() + kImuPeriod);
-  ASSERT_TRUE(rig.Restart(kSeed));
-  const auto seeded = answer_of();
+  const auto seeded = AnswerOf(rig);
   ASSERT_TRUE(seeded.has_value());
   ASSERT_TRUE(seeded->has_value()) << "the retry was refused";
   EXPECT_EQ(rig.state(), LioState::kInitializing);
@@ -816,6 +849,156 @@ TEST(LioRunner, LateRestartAnswerIsRefusedAndARetrySucceeds) {
       last = s.sample.t;
     }
   }
+}
+
+// --- D41, D47, AR4: LIO restarts itself ------------------------------------------------------------------------
+
+// Nobody calls anything but push_imu / push_scan / poll_results (there is no restart API): after a LiDAR gap LIO is
+// LOST, and once the scans have come back non-empty and without a gap for restart_dwell_s (2 s) it restarts itself,
+// seeded with its predictor's newest pose, so the reset is continuous (D47: the seed only picks the gauge).
+TEST(LioRunner, RestartsItselfAfterTheDwellWithoutAnyCall) {
+  Rig rig;
+  rig.RunUntilTracking();
+  rig.Run(10, std::nullopt);  // LiDAR gap -> LOST
+  ASSERT_EQ(rig.state(), LioState::kLost);
+  const time::SensorTime first = rig.scan_end() + kScanPeriod;  // the first scan after the gap
+  for (int i = 0; i < 30 && rig.epoch() == 1U; ++i) {
+    rig.Run(1);
+    if (rig.epoch() == 1U && rig.state() == LioState::kLost) {
+      EXPECT_TRUE(rig.Events("LioRestart").empty()) << "a restart inside the dwell";
+    }
+  }
+  ASSERT_EQ(rig.epoch(), 2U);
+  EXPECT_EQ(rig.state(), LioState::kInitializing);
+
+  const std::vector<std::string> transitions = rig.Transitions();
+  ASSERT_GE(transitions.size(), 5U);
+  EXPECT_EQ(transitions[transitions.size() - 2], "LOST>RESTARTING:STABLE_DATA_DWELL");
+  EXPECT_EQ(transitions.back(), "RESTARTING>INITIALIZING:RESTART_SEEDED");
+  const auto changes = rig.Events("StateTransition");
+  const time::SensorTime restart_t = first + time::seconds(2);
+  EXPECT_DOUBLE_EQ(Value(changes[changes.size() - 2], "sensor_time_s"), static_cast<double>(restart_t.ns) / 1e9)
+      << "RESTARTING at the IMU tick restart_dwell after the first scan";
+
+  // The seed is the predictor's output at the restart tick, at base_link; the reset moves nothing.
+  const auto restarts = rig.Events("LioRestart");
+  ASSERT_EQ(restarts.size(), 1U);
+  EXPECT_EQ(restarts[0].reason, "STABLE_DATA_DWELL");
+  EXPECT_EQ(Value(restarts[0], "old_epoch"), 1.0);
+  EXPECT_EQ(Value(restarts[0], "new_epoch"), 2.0);
+  const std::optional<StateOutput> at_restart = rig.StateAt(restart_t);
+  ASSERT_TRUE(at_restart.has_value());
+  const SeedPose expected = BasePose(*at_restart);
+  EXPECT_NEAR(Value(restarts[0], "seed_x_m"), expected.p_world_m.x(), 1e-9);
+  EXPECT_NEAR(Value(restarts[0], "seed_y_m"), expected.p_world_m.y(), 1e-9);
+  EXPECT_NEAR(Value(restarts[0], "seed_z_m"), expected.p_world_m.z(), 1e-9);
+  EXPECT_NEAR(Value(restarts[0], "seed_yaw_rad"), Yaw(expected.q_world_base), 1e-9);
+  for (const std::string_view key : {"delta_x_m", "delta_y_m", "delta_z_m", "delta_yaw_rad"}) {
+    EXPECT_NEAR(Value(restarts[0], key), 0.0, 1e-6) << key;
+  }
+  EXPECT_TRUE(rig.Events("LioRestartRejected").empty());
+
+  rig.RunUntilTracking();
+  EXPECT_EQ(rig.epoch(), 2U);
+  std::optional<OdometryOutput> odometry;
+  for (const StepOutputs& o : rig.outputs()) {
+    if (o.odometry) odometry = o.odometry;
+  }
+  ASSERT_TRUE(odometry.has_value());
+  EXPECT_EQ(odometry->epoch, 2U);
+  EXPECT_EQ(odometry->reset_counter, 1U);
+  EXPECT_TRUE(rig.all_finite());
+}
+
+// D33/O16 with D41: a late answer is refused and the frontend issues the next command by itself, at the next IMU
+// sample, seeded with the predictor's NEWEST pose and velocity (here the IMU accelerated the output about 0.08 m away
+// from the refused command's pose meanwhile).
+TEST(LioRunner, RefusedLateAnswerIsReissuedWithTheNewestPose) {
+  Rig rig;
+  const time::SensorTime cmd_t = ToRestartingHeld(rig);
+  const auto push = [&rig](time::SensorTime t) {  // 1 m/s^2 along x
+    rig.ImuUntilWith(ImuInput{t, Eigen::Vector3d::Zero(), Eigen::Vector3d(1.0, 0.0, scene::kGravity)});
+  };
+  const auto [ready, ok] = Bounded(rig, [&] {
+    while (rig.now() < cmd_t + time::milliseconds(400)) push(rig.now() + kImuPeriod);
+    return Eventually([&] { return rig.clock().gate.blocked() == 1; }, &rig.aborted());
+  });
+  ASSERT_TRUE(ready && ok);
+  rig.clock().gate.open();
+  const auto stale = AnswerOf(rig);
+  ASSERT_TRUE(stale.has_value());
+  ASSERT_FALSE(stale->has_value());
+  EXPECT_EQ(stale->error(), EstimatorReason::kStaleAnswer);
+  EXPECT_EQ(rig.state(), LioState::kRestarting);
+
+  const time::SensorTime retry_t = rig.now() + kImuPeriod;
+  push(retry_t);
+  const auto seeded = AnswerOf(rig);
+  ASSERT_TRUE(seeded.has_value());
+  ASSERT_TRUE(seeded->has_value()) << "the re-issued restart was refused";
+  EXPECT_EQ(rig.state(), LioState::kInitializing);
+  EXPECT_EQ(rig.epoch(), 2U);
+
+  const std::optional<StateOutput> at_cmd = rig.StateAt(cmd_t);
+  const std::optional<StateOutput> at_retry = rig.StateAt(retry_t);
+  ASSERT_TRUE(at_cmd.has_value());
+  ASSERT_TRUE(at_retry.has_value());
+  const SeedPose newest = BasePose(*at_retry);
+  EXPECT_GT((newest.p_world_m - BasePose(*at_cmd).p_world_m).norm(), 0.05) << "the output moved while held";
+  const auto restarts = rig.Events("LioRestart");
+  ASSERT_EQ(restarts.size(), 1U);
+  EXPECT_NEAR(Value(restarts[0], "seed_x_m"), newest.p_world_m.x(), 1e-9);
+  EXPECT_NEAR(Value(restarts[0], "seed_y_m"), newest.p_world_m.y(), 1e-9);
+  EXPECT_NEAR(Value(restarts[0], "seed_z_m"), newest.p_world_m.z(), 1e-9);
+  EXPECT_NEAR(Value(restarts[0], "seed_yaw_rad"), Yaw(newest.q_world_base), 1e-9);
+  EXPECT_LT(Value(restarts[0], "seed_age_s"), 0.3);
+  // Position and velocity are carried (the seed is the predictor's own state): the reset moves nothing.
+  EXPECT_LT((*seeded)->position_m.norm(), 1e-6);
+  EXPECT_LT((*seeded)->velocity_mps.norm(), 1e-6);
+  EXPECT_GT(at_retry->sample.v_world_mps.x(), 0.35);
+  const auto rejected = rig.Events("LioRestartRejected");
+  ASSERT_EQ(rejected.size(), 1U);
+  EXPECT_DOUBLE_EQ(Value(rejected[0], "sensor_time_s"), static_cast<double>(cmd_t.ns) / 1e9);
+}
+
+// Review Focus 2, the edge of geometry: scans that arrive and are not empty but never confirm (floor only). LIO
+// alternates LOST (wait restart_dwell) -> RESTARTING -> INITIALIZING (no confirmation within restart_dwell) -> LOST,
+// so two attempts are at least two dwells apart; there is no attempt counter and no give-up. While the scans are
+// empty there is no attempt.
+TEST(LioRunner, EdgeOfGeometryAttemptsAreAtLeastTwoDwellsApart) {
+  Rig rig;
+  rig.RunUntilTracking();
+  rig.Run(150, ScanKind::kPlane);  // 15 s of floor-only scans
+  const double plane_end_s = static_cast<double>(rig.scan_end().ns) / 1e9;
+  rig.Run(60, ScanKind::kEmpty);  // 6 s of empty scans
+  ASSERT_TRUE(rig.Drain());
+
+  std::vector<double> attempts;  // sensor time of every LOST -> RESTARTING
+  std::size_t reinit = 0;        // INITIALIZING -> LOST (REINIT_NOT_CONFIRMED)
+  std::size_t tracking = 0;
+  for (const auto& e : rig.Events("StateTransition")) {
+    if (e.state_after == "RESTARTING") {
+      EXPECT_EQ(e.reason, "STABLE_DATA_DWELL");
+      attempts.push_back(Value(e, "sensor_time_s"));
+    }
+    if (e.state_before == "INITIALIZING" && e.state_after == "LOST") {
+      EXPECT_EQ(e.reason, "REINIT_NOT_CONFIRMED");
+      ++reinit;
+    }
+    if (e.state_after == "TRACKING") ++tracking;
+  }
+  EXPECT_EQ(tracking, 1U) << "only the initial confirmation (room scans); floor-only scans never confirm";
+  RecordProperty("attempts", std::to_string(attempts.size()));
+  ASSERT_GE(attempts.size(), 2U) << "LIO gave up";
+  EXPECT_GE(reinit, 2U);
+  for (std::size_t i = 1; i < attempts.size(); ++i) {
+    EXPECT_GE(attempts[i] - attempts[i - 1], 2 * 2.0) << i;
+  }
+  // None while the scans are empty: every attempt precedes the first empty scan.
+  for (const double a : attempts) EXPECT_LE(a, plane_end_s + 0.1) << a;
+  EXPECT_NE(rig.state(), LioState::kTracking);
+  EXPECT_EQ(rig.Events("LioRestart").size(), attempts.size()) << "every attempt is answered and applied";
+  EXPECT_EQ(rig.epoch(), 1U + attempts.size());
 }
 
 // Review note (3): a throwing clock never kills the backend worker (AGENTS.md §2.6): event, last good snapshot.
@@ -856,68 +1039,4 @@ TEST(LioRunner, ThrowingClockIsAnEventNotADeadWorker) {
   EXPECT_EQ(Value(failed[0], "count"), 1.0);
   EXPECT_EQ(Value(failed[1], "count"), static_cast<double>(lio::limits::kEventSummaryEvery));
   EXPECT_EQ(Value(failed[2], "count"), 1001.0) << "the summary at the end of run()";
-}
-
-// Review round 1 (3): a restart answer carried from a refused push_scan must never be taken for the answer to a
-// NEWER restart command: restart() is refused kBackendBusy (with its LioInputRejected event) until the carried
-// answer has been returned.
-TEST(LioRunner, RestartIsRefusedWhileAnOlderAnswerIsCarried) {
-  Rig rig;
-  rig.RunUntilTracking();
-  rig.Run(10, std::nullopt);  // LiDAR gap -> LOST
-  rig.Run(1);                 // geometry returned -> RESTARTING
-  ASSERT_EQ(rig.state(), LioState::kRestarting);
-  const time::SensorTime last_scan = rig.scan_end();
-
-  // The backend's only reachable refusal of a seed through the frontend: a carried velocity that overflows when
-  // rotated into the seed's world (applicator: non-finite state -> kRestartRejected). Huge but finite specific
-  // force along y and z drives the predictor's newest velocity to >= 7e307 per axis (finite: each component is capped
-  // near DBL_MAX / 2 by the trapezoid sum); a seed turned by pi about (0, 1, -1) then gives a rotated x component
-  // of about 2.8 x 7e307 > DBL_MAX.
-  const auto [pumped, v_max] = Bounded(rig, [&] {
-    double v = 0.0;
-    for (int i = 0; i < 2000 && v < 7e307; ++i) {
-      const time::SensorTime t = rig.now() + kImuPeriod;
-      const ImuInput huge{t, Eigen::Vector3d::Zero(), Eigen::Vector3d(0.0, 8e307, 8e307)};
-      rig.ImuUntilWith(huge);
-      if (!rig.outputs().empty() && !rig.outputs().back().states.empty()) {
-        v = rig.outputs().back().states.back().sample.v_world_mps.lpNorm<Eigen::Infinity>();  // norm() overflows
-      }
-    }
-    return v;
-  });
-  ASSERT_TRUE(pumped);
-  ASSERT_GE(v_max, 7e307);
-  ASSERT_TRUE(std::isfinite(v_max));
-  ASSERT_EQ(rig.state(), LioState::kRestarting);
-
-  const SeedPose turned{Eigen::Vector3d::Zero(), Eigen::Quaterniond(Eigen::AngleAxisd(3.14, Eigen::Vector3d(0.0, 1.0, -1.0).normalized()))};
-  ASSERT_TRUE(rig.Restart(turned));
-  ASSERT_TRUE(Eventually([&] {
-    const auto r = rig.runner().result_queue_stats();
-    return r.pushed - r.popped == 1U;
-  })) << "the answer waits in the result queue";
-
-  // A refused scan: the poll before the push applies the rejection, which is carried.
-  const auto refused = rig.Scan(rig.MakeScan(ScanKind::kRoom, last_scan - kScanPeriod, last_scan - kImuPeriod));
-  ASSERT_FALSE(refused.has_value());
-  EXPECT_EQ(refused.error(), EstimatorReason::kOutOfOrder);
-  ASSERT_EQ(rig.Events("LioRestartRejected").size(), 1U) << "the backend refused the seed";
-  const std::size_t busy_events = rig.Events("LioInputRejected").size();
-
-  // A new command now would get the OLD rejection as its answer: refused while it is carried.
-  const auto again = rig.runner().restart(kSeed, Snap(rig.now()));
-  ASSERT_FALSE(again.has_value()) << "accepted while an older restart answer was carried";
-  EXPECT_EQ(again.error(), EstimatorReason::kBackendBusy);
-  const auto rejected = rig.Events("LioInputRejected");
-  ASSERT_EQ(rejected.size(), busy_events + 1U) << "one event at the decision point";
-  EXPECT_EQ(rejected.back().reason, "BACKEND_BUSY");
-  EXPECT_EQ(Value(rejected.back(), "stream"), 2.0) << "the restart stream";
-
-  // The carried answer comes out once, then a new command is accepted.
-  const StepOutputs polled = rig.Poll();
-  ASSERT_TRUE(polled.restart.has_value());
-  ASSERT_FALSE(polled.restart->has_value());
-  EXPECT_EQ(polled.restart->error(), EstimatorReason::kNotFinite);
-  EXPECT_TRUE(rig.runner().restart(kSeed, Snap(rig.now())).has_value());
 }

@@ -95,7 +95,7 @@ Result<std::unique_ptr<LioRunner>, config::ConfigError> LioRunner::create(const 
   auto channels = std::make_unique<LioChannels>();  // heap: the queues hold their slots inline
   auto backend = LioBackend::create(backend_config(config), base_T_imu, imu_T_lidar, *channels, events);
   if (!backend) return std::unexpected(backend.error());
-  auto frontend = std::make_unique<LioFrontend>(frontend_config(config), *channels, events);
+  auto frontend = std::make_unique<LioFrontend>(frontend_config(config), base_T_imu, *channels, events);
   std::unique_ptr<LioRunner> runner(new LioRunner(std::move(channels), std::move(*backend), std::move(frontend),
                                                   events, std::move(backend_clock)));
   // The one thread starts only now, on a fully built runner: the member order cannot expose a half-built object.
@@ -156,12 +156,6 @@ Result<StepOutputs, EstimatorReason> LioRunner::push_scan(ScanInput&& scan, cons
   auto r = frontend_->push_scan(std::move(scan), now);
   if (!r) return r;  // carried_ goes out with the next successful call
   return take_carried(std::move(*r));
-}
-
-Result<void, EstimatorReason> LioRunner::restart(const SeedPose& seed, const time::TimeSnapshot& now) {
-  // An older restart answer not yet returned would be taken for this command's answer: refuse until it is out.
-  if (carried_.restart) return std::unexpected(frontend_->refuse_restart(EstimatorReason::kBackendBusy, now));
-  return frontend_->restart(seed, now);
 }
 
 StepOutputs LioRunner::poll_results(const time::TimeSnapshot& now) { return take_carried(frontend_->poll_results(now)); }

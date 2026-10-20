@@ -36,13 +36,15 @@ bool is_scan_result(BackendResultKind k) {
 
 }  // namespace
 
-LioFrontend::LioFrontend(const FrontendConfig& config, LioChannels& channels,
-                         events::EventRecorder& events) noexcept
+LioFrontend::LioFrontend(const FrontendConfig& config, const Eigen::Isometry3d& base_T_imu,
+                         LioChannels& channels, events::EventRecorder& events) noexcept
     : cfg_(config),
       channels_(channels),
       events_(events),
       lifecycle_(config.lifecycle),
-      predictor_(config.predictor) {}
+      predictor_(config.predictor),
+      q_imu_base_(Eigen::Quaterniond(base_T_imu.linear()).conjugate().normalized()),
+      t_base_imu_(base_T_imu.translation()) {}
 
 // --- events --------------------------------------------------------------------------------------
 
@@ -223,7 +225,11 @@ void LioFrontend::apply_scan(const BackendResult& r, StepOutputs& out,
                         : r.kind == K::kMapReady  ? LioEvent::Kind::kMapReady
                                                   : LioEvent::Kind::kScanDegenerate;
   bool applied = false;
-  if (r.kind == BackendResultKind::kScanGood) {
+  // D41, AR4 (review T2 M1): in LOST and RESTARTING the registration ran against the frozen map with a drifted
+  // prior; its result is not read: no correction, the lifecycle only learns that a non-empty scan arrived.
+  const LioState at = lifecycle_.state();
+  const bool frozen = at == LioState::kLost || at == LioState::kRestarting;
+  if (r.kind == BackendResultKind::kScanGood && !frozen) {
     // D31, D40: a scan counts as corrected only if the output predictor applied its snapshot (matched
     // by stamp); its age is never a reason to refuse it (see "Gap semantics" in frontend.hpp). A good
     // result without a snapshot is a wiring error and fails closed the same way.
@@ -286,7 +292,7 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
       lifecycle_.on(LioEvent{LioEvent::Kind::kRestartSeeded, r.t, position_sigma_m_});
   const Eigen::Matrix3d seed_r = seed.q_world_base.toRotationMatrix();
   emit(event("LioRestart", now)
-           .reason(LioReason::kRestartSeeded)
+           .reason(LioReason::kStableDataDwell)  // the cause of every restart (the only edge into RESTARTING)
            .value("old_epoch", old_epoch)
            .value("new_epoch", epoch_)
            .value("seed_x_m", seed.p_world_m.x())
@@ -350,6 +356,7 @@ Result<StepOutputs, EstimatorReason> LioFrontend::push_imu(const ImuInput& imu,
 
   const Transition tr = lifecycle_.on(LioEvent{LioEvent::Kind::kImuTick, imu.t, position_sigma_m_});
   on_transition(tr, imu.t, now, out, std::nullopt);
+  issue_restart(now);  // D41: by level, after the tick
   if (produced) {
     try {
       out.states.push_back(StateOutput{*produced, epoch_, lifecycle_.state()});
@@ -410,29 +417,33 @@ Result<StepOutputs, EstimatorReason> LioFrontend::push_scan(ScanInput&& in,
   return out;
 }
 
-Result<void, EstimatorReason> LioFrontend::restart(const SeedPose& seed,
-                                                   const time::TimeSnapshot& now) {
-  const time::SensorTime t = last_imu_ ? last_imu_->t : time::SensorTime{};
+void LioFrontend::issue_restart(const time::TimeSnapshot& now) noexcept {
+  // By level (D41, AR4): RESTARTING and no restart pending. The predictor is aligned in RESTARTING (it took a
+  // confirmed epoch to get there); without an output or an IMU sample there is nothing to seed from.
+  if (lifecycle_.state() != LioState::kRestarting || requested_epoch_ != epoch_ || !last_imu_) return;
   const std::optional<OutputSample> latest = predictor_.latest();
-  if (lifecycle_.state() != LioState::kRestarting || !latest || !last_imu_ ||
-      requested_epoch_ != epoch_) {
-    return std::unexpected(reject(EstimatorReason::kWrongState, kStreamRestart, t, now));
+  if (!latest) return;
+  const time::SensorTime t = last_imu_->t;
+  // D47: the seed is the predictor's newest output (the old world's pose at t, with every applied correction),
+  // at base_link: R_wb = R_wi R_bi^T, p_wb = p_wi - R_wb t_bi. Roll, pitch and velocity come with it.
+  if (!usable(latest->q_world_imu) || !latest->p_world_m.allFinite() || !latest->v_world_mps.allFinite()) {
+    (void)reject(EstimatorReason::kNotFinite, kStreamRestart, t, now);
+    return;
   }
+  const Eigen::Quaterniond q_world_base = (latest->q_world_imu.normalized() * q_imu_base_).normalized();
+  const SeedPose seed{latest->p_world_m - q_world_base * t_base_imu_, q_world_base};
   if (!seed.p_world_m.allFinite() || !usable(seed.q_world_base)) {
-    return std::unexpected(reject(EstimatorReason::kNotFinite, kStreamRestart, t, now));
+    (void)reject(EstimatorReason::kNotFinite, kStreamRestart, t, now);
+    return;
   }
-  const SeedPose normalized{seed.p_world_m, seed.q_world_base.normalized()};
-  // The old world's attitude and velocity at t: the predictor's newest output, including the last
-  // applied correction (latest(), not the value on_imu returned).
-  BackendRequest cmd{
-      RestartCommand{epoch_ + 1, t, normalized, latest->q_world_imu, latest->v_world_mps}};
-  if (!channels_.requests.try_push(std::move(cmd))) {  // one decision, one event: LioInputRejected
+  BackendRequest cmd{RestartCommand{epoch_ + 1, t, seed, latest->q_world_imu, latest->v_world_mps}};
+  if (!channels_.requests.try_push(std::move(cmd))) {  // one decision, one event: LioInputRejected; retried next sample
     ++stats_.requests_rejected;
-    return std::unexpected(reject(EstimatorReason::kBackendBusy, kStreamRestart, t, now));
+    (void)reject(EstimatorReason::kBackendBusy, kStreamRestart, t, now);
+    return;
   }
   requested_epoch_ = epoch_ + 1;
-  pending_seed_ = normalized;
-  return {};
+  pending_seed_ = seed;
 }
 
 }  // namespace uavnav::lio

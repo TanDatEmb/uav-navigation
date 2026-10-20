@@ -82,7 +82,8 @@ struct ScanInput {
   bool per_point_time;  ///< points carry relative_time_ns from `start`; false: one instant (no deskew)
 };
 
-/// T^-1 * PX4 pose (§3.4): the base_link pose in the LIO world of the new epoch.
+/// The restart seed (§3.4, D47): the base_link pose in the LIO world of the new epoch, which the frontend takes from
+/// its predictor's newest output (the new world continues the old one; a seed for a fresh map only picks the gauge).
 struct SeedPose {
   Eigen::Vector3d p_world_m;
   Eigen::Quaterniond q_world_base;

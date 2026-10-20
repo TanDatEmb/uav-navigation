@@ -24,6 +24,7 @@ constexpr std::string_view kBeta =
     "lifecycle_gap_lost_s: 0.5\n"
     "lifecycle_degeneracy_lost_s: 1.0\n"
     "lifecycle_position_sigma_lost_m: 0.5\n"
+    "lifecycle_restart_dwell_s: 2.0\n"
     "degeneracy_translation_min_info: 1.1e5\n"
     "degeneracy_rotation_min_info: 2.8e6\n"
     "predictor_tau_vel_s: 0.25\n"
@@ -86,6 +87,7 @@ TEST(LioConfig, BetaValuesLoad) {
   EXPECT_EQ(c.gap_lost, time::milliseconds(500));
   EXPECT_EQ(c.degeneracy_lost, time::seconds(1));
   EXPECT_DOUBLE_EQ(c.position_sigma_lost_m, 0.5);
+  EXPECT_EQ(c.restart_dwell, time::seconds(2));
   EXPECT_DOUBLE_EQ(r->degeneracy.translation_min_info, 1.1e5);
   EXPECT_DOUBLE_EQ(r->degeneracy.rotation_min_info, 2.8e6);
   EXPECT_EQ(r->predictor.tau_vel, time::milliseconds(250));
@@ -93,7 +95,7 @@ TEST(LioConfig, BetaValuesLoad) {
 }
 
 TEST(LioConfig, SpecsAreValidAndComplete) {
-  static_assert(kLioSpecs.size() == 23);
+  static_assert(kLioSpecs.size() == 24);
   // A schema with a bad spec would be rejected before the text is read.
   const auto r = config::load_params(kBeta, kLioSpecs);
   ASSERT_TRUE(r.has_value());
@@ -183,6 +185,29 @@ TEST(LioConfig, GapDegradedBelowTwoScanPeriodsIsRejected) {
       EXPECT_DOUBLE_EQ(spec.min, 0.2);
     }
   }
+}
+
+// D41, AR4: one tier (b) key for both waits of the recovery chain (LOST -> RESTARTING, INITIALIZING -> LOST),
+// bounds [0.5, 30] s inclusive, beta 2.0 s.
+TEST(LioConfig, RestartDwellLoadsAndIsRangeChecked) {
+  for (const auto& [text, expected] : {std::pair{"0.5", time::milliseconds(500)}, std::pair{"30", time::seconds(30)},
+                                       std::pair{"7.25", time::milliseconds(7'250)}}) {
+    const auto r = Load(With("lifecycle_restart_dwell_s", text));
+    ASSERT_TRUE(r.has_value()) << text << ": " << r.error().detail;
+    EXPECT_EQ(r->lifecycle.restart_dwell, expected) << text;
+  }
+  ExpectError(With("lifecycle_restart_dwell_s", "0.49"), Kind::kOutOfRange, "lifecycle_restart_dwell_s");
+  ExpectError(With("lifecycle_restart_dwell_s", "30.01"), Kind::kOutOfRange, "lifecycle_restart_dwell_s");
+  ExpectError(With("lifecycle_restart_dwell_s", "0"), Kind::kOutOfRange, "lifecycle_restart_dwell_s");
+  std::string missing;
+  std::string_view rest = kBeta;
+  while (!rest.empty()) {
+    const auto nl = rest.find('\n');
+    const std::string_view line = rest.substr(0, nl);
+    rest.remove_prefix(nl + 1);
+    if (!line.starts_with("lifecycle_restart_dwell_s:")) missing += std::string(line) + "\n";
+  }
+  ExpectError(missing, Kind::kMissingKey, "lifecycle_restart_dwell_s");
 }
 
 TEST(LioConfig, DegeneracyKeysLoadAndAreRangeChecked) {
@@ -384,7 +409,7 @@ TEST(LioConfigHandBuilt, CountKeysRejectHostileValuesWithoutUndefinedCasts) {
 TEST(LioConfigHandBuilt, SecondsAndMetersKeysAreRangeCheckedToo) {
   const double nan = std::numeric_limits<double>::quiet_NaN();
   for (const std::string_view key : {"lifecycle_gap_degraded_s", "lifecycle_gap_lost_s", "lifecycle_degeneracy_lost_s",
-                                     "lifecycle_position_sigma_lost_m"}) {
+                                     "lifecycle_position_sigma_lost_m", "lifecycle_restart_dwell_s"}) {
     for (const double bad : {-1.0, 1e30, nan}) {
       auto values = Beta();
       values[std::string(key)] = bad;

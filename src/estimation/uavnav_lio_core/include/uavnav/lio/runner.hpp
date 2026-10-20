@@ -26,7 +26,7 @@
 // the two threads itself; LioPipeline (synchronous) is for tests and offline replay only.
 //
 // Threads. Exactly one thread is started (by create()); the runner takes no lock.
-//   - Ingest thread (the caller): push_imu, push_scan, restart, poll_results, state, epoch, frontend() must
+//   - Ingest thread (the caller): push_imu, push_scan, poll_results, state, epoch, frontend() must
 //     all come from ONE thread at a time (the node's ingest thread): they run the LioFrontend, which is
 //     single-threaded. None of them blocks or waits on the backend: a busy backend is kBackendBusy, a full
 //     request queue drops the IMU copy with an event (frontend.hpp).
@@ -41,10 +41,10 @@
 // frontend's busy check precedes its own application of waiting results: a scan is never refused busy while
 // the answers that free its slot are already waiting. If the scan is then refused, the outputs of the results
 // that poll applied are kept and returned by the next successful call (push_imu, push_scan or poll_results):
-// no output is lost. While such a carried output holds a restart answer, restart() is refused kBackendBusy (with
-// the frontend's "LioInputRejected" event, stream 2): otherwise the old answer, returned by the next call, would
-// be taken for the answer to the new command. The ingest thread should call poll_results (or push_imu, which
-// applies results too) at least at the IMU rate.
+// no output is lost. There is no restart call (D41): the frontend issues its own restart command at the end of a
+// successful push_imu, whose return also flushes the carried outputs, so a carried restart answer is always returned
+// before the answer to a newer command can be applied. The ingest thread should call poll_results (or push_imu,
+// which applies results too) at least at the IMU rate.
 //
 // Start and shutdown (design table "Shutdown"). create() starts the jthread as its last step, on the fully built
 // runner, so no member order can let the thread see a half-built object. stop() requests stop on the jthread and
@@ -75,8 +75,8 @@
 // StepOutputs::restart = kStaleAnswer and a "LioRestartRejected" event (kRestartAnswerStale, values new_epoch,
 // sensor_time_s, seed_age_s) is emitted; the state stays RESTARTING, the epoch and /lio/state are untouched,
 // and no restart is pending any more. The backend has already switched to the new epoch and seeded it; the
-// caller restarts again with a fresh seed, and that command reuses the epoch number with a newer time, which the
-// backend accepts (it clears the map and seeds again). Scans admitted between the refusal and the retry carry
+// frontend issues the next command itself at the next push_imu (D41), seeded with the predictor's newest pose; it
+// reuses the epoch number with a newer time, which the backend accepts (it clears the map and seeds again). Scans admitted between the refusal and the retry carry
 // the old epoch and come back kScanNotProcessed; results of scans admitted while the refused restart was
 // pending carry the new epoch number and are discarded (kStaleEpoch) until the retry's own answer is applied
 // (frontend.hpp). Pinned by LioRunner.LateRestartAnswerIsRefusedAndARetrySucceeds and the LioFrontend
@@ -118,11 +118,6 @@ class LioRunner {
   /// Applies the waiting results first (see "Outputs"), then LioFrontend::push_scan. On a refusal the applied
   /// results' outputs are returned by the next successful call.
   Result<StepOutputs, EstimatorReason> push_scan(ScanInput&& scan, const time::TimeSnapshot& now);
-
-  /// LioFrontend::restart: queues the command. The answer (ResetDelta, or kNotFinite when the backend refused
-  /// the seed) is StepOutputs::restart of the later call that applies it. kBackendBusy (LioInputRejected event)
-  /// while an older restart answer is carried and not yet returned (see "Outputs").
-  Result<void, EstimatorReason> restart(const SeedPose& seed, const time::TimeSnapshot& now);
 
   /// Applies the waiting results (and returns any outputs carried from a refused scan).
   StepOutputs poll_results(const time::TimeSnapshot& now);

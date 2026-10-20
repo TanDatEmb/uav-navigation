@@ -202,7 +202,7 @@ class Rig {
     auto recorder = events::EventRecorder::create(std::make_unique<FakeSink>(store_));
     EXPECT_TRUE(recorder.has_value());
     recorder_ = std::move(*recorder);
-    frontend_ = std::make_unique<LioFrontend>(cfg, *channels_, *recorder_);
+    frontend_ = std::make_unique<LioFrontend>(cfg, scene::base_T_imu(), *channels_, *recorder_);
   }
 
   LioFrontend& fe() { return *frontend_; }
@@ -270,13 +270,33 @@ class Rig {
     ASSERT_EQ(newest_, Ms(10'000));
   }
 
-  /// TRACKING, IMU only until LOST (10.505 s), then a good scan in LOST: RESTARTING at 10.7 s.
+  /// From LOST: a non-empty scan every 100 ms (answered kScanGood on the frozen map, not applied) until the IMU tick
+  /// restart_dwell (2 s) after the first one: RESTARTING, and that push_imu queued the frontend's own restart command
+  /// (not drained). No scan is admitted after the tick.
+  void DwellUntilRestarting() {
+    ASSERT_EQ(frontend_->state(), LioState::kLost);
+    for (int i = 0; i < 30 && frontend_->state() == LioState::kLost; ++i) {
+      const time::SensorTime end = newest_ + kScanPeriod;
+      ImuUntil(end);
+      if (frontend_->state() != LioState::kLost) break;
+      ASSERT_TRUE(Scan(end - kScanPeriod, end).has_value());
+      backend_.AnswerScan(BackendResultKind::kScanGood);
+      Poll();
+    }
+    ASSERT_EQ(frontend_->state(), LioState::kRestarting);
+  }
+
+  /// TRACKING, IMU only until LOST (10.505 s), then non-empty scans from 10.7 s: RESTARTING at the IMU tick 12.7 s,
+  /// with the frontend's own restart command queued at 12.7 s. No command before RESTARTING.
   void ToRestarting() {
     ToTracking();
     ImuUntil(Ms(10'600));
     ASSERT_EQ(frontend_->state(), LioState::kLost);
-    ScanAnswered(Ms(10'700), BackendResultKind::kScanGood);
-    ASSERT_EQ(frontend_->state(), LioState::kRestarting);
+    DwellUntilRestarting();
+    ASSERT_EQ(newest_, Ms(12'700));
+    backend_.Drain();
+    ASSERT_EQ(backend_.restarts().size(), 1U) << "exactly one command, issued at RESTARTING";
+    ASSERT_EQ(backend_.restarts()[0].t, Ms(12'700));
   }
 
   std::vector<events::EventRecord> Events(std::string_view name) {
@@ -338,6 +358,27 @@ std::optional<time::SensorTime> ImuUntilState(Rig& h, time::SensorTime end, LioS
     }
   }
   return reached;
+}
+
+/// The newest restart command the frontend queued (drains the request queue).
+RestartCommand IssuedCommand(Rig& h) {
+  h.backend().Drain();
+  EXPECT_FALSE(h.backend().restarts().empty());
+  return h.backend().restarts().empty() ? RestartCommand{} : h.backend().restarts().back();
+}
+
+/// The backend's kRestartSeeded for `cmd`, as LioBackend answers: the IMU state of the seed at cmd.t (level, still).
+void AnswerSeeded(Rig& h, const RestartCommand& cmd) {
+  const Eigen::Vector3d p_imu = cmd.seed.p_world_m + cmd.seed.q_world_base * scene::base_T_imu().translation();
+  h.backend().Push(BackendResult{BackendResultKind::kRestartSeeded, cmd.new_epoch, 0, cmd.t, Still(cmd.t, p_imu),
+                                 std::nullopt, 0.03, std::nullopt});
+}
+
+/// The base_link pose of a predictor output (D47 seed): R_wb = R_wi R_bi^T, p_wb = p_wi - R_wb t_bi.
+SeedPose BasePose(const OutputSample& s) {
+  const Eigen::Quaterniond q_wb =
+      (s.q_world_imu * Eigen::Quaterniond(scene::base_T_imu().linear()).conjugate()).normalized();
+  return SeedPose{s.p_world_m - q_wb * scene::base_T_imu().translation(), q_wb};
 }
 
 }  // namespace
@@ -497,17 +538,17 @@ TEST(LioFrontend, FullRequestQueueIsAnEventAndNeverBlocks) {
   EXPECT_EQ(Value(overflow[0], "count"), 1.0);
 }
 
-// Review Focus 3: after restart(), results of the old epoch are discarded and only end their scan's
-// flight.
+// Review Focus 3: once the frontend has issued its restart, results of the old epoch are discarded and only end
+// their scan's flight.
 TEST(LioFrontend, ResultsOfTheOldEpochAreDiscardedAfterRestart) {
   Rig h;
-  h.ToRestarting();
-  h.ImuUntil(Ms(10'800));
-  ASSERT_TRUE(h.Scan(Ms(10'700), Ms(10'800)).has_value());  // epoch 1, in flight
-  ASSERT_TRUE(h.fe()
-                  .restart(SeedPose{Eigen::Vector3d(5.0, 0.0, 0.0), Eigen::Quaterniond::Identity()},
-                           Snap(h.now()))
-                  .has_value());
+  h.ToTracking();
+  h.ImuUntil(Ms(10'600));  // LOST
+  for (std::int64_t end = 10'700; end <= 12'500; end += 100) h.ScanAnswered(Ms(end), BackendResultKind::kScanGood);
+  h.ImuUntil(Ms(12'600));
+  ASSERT_TRUE(h.Scan(Ms(12'500), Ms(12'600)).has_value());  // epoch 1, in flight
+  ASSERT_EQ(h.fe().state(), LioState::kLost);
+  h.ImuUntil(Ms(12'700));  // the dwell from 10.7 s ends: RESTARTING, the frontend's own command (epoch 2)
   EXPECT_EQ(h.fe().state(), LioState::kRestarting);
   EXPECT_EQ(h.fe().epoch(), 1U);
   ASSERT_TRUE(h.LastHealth().has_value());
@@ -515,7 +556,7 @@ TEST(LioFrontend, ResultsOfTheOldEpochAreDiscardedAfterRestart) {
 
   // The old epoch's scan answers kScanGood with a snapshot 1 m away: discarded, nothing corrected.
   const auto job = h.backend().AnswerScan(BackendResultKind::kScanGood,
-                                          Still(Ms(10'800), Eigen::Vector3d(1, 0, 0)));
+                                          Still(Ms(12'600), Eigen::Vector3d(1, 0, 0)));
   EXPECT_EQ(job.epoch, 1U);
   const StepOutputs out = h.Poll();
   EXPECT_FALSE(out.odometry.has_value());
@@ -527,21 +568,18 @@ TEST(LioFrontend, ResultsOfTheOldEpochAreDiscardedAfterRestart) {
   ASSERT_EQ(discarded.size(), 1U);
   EXPECT_EQ(discarded[0].reason, "STALE_EPOCH");
   EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());
-  h.ImuUntil(Ms(10'900));  // the next health grid point
+  h.ImuUntil(Ms(12'800));  // the next health grid point
   ASSERT_TRUE(h.LastHealth().has_value());
-  EXPECT_EQ(h.LastHealth()->t, Ms(10'900));
+  EXPECT_EQ(h.LastHealth()->t, Ms(12'800));
   EXPECT_EQ(h.LastHealth()->output_tracking_error, tracking_error);
   EXPECT_LT(h.LastState()->sample.p_world_m.norm(), 1e-6);
 
   // The backend confirms the restart: epoch 2, INITIALIZING.
-  h.backend().Drain();
-  ASSERT_EQ(h.backend().restarts().size(), 1U);
-  const RestartCommand cmd = h.backend().restarts()[0];
+  const RestartCommand cmd = IssuedCommand(h);
+  ASSERT_EQ(h.backend().restarts().size(), 1U) << "no second command while one is pending";
   EXPECT_EQ(cmd.new_epoch, 2U);
-  EXPECT_EQ(cmd.t, Ms(10'800));
-  h.backend().Push(BackendResult{BackendResultKind::kRestartSeeded, 2, 0, cmd.t,
-                                 Still(cmd.t, cmd.seed.p_world_m), std::nullopt, 0.03,
-                                 std::nullopt});
+  EXPECT_EQ(cmd.t, Ms(12'700));
+  AnswerSeeded(h, cmd);
   const StepOutputs seeded = h.Poll();
   ASSERT_TRUE(seeded.restart.has_value());
   EXPECT_TRUE(seeded.restart->has_value());
@@ -549,35 +587,32 @@ TEST(LioFrontend, ResultsOfTheOldEpochAreDiscardedAfterRestart) {
   EXPECT_EQ(h.fe().epoch(), 2U);
 }
 
+// D47: the frontend seeds its own restart with the predictor's newest output (at base_link), its attitude and
+// velocity; the answer's ResetDelta is applied.
 TEST(LioFrontend, RestartAppliesResetDeltaWhenTheBackendConfirms) {
   Rig h;
   h.ToRestarting();
-  h.ImuUntil(h.now() + kImuPeriod);
   const std::optional<StateOutput> old_state = h.LastState();
   ASSERT_TRUE(old_state.has_value());
   ASSERT_EQ(old_state->sample.t, h.now());
   EXPECT_EQ(old_state->sample.reset_counter, 0U);
-
-  const SeedPose seed{Eigen::Vector3d(1.0, 2.0, 0.5),
-                      Eigen::Quaterniond(Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitZ()))};
-  ASSERT_TRUE(h.fe().restart(seed, Snap(h.now())).has_value());
   EXPECT_EQ(h.fe().state(), LioState::kRestarting);
   EXPECT_EQ(h.fe().epoch(), 1U);
-  const auto again = h.fe().restart(seed, Snap(h.now()));
-  ASSERT_FALSE(again.has_value());
-  EXPECT_EQ(again.error(), EstimatorReason::kWrongState);  // a restart is pending
 
-  h.backend().Drain();
-  ASSERT_EQ(h.backend().restarts().size(), 1U);
-  const RestartCommand cmd = h.backend().restarts()[0];
+  const RestartCommand cmd = IssuedCommand(h);
   EXPECT_EQ(cmd.new_epoch, 2U);
   EXPECT_EQ(cmd.t, old_state->sample.t);
-  EXPECT_LT((cmd.seed.p_world_m - seed.p_world_m).norm(), 1e-12);
+  const SeedPose expected = BasePose(old_state->sample);
+  EXPECT_LT((cmd.seed.p_world_m - expected.p_world_m).norm(), 1e-12);
+  EXPECT_LT(cmd.seed.q_world_base.angularDistance(expected.q_world_base), 1e-12);
   EXPECT_LT(cmd.q_world_imu_old.angularDistance(old_state->sample.q_world_imu), 1e-12);
   EXPECT_LT((cmd.v_world_mps_old - old_state->sample.v_world_mps).norm(), 1e-12);
 
-  // Three more IMU samples before the answer: reset_to matches cmd.t in the buffer (no rewind).
+  // Three more IMU samples before the answer: no second command while one is pending, and reset_to matches cmd.t
+  // in the buffer (no rewind).
   h.ImuUntil(h.now() + time::milliseconds(15));
+  h.backend().Drain();
+  EXPECT_EQ(h.backend().restarts().size(), 1U);
   EstimatorSnapshot s = Still(cmd.t);
   s.q_world_imu = old_state->sample.q_world_imu;
   s.v_world_mps = old_state->sample.v_world_mps;
@@ -601,23 +636,23 @@ TEST(LioFrontend, RestartAppliesResetDeltaWhenTheBackendConfirms) {
 
   const auto restarts = h.Events("LioRestart");
   ASSERT_EQ(restarts.size(), 1U);
+  EXPECT_EQ(restarts[0].reason, "STABLE_DATA_DWELL");
   EXPECT_EQ(Value(restarts[0], "old_epoch"), 1.0);
   EXPECT_EQ(Value(restarts[0], "new_epoch"), 2.0);
   EXPECT_EQ(restarts[0].identity.lio_epoch, 2U);
-  EXPECT_DOUBLE_EQ(Value(restarts[0], "seed_x_m"), 1.0);
-  EXPECT_NEAR(Value(restarts[0], "seed_yaw_rad"), 0.3, 1e-12);
+  EXPECT_DOUBLE_EQ(Value(restarts[0], "seed_x_m"), expected.p_world_m.x());
+  EXPECT_DOUBLE_EQ(Value(restarts[0], "seed_z_m"), expected.p_world_m.z());
+  EXPECT_NEAR(Value(restarts[0], "seed_yaw_rad"), 0.0, 1e-12);
   EXPECT_NEAR(Value(restarts[0], "delta_x_m"), 1.0, 1e-9);
   EXPECT_NEAR(Value(restarts[0], "seed_age_s"), 0.015, 1e-9);
 }
 
+// A backend rejection leaves RESTARTING with no restart pending: the next IMU sample issues a new command, which
+// asks for epoch 2 again.
 TEST(LioFrontend, RestartRejectedByTheBackendLeavesRestarting) {
   Rig h;
   h.ToRestarting();
-  const SeedPose seed{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()};
-  ASSERT_TRUE(h.fe().restart(seed, Snap(h.now())).has_value());
-  h.backend().Drain();
-  ASSERT_EQ(h.backend().restarts().size(), 1U);
-  const RestartCommand cmd = h.backend().restarts()[0];
+  const RestartCommand cmd = IssuedCommand(h);
   h.backend().Push(BackendResult{BackendResultKind::kRestartRejected, cmd.new_epoch, 0, cmd.t,
                                  std::nullopt, std::nullopt, 0.03, std::nullopt});
   const StepOutputs out = h.Poll();
@@ -631,36 +666,51 @@ TEST(LioFrontend, RestartRejectedByTheBackendLeavesRestarting) {
   EXPECT_EQ(rejected[0].reason, "RESTART_REJECTED");
   EXPECT_TRUE(h.Events("LioRestart").empty());
 
-  // No restart is pending any more: a new one is accepted and asks for epoch 2 again.
-  ASSERT_TRUE(h.fe().restart(seed, Snap(h.now())).has_value());
+  const auto next = h.Imu(h.now() + kImuPeriod);
+  ASSERT_TRUE(next.has_value());
   h.backend().Drain();
   ASSERT_EQ(h.backend().restarts().size(), 2U);
   EXPECT_EQ(h.backend().restarts()[1].new_epoch, 2U);
+  EXPECT_EQ(h.backend().restarts()[1].t, h.now());
 }
 
-TEST(LioFrontend, RestartIsRefusedOutsideRestartingAndForABadSeed) {
+// Review T2 M1, D41, AR4: in LOST (and RESTARTING) the registration ran against the frozen map with a drifted prior,
+// so its result is never applied: no correction of the output, no PredictorCorrectionRejected, no odometry; the
+// scan still counts as a non-empty scan for the LOST wait.
+TEST(LioFrontend, FrozenMapResultsAreNotAppliedInLostOrRestarting) {
   Rig h;
-  const SeedPose seed{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()};
-  auto r = h.fe().restart(seed, Snap(h.now()));
-  ASSERT_FALSE(r.has_value());
-  EXPECT_EQ(r.error(), EstimatorReason::kWrongState);
   h.ToTracking();
-  r = h.fe().restart(seed, Snap(h.now()));
-  ASSERT_FALSE(r.has_value());
-  EXPECT_EQ(r.error(), EstimatorReason::kWrongState);
-  Rig g;
-  g.ToRestarting();
-  r = g.fe().restart(SeedPose{Eigen::Vector3d(std::nan(""), 0, 0), Eigen::Quaterniond::Identity()},
-                     Snap(g.now()));
-  ASSERT_FALSE(r.has_value());
-  EXPECT_EQ(r.error(), EstimatorReason::kNotFinite);
-  r = g.fe().restart(SeedPose{Eigen::Vector3d::Zero(), Eigen::Quaterniond(0, 0, 0, 0)},
-                     Snap(g.now()));
-  ASSERT_FALSE(r.has_value());
-  EXPECT_EQ(r.error(), EstimatorReason::kNotFinite);
-  g.backend().Drain();
-  EXPECT_TRUE(g.backend().restarts().empty());
-  EXPECT_EQ(g.fe().epoch(), 1U);
+  h.ImuUntil(Ms(10'600));
+  ASSERT_EQ(h.fe().state(), LioState::kLost);
+  ASSERT_TRUE(h.LastState().has_value());
+  const Eigen::Vector3d p0 = h.LastState()->sample.p_world_m;
+  for (std::int64_t end = 10'700; end <= 11'000; end += 100) {
+    const StepOutputs out =
+        h.ScanAnswered(Ms(end), BackendResultKind::kScanGood, Still(Ms(end), Eigen::Vector3d(1.0, 0.0, 0.0)));
+    EXPECT_FALSE(out.odometry.has_value()) << end;
+    EXPECT_EQ(h.fe().state(), LioState::kLost) << end;
+  }
+  h.ImuUntil(Ms(11'100));  // a health grid point
+  EXPECT_LT((h.LastState()->sample.p_world_m - p0).norm(), 1e-9) << "a frozen-map result moved the output";
+  EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());
+  ASSERT_TRUE(h.LastHealth().has_value());
+  EXPECT_NEAR(h.LastHealth()->correction_age_s, 1.1, 1e-9) << "the last applied correction is still the 10.0 s scan";
+  // The wait still runs from 10.7 s: RESTARTING at 12.7 s.
+  h.DwellUntilRestarting();
+  EXPECT_EQ(h.now(), Ms(12'700));
+
+  // RESTARTING with no restart pending (after a backend rejection): a frozen-map result is not applied either.
+  const RestartCommand cmd = IssuedCommand(h);
+  h.backend().Push(BackendResult{BackendResultKind::kRestartRejected, cmd.new_epoch, 0, cmd.t, std::nullopt,
+                                 std::nullopt, 0.03, std::nullopt});
+  h.Poll();
+  ASSERT_EQ(h.fe().state(), LioState::kRestarting);
+  ASSERT_TRUE(h.Scan(Ms(12'600), Ms(12'700)).has_value());  // admitted before the next IMU sample re-issues
+  h.backend().AnswerScan(BackendResultKind::kScanGood, Still(Ms(12'700), Eigen::Vector3d(1.0, 0.0, 0.0)));
+  EXPECT_FALSE(h.Poll().odometry.has_value());
+  h.ImuUntil(h.now() + kImuPeriod);
+  EXPECT_LT((h.LastState()->sample.p_world_m - p0).norm(), 1e-9);
+  EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());
 }
 
 TEST(LioFrontend, OnlyGoodScansInTrackingPublishOdometry) {
@@ -789,11 +839,16 @@ TEST(LioFrontend, NotProcessedScansEndTheirFlightAndChangeNothing) {
 TEST(LioFrontend, MapPolicyFollowsTheLifecycleAtAdmission) {
   Rig h;
   h.ToRestarting();
-  h.ImuUntil(Ms(10'800));
-  ASSERT_TRUE(h.Scan(Ms(10'700), Ms(10'800)).has_value());
+  h.ImuUntil(Ms(12'800));
+  ASSERT_TRUE(h.Scan(Ms(12'700), Ms(12'800)).has_value());
   h.backend().Drain();
   ASSERT_FALSE(h.backend().jobs().empty());
   EXPECT_EQ(h.backend().jobs().back().map_policy, MapPolicy::kFrozen);  // RESTARTING
+  for (const FakeBackend::Job& job : h.backend().jobs()) {
+    if (job.end >= Ms(10'700)) {
+      EXPECT_EQ(job.map_policy, MapPolicy::kFrozen) << job.end.ns;  // LOST, RESTARTING
+    }
+  }
   EXPECT_EQ(h.backend().jobs().front().map_policy,
             MapPolicy::kInsert);  // INITIALIZING (the map-ready scan)
 }
@@ -891,58 +946,45 @@ TEST(LioFrontend, JitteredImuAndOffGridScanEndsKeepTracking) {
   EXPECT_GE(h.now(), Ms(13'000));
 }
 
-// Review fix (b): a restart refused by a full request queue is one decision and one event.
+// A restart refused by a full request queue is one decision and one event (LioInputRejected BACKEND_BUSY, stream
+// 2); the next IMU sample issues it.
 TEST(LioFrontend, RestartWithAFullRequestQueueIsBackendBusy) {
   Rig h;
-  h.ToRestarting();
-  // Nobody pops any more: fill the request queue with IMU copies.
-  while (h.channels().requests.stats().pushed - h.channels().requests.stats().popped <
-         RequestQueue::capacity()) {
-    ASSERT_TRUE(h.Imu(h.now() + kImuPeriod).has_value());
+  h.ToTracking();
+  h.ImuUntil(Ms(10'600));  // LOST
+  for (std::int64_t end = 10'700; end <= 12'600; end += 100) h.ScanAnswered(Ms(end), BackendResultKind::kScanGood);
+  ASSERT_EQ(h.fe().state(), LioState::kLost);
+  h.backend().Drain();
+  // Nobody pops any more: fill the request queue with IMU copies, 0.1 ms apart, before the dwell ends (12.7 s).
+  time::SensorTime t = h.now();
+  while (h.channels().requests.stats().pushed - h.channels().requests.stats().popped < RequestQueue::capacity()) {
+    t = t + time::nanoseconds(100'000);
+    ASSERT_TRUE(h.Imu(t).has_value());
   }
-  ASSERT_EQ(h.fe().state(), LioState::kRestarting);
-  const std::size_t overflow_before = h.Events("LioQueueOverflow").size();
+  ASSERT_LT(t, Ms(12'700));
+  ASSERT_EQ(h.fe().state(), LioState::kLost);
   const std::uint64_t rejected_before = h.fe().stats().requests_rejected;
-  const auto r = h.fe().restart(SeedPose{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()},
-                                Snap(h.now()));
-  ASSERT_FALSE(r.has_value());
-  EXPECT_EQ(r.error(), EstimatorReason::kBackendBusy);
-  EXPECT_EQ(h.fe().stats().requests_rejected, rejected_before + 1);
-  EXPECT_EQ(h.Events("LioQueueOverflow").size(), overflow_before);
+  ASSERT_TRUE(h.Imu(Ms(12'700)).has_value());  // RESTARTING; its IMU copy and the restart command both find it full
+  ASSERT_EQ(h.fe().state(), LioState::kRestarting);
+  EXPECT_EQ(h.fe().stats().requests_rejected, rejected_before + 2);
   const auto busy = h.Events("LioInputRejected");
   ASSERT_EQ(busy.size(), 1U);
   EXPECT_EQ(busy[0].reason, "BACKEND_BUSY");
   EXPECT_EQ(Value(busy[0], "stream"), 2.0);
-  // Nothing is pending: once the backend drains, the same restart is accepted.
   h.backend().Drain();
-  EXPECT_TRUE(
-      h.fe()
-          .restart(SeedPose{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()}, Snap(h.now()))
-          .has_value());
+  EXPECT_TRUE(h.backend().restarts().empty());
+  // Nothing is pending: once the backend drains, the next IMU sample issues the command.
+  ASSERT_TRUE(h.Imu(Ms(12'705)).has_value());
+  h.backend().Drain();
+  ASSERT_EQ(h.backend().restarts().size(), 1U);
+  EXPECT_EQ(h.backend().restarts()[0].t, Ms(12'705));
+  EXPECT_EQ(h.backend().restarts()[0].new_epoch, 2U);
   EXPECT_EQ(h.fe().epoch(), 1U);
 }
 
 // --- D33/O16: a restart answer the output predictor can no longer match -------------------------
 
 namespace {
-
-const SeedPose kSeed{Eigen::Vector3d(1.0, 2.0, 0.5), Eigen::Quaterniond::Identity()};
-
-/// One more IMU sample, then restart() at it: returns the queued command.
-RestartCommand RestartNow(Rig& h) {
-  h.ImuUntil(h.now() + kImuPeriod);
-  EXPECT_TRUE(h.fe().restart(kSeed, Snap(h.now())).has_value());
-  h.backend().Drain();
-  EXPECT_FALSE(h.backend().restarts().empty());
-  return h.backend().restarts().empty() ? RestartCommand{} : h.backend().restarts().back();
-}
-
-/// The backend's kRestartSeeded for `cmd`: the seed at cmd.t, as LioBackend answers.
-void AnswerSeeded(Rig& h, const RestartCommand& cmd) {
-  h.backend().Push(BackendResult{BackendResultKind::kRestartSeeded, cmd.new_epoch, 0, cmd.t,
-                                 Still(cmd.t, cmd.seed.p_world_m), std::nullopt, 0.03,
-                                 std::nullopt});
-}
 
 /// Bitwise equal state outputs, call by call.
 void ExpectSameStates(const Rig& a, const Rig& b) {
@@ -966,14 +1008,15 @@ void ExpectSameStates(const Rig& a, const Rig& b) {
 }  // namespace
 
 // The answer arrives 400 ms (> kPredictorBufferSpan) after its command: refused, never a rewind. A
-// twin fed the same inputs but never answered must publish bitwise the same states.
+// twin fed the same inputs but never answered must publish bitwise the same states. The frontend then issues the
+// next command itself (D41), at the next IMU sample, seeded with the newest output.
 TEST(LioFrontend, LateRestartAnswerIsRefusedAndStaysRestarting) {
   Rig late;
   Rig twin;
   late.ToRestarting();
   twin.ToRestarting();
-  const RestartCommand cmd = RestartNow(late);
-  (void)RestartNow(twin);
+  const RestartCommand cmd = IssuedCommand(late);
+  (void)IssuedCommand(twin);
   EXPECT_EQ(cmd.new_epoch, 2U);
   late.ImuUntil(cmd.t + time::milliseconds(400));
   twin.ImuUntil(cmd.t + time::milliseconds(400));
@@ -998,7 +1041,8 @@ TEST(LioFrontend, LateRestartAnswerIsRefusedAndStaysRestarting) {
   EXPECT_NEAR(Value(rejected[0], "seed_age_s"), 0.4, 1e-9);
   EXPECT_TRUE(late.Events("LioRestart").empty());
 
-  // No rewind: the next state is newer than the previous one, and every state equals the twin's.
+  // No rewind: the next state is newer than the previous one, and every state equals the twin's (whose command is
+  // still pending, so it issues none).
   late.ImuUntil(late.now() + time::milliseconds(100));
   twin.ImuUntil(twin.now() + time::milliseconds(100));
   const auto& outs = late.outputs();
@@ -1009,14 +1053,17 @@ TEST(LioFrontend, LateRestartAnswerIsRefusedAndStaysRestarting) {
   EXPECT_EQ(first_after->states[0].sample.reset_counter, 0U);
   ExpectSameStates(late, twin);
 
-  // No restart is pending: a new one is accepted and asks for epoch 2 again (the backend has
-  // already switched to 2 and seeds again at the newer time); its timely answer is applied.
-  ASSERT_TRUE(late.fe().restart(kSeed, Snap(late.now())).has_value());
+  // No restart was pending after the refusal: the first IMU sample after it issued a new command for epoch 2 again
+  // (the backend has already switched to 2 and seeds again at the newer time), seeded with the output of that
+  // sample; its timely answer is applied.
   late.backend().Drain();
   ASSERT_EQ(late.backend().restarts().size(), 2U);
   const RestartCommand retry = late.backend().restarts()[1];
   EXPECT_EQ(retry.new_epoch, 2U);
-  EXPECT_EQ(retry.t, late.now());
+  EXPECT_EQ(retry.t, cmd.t + time::milliseconds(405));
+  EXPECT_LT((retry.seed.p_world_m - BasePose(first_after->states[0].sample).p_world_m).norm(), 1e-12);
+  twin.backend().Drain();
+  EXPECT_EQ(twin.backend().restarts().size(), 1U);
   AnswerSeeded(late, retry);
   const StepOutputs seeded = late.Poll();
   ASSERT_TRUE(seeded.restart.has_value());
@@ -1031,14 +1078,14 @@ TEST(LioFrontend, LateRestartAnswerIsRefusedAndStaysRestarting) {
 TEST(LioFrontend, TimelyRestartAnswerAtTheBufferBoundaryIsApplied) {
   Rig h;
   h.ToRestarting();
-  const RestartCommand cmd = RestartNow(h);
+  const RestartCommand cmd = IssuedCommand(h);
   h.ImuUntil(cmd.t + lio::limits::kPredictorBufferSpan);
   const time::SensorTime newest = h.now();
   AnswerSeeded(h, cmd);
   const StepOutputs out = h.Poll();
   ASSERT_TRUE(out.restart.has_value());
   ASSERT_TRUE(out.restart->has_value());
-  EXPECT_LT((out.restart->value().position_m - kSeed.p_world_m).norm(), 1e-6);
+  EXPECT_LT(out.restart->value().position_m.norm(), 1e-6) << "the seed is the output itself";
   EXPECT_EQ(h.fe().state(), LioState::kInitializing);
   EXPECT_EQ(h.fe().epoch(), 2U);
   EXPECT_TRUE(h.Events("LioRestartRejected").empty());
@@ -1053,7 +1100,7 @@ TEST(LioFrontend, TimelyRestartAnswerAtTheBufferBoundaryIsApplied) {
 
   Rig g;
   g.ToRestarting();
-  const RestartCommand late = RestartNow(g);
+  const RestartCommand late = IssuedCommand(g);
   g.ImuUntil(late.t + lio::limits::kPredictorBufferSpan + kImuPeriod);
   AnswerSeeded(g, late);
   const StepOutputs refused = g.Poll();
@@ -1069,7 +1116,7 @@ TEST(LioFrontend, TimelyRestartAnswerAtTheBufferBoundaryIsApplied) {
 TEST(LioFrontend, ScanResultsOfARefusedAnswerAreDiscardedAfterTheRetry) {
   Rig h;
   h.ToRestarting();
-  const RestartCommand cmd = RestartNow(h);
+  const RestartCommand cmd = IssuedCommand(h);
   h.ImuUntil(cmd.t + time::milliseconds(350));
   ASSERT_TRUE(h.Scan(h.now() - kScanPeriod, h.now()).has_value());
   const time::SensorTime scan_end = h.now();
@@ -1078,7 +1125,7 @@ TEST(LioFrontend, ScanResultsOfARefusedAnswerAreDiscardedAfterTheRetry) {
   const StepOutputs refused = h.Poll();
   ASSERT_TRUE(refused.restart.has_value());
   ASSERT_FALSE(refused.restart->has_value());
-  ASSERT_TRUE(h.fe().restart(kSeed, Snap(h.now())).has_value());
+  ASSERT_TRUE(h.Imu(h.now() + kImuPeriod).has_value());  // the frontend's own retry
 
   const auto job = h.backend().AnswerScan(BackendResultKind::kScanGood,
                                           Still(scan_end, Eigen::Vector3d(1.0, 0.0, 0.0)));
@@ -1116,25 +1163,24 @@ TEST(LioFrontend, ResetCounterIsEpochMinusOne) {
     h.ScanAnswered(start + kScanPeriod, BackendResultKind::kMapReady);
     for (int k = 2; k <= 6; ++k) {
       const time::SensorTime end = start + time::Duration{k * kScanPeriod.ns};
-      h.ScanAnswered(end, BackendResultKind::kScanGood, Still(end, kSeed.p_world_m));
+      h.ScanAnswered(end, BackendResultKind::kScanGood);
     }
     ASSERT_EQ(h.fe().state(), LioState::kTracking);
   };
-  AnswerSeeded(h, RestartNow(h));  // applied: epoch 2
+  AnswerSeeded(h, IssuedCommand(h));  // applied: epoch 2
   h.Poll();
   ASSERT_EQ(h.fe().epoch(), 2U);
   to_tracking();
   h.ImuUntil(h.now() + time::milliseconds(600));  // LiDAR gap: LOST
   ASSERT_EQ(h.fe().state(), LioState::kLost);
-  h.ScanAnswered(h.now() + kScanPeriod, BackendResultKind::kScanGood,
-                 Still(h.now() + kScanPeriod, kSeed.p_world_m));
-  ASSERT_EQ(h.fe().state(), LioState::kRestarting);
-  const RestartCommand refused = RestartNow(h);
+  h.DwellUntilRestarting();
+  const RestartCommand refused = IssuedCommand(h);
   h.ImuUntil(refused.t + time::milliseconds(400));
   AnswerSeeded(h, refused);  // refused: still epoch 2
   h.Poll();
   ASSERT_EQ(h.fe().epoch(), 2U);
-  const RestartCommand retry = RestartNow(h);
+  ASSERT_TRUE(h.Imu(h.now() + kImuPeriod).has_value());  // the frontend's own retry
+  const RestartCommand retry = IssuedCommand(h);
   EXPECT_EQ(retry.new_epoch, 3U);
   AnswerSeeded(h, retry);  // applied: epoch 3
   h.Poll();

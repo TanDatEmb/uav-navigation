@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Eigen/Geometry>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -24,7 +25,7 @@
 // to LioBackend only through LioChannels (pushes `requests`, pops `results`) and includes
 // frontend_config.hpp, never the merged config or the backend's.
 //
-// Threading: single-threaded. Every call (push_imu, push_scan, restart, poll_results and the
+// Threading: single-threaded. Every call (push_imu, push_scan, poll_results and the
 // accessors) comes from ONE thread, the ingest thread; the backend thread only touches the queues.
 // No call blocks: a full request queue or a busy backend is an event with a reason (AGENTS.md §2),
 // never a wait.
@@ -51,6 +52,31 @@
 // no odometry, without flapping; a stalled one, or one whose results cannot be placed, reads as a
 // LiDAR gap: DEGRADED, then LOST, on IMU time alone.
 //
+// LOST and RESTARTING (D41, AR4, review T2 M1): the map is frozen and the IMU prior has drifted, so the registration
+// of a scan against it says nothing (critique §1). The frontend applies NO correction from a scan result there: a
+// kScanGood is fed to the lifecycle as a non-empty scan only (no on_correction, no PredictorCorrectionRejected), and
+// the output stays IMU-only until the new epoch.
+//
+// Restart (§3.4, D41, D47): LIO restarts itself; there is no restart call. The lifecycle decides (LOST ->
+// RESTARTING after restart_dwell of stable data); the frontend's effect follows by level: at the end of every
+// accepted push_imu, after the lifecycle tick, if the state is RESTARTING and no restart is pending it queues
+// RestartCommand{epoch + 1, newest IMU time, seed, predictor's newest q/v}. The seed is the predictor's newest
+// output (position, full attitude) moved to base_link with base_T_imu (D47: a seed for a fresh map only picks the
+// gauge; PX4's information reaches the system through T's INIT). Refused before the queue (rate-limited
+// "LioInputRejected", stream kRestartStream): kNotFinite for a non-finite predictor output, kBackendBusy when the
+// request queue is full; the next push_imu tries again. The epoch switches only when the backend confirms
+// (kRestartSeeded): that call's StepOutputs::restart holds the ResetDelta (about zero: the seed is the output
+// itself; kNotFinite when the backend rejected the seed). A rejected answer leaves RESTARTING with no restart
+// pending, so the next push_imu issues a new command.
+//
+// Late answer (D33/O16): a kRestartSeeded whose time the output predictor no longer covers
+// (OutputPredictor::covers: older than kPredictorBufferSpan, or not matched) is refused, never applied by a rewinding
+// reset_to: "LioRestartRejected" (kRestartAnswerStale), restart error kStaleAnswer, the state stays RESTARTING, epoch
+// and output untouched, no restart pending: the next push_imu re-issues with the newest pose; the retry reuses the
+// epoch number (the backend already switched to it). While a restart is pending only its answer is applied: the new
+// epoch's scan results follow the answer (one FIFO), so an earlier one carrying that number belongs to the refused
+// answer's seed and is discarded (kStaleEpoch).
+//
 // Never throws: inputs are checked at the boundary (EstimatorReason); an allocation failure of a
 // state output drops that output with an "AllocationFailed" event.
 namespace uavnav::lio {
@@ -70,8 +96,10 @@ struct FrontendStats {
 
 class LioFrontend {
  public:
-  /// `channels` and `events` must outlive the frontend. Allocates nothing.
-  LioFrontend(const FrontendConfig& config, LioChannels& channels,
+  /// `channels` and `events` must outlive the frontend. Allocates nothing. base_T_imu: ^base_link T_imu, the same
+  /// transform the backend gets (finite; LioRunner / LioPipeline::create check it through LioBackend::create); it
+  /// moves the predictor's IMU pose to base_link for the restart seed.
+  LioFrontend(const FrontendConfig& config, const Eigen::Isometry3d& base_T_imu, LioChannels& channels,
               events::EventRecorder& events) noexcept;
   LioFrontend(const LioFrontend&) = delete;
   LioFrontend& operator=(const LioFrontend&) = delete;
@@ -80,8 +108,8 @@ class LioFrontend {
   /// previous one (kOutOfOrder). Otherwise: applies the available backend results, then the S1a IMU
   /// path (an equal stamp is a duplicate: rate-limited "ImuDuplicate", no integration; "ImuGap"
   /// above imu_max_gap; "ImuRateTooHigh" once per epoch; predictor step; lifecycle kImuTick, the
-  /// LiDAR-gap check; health on the sensor-time grid), and forwards a copy of a non-duplicate
-  /// sample to the backend. A full request queue drops only that copy (rate-limited
+  /// LiDAR-gap check; the restart effect when RESTARTING, see "Restart"; health on the sensor-time
+  /// grid), and forwards a copy of a non-duplicate sample to the backend. A full request queue drops only that copy (rate-limited
   /// "LioQueueOverflow", kRequestQueueFull) and the call still returns Ok. Before the predictor is
   /// aligned (kImuInitialized) `states` is empty, afterwards it holds exactly one state per
   /// non-duplicate sample.
@@ -97,30 +125,7 @@ class LioFrontend {
   /// in LOST/RESTARTING. Outputs come only from the applied results.
   Result<StepOutputs, EstimatorReason> push_scan(ScanInput&& scan, const time::TimeSnapshot& now);
 
-  /// Restart (§3.4): queues RestartCommand{epoch + 1, newest IMU time, seed, predictor's newest
-  /// q/v}; scans admitted afterwards carry the new epoch. kWrongState unless RESTARTING with an
-  /// aligned predictor and no restart pending; kNotFinite for a non-finite seed or a zero
-  /// quaternion; kBackendBusy when the request queue is full. The epoch switches only when the
-  /// backend confirms (kRestartSeeded): that call's StepOutputs::restart holds the ResetDelta
-  /// (kNotFinite when the backend rejected the seed).
-  ///
-  /// Late answer (D33/O16): a kRestartSeeded whose time the output predictor no longer covers
-  /// (OutputPredictor::covers: older than kPredictorBufferSpan, or not matched) is refused, never
-  /// applied by a rewinding reset_to: "LioRestartRejected" (kRestartAnswerStale), restart error
-  /// kStaleAnswer, the state stays RESTARTING, epoch and output untouched, no restart pending. The
-  /// caller restarts again with a fresh seed; the retry reuses the epoch number (the backend
-  /// already switched to it). While a restart is pending only its answer is applied: the new
-  /// epoch's scan results follow the answer (one FIFO), so an earlier one carrying that number
-  /// belongs to the refused answer's seed and is discarded (kStaleEpoch).
-  Result<void, EstimatorReason> restart(const SeedPose& seed, const time::TimeSnapshot& now);
-
-  /// A restart refused by the assembly that owns this frontend (LioRunner: an older restart answer not yet
-  /// returned to its caller): the same rate-limited "LioInputRejected" event as restart()'s own refusals
-  /// (stream kRestartStream, newest IMU time). Changes nothing else; returns `r`.
-  EstimatorReason refuse_restart(EstimatorReason r, const time::TimeSnapshot& now) noexcept {
-    return reject(r, kRestartStream, last_imu_ ? last_imu_->t : time::SensorTime{}, now);
-  }
-  /// The "stream" value of restart events (LioInputRejected / LioQueueOverflow).
+  /// The "stream" value of the restart effect's events (LioInputRejected / LioQueueOverflow).
   static constexpr int kRestartStream = 2;
 
   /// Applies the available backend results, in order (at most limits::kBackendResultCapacity per
@@ -166,12 +171,16 @@ class LioFrontend {
                      const time::TimeSnapshot& now) noexcept;
   void discard(const BackendResult& r, EstimatorEventReason why,
                const time::TimeSnapshot& now) noexcept;
+  /// The restart effect (see "Restart" above): end of every accepted push_imu, after the lifecycle tick.
+  void issue_restart(const time::TimeSnapshot& now) noexcept;
 
   FrontendConfig cfg_;
   LioChannels& channels_;
   events::EventRecorder& events_;
   LioLifecycle lifecycle_;
   OutputPredictor predictor_;
+  Eigen::Quaterniond q_imu_base_;  // R_bi^T: base_link attitude = IMU attitude * q_imu_base_ (restart seed)
+  Eigen::Vector3d t_base_imu_;     // the IMU origin in base_link (restart seed)
 
   std::optional<ImuInput> last_imu_;               // newest accepted IMU sample
   std::optional<time::SensorTime> last_scan_end_;  // newest admitted scan end (ordering check only)

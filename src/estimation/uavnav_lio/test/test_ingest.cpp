@@ -582,8 +582,8 @@ TEST(LioIngest, StateIsBaseLinkPoseAndBodyVelocity) {
 
 TEST(LioIngest, ResetDeltaIsLatchedOnLaterStates) {
   // The ingest's own output path (OutputCollector), fed the way LioRunner answers a restart: StepOutputs::restart
-  // set, and the states of that call and later ones in the new epoch (reset_counter + 1). The restart caller
-  // itself is S3/S4 (D33/O25), so LioIngest has no restart entry yet.
+  // set, and the states of that call and later ones in the new epoch (reset_counter + 1). The core issues its restarts
+  // itself (D41, after LOST and the restart dwell), so LioIngest has no restart entry; this feeds the answers directly.
   OutputCollector collector(Eigen::Isometry3d::Identity(), node_limits::kStatePeriod);
   const Eigen::Quaterniond q = Eigen::Quaterniond::Identity();
   const Eigen::Vector3d zero = Eigen::Vector3d::Zero();

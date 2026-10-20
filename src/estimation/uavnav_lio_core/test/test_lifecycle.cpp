@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <vector>
 
 #include "uavnav/core/time.hpp"
 #include "uavnav/lio/lifecycle.hpp"
@@ -13,7 +14,11 @@ using Kind = LioEvent::Kind;
 
 namespace {
 
-constexpr LifecycleConfig kCfg{5, 3, time::milliseconds(250), time::milliseconds(500), time::seconds(1), 0.5};
+constexpr LifecycleConfig kCfg{5,   3, time::milliseconds(250), time::milliseconds(500), time::seconds(1), 0.5,
+                               time::seconds(2)};
+/// kCfg with the largest restart dwell (30 s): for tests of the confirmation rules that run longer than 2 s.
+constexpr LifecycleConfig kLongDwellCfg{5,   3, time::milliseconds(250), time::milliseconds(500), time::seconds(1),
+                                        0.5, time::seconds(30)};
 
 // Synthetic sensor time: no wall clock anywhere.
 constexpr time::SensorTime T(std::int64_t ms) { return time::SensorTime{ms * 1'000'000}; }
@@ -37,7 +42,8 @@ void ExpectUnchanged(const Transition& tr, LioState state) {
 // Drives a lifecycle to a given state with scan stamps at 100 ms spacing starting at `t0` ms.
 // Returns the stamp (ms) of the last scan fed.
 struct Rig {
-  LioLifecycle lc{kCfg};
+  explicit Rig(const LifecycleConfig& cfg = kCfg) : lc(cfg) {}
+  LioLifecycle lc;
   std::int64_t now_ms{0};
 
   Transition Scan(Kind k, double sigma = 0.0) {
@@ -60,10 +66,24 @@ struct Rig {
     lc.on(Ev(Kind::kImuTick, now_ms + 600));
     ASSERT_EQ(lc.state(), LioState::kLost);
   }
+  /// One 10 Hz scan of kind `k` with its 19 IMU ticks (5 ms) before it; returns the scan's transition, or the
+  /// first tick's that changed the state.
+  Transition PacedScan(Kind k) {
+    for (int i = 1; i < 20; ++i) {
+      const Transition tick = lc.on(Ev(Kind::kImuTick, now_ms + 5 * i));
+      if (tick.changed) {
+        now_ms += 5 * i;
+        return tick;
+      }
+    }
+    return Scan(k);
+  }
+  /// LOST, then paced non-empty scans from 0.1 s after the LOST tick: RESTARTING at the IMU tick restart_dwell
+  /// (2 s) after the first of them.
   void ToRestarting() {
     ToLost();
-    now_ms += 700;
-    lc.on(Ev(Kind::kScanGood, now_ms));
+    now_ms += 600;  // the LOST tick
+    for (int i = 0; i < 25 && lc.state() == LioState::kLost; ++i) PacedScan(Kind::kScanGood);
     ASSERT_EQ(lc.state(), LioState::kRestarting);
   }
 };
@@ -101,17 +121,45 @@ TEST(LioLifecycleNames, ReasonNames) {
   EXPECT_EQ(to_string(LioReason::kLidarGapLost), "LIDAR_GAP_LOST");
   EXPECT_EQ(to_string(LioReason::kDegeneracyPersisted), "DEGENERACY_PERSISTED");
   EXPECT_EQ(to_string(LioReason::kCovarianceExceeded), "COVARIANCE_EXCEEDED");
-  EXPECT_EQ(to_string(LioReason::kGeometryReturned), "GEOMETRY_RETURNED");
+  EXPECT_EQ(to_string(LioReason::kStableDataDwell), "STABLE_DATA_DWELL");
   EXPECT_EQ(to_string(LioReason::kRestartSeeded), "RESTART_SEEDED");
   EXPECT_EQ(to_string(LioReason::kMapReady), "MAP_READY");
   EXPECT_EQ(to_string(LioReason::kCorrectionRejected), "CORRECTION_REJECTED");
+  EXPECT_EQ(to_string(LioReason::kReinitNotConfirmed), "REINIT_NOT_CONFIRMED");
 }
 
 TEST(LioLifecycleTable, NoEdgeFromLostToTracking) {
   for (const auto& edge : kLioTransitions) {
     EXPECT_FALSE(edge.from == LioState::kLost && edge.to == LioState::kTracking);
   }
-  EXPECT_EQ(kLioTransitions.size(), 11U);
+  EXPECT_EQ(kLioTransitions.size(), 12U);
+}
+
+// D41, AR4: LIO never gives up. Every state has a way out (no terminal state), LOST leaves only to RESTARTING (no
+// LOST -> TRACKING, LIO-4), and the only edges of the recovery chain are the two dwell rules and the restart answer.
+TEST(LioLifecycleTable, NoTerminalStateAndNoLostToTracking) {
+  for (const LioState s : {LioState::kInitializing, LioState::kTracking, LioState::kDegraded, LioState::kLost,
+                           LioState::kRestarting}) {
+    std::size_t out = 0;
+    for (const auto& edge : kLioTransitions) out += edge.from == s ? 1U : 0U;
+    EXPECT_GE(out, 1U) << to_string(s) << " is terminal";
+  }
+  std::vector<TransitionEdge> from_lost;
+  for (const auto& edge : kLioTransitions) {
+    if (edge.from == LioState::kLost) from_lost.push_back(edge);
+    EXPECT_FALSE(edge.from == LioState::kLost && edge.to == LioState::kTracking);
+  }
+  ASSERT_EQ(from_lost.size(), 1U);
+  EXPECT_EQ(from_lost[0].to, LioState::kRestarting);
+  EXPECT_EQ(from_lost[0].reason, LioReason::kStableDataDwell);
+  std::size_t reinit = 0;
+  for (const auto& edge : kLioTransitions) {
+    if (edge.reason != LioReason::kReinitNotConfirmed) continue;
+    ++reinit;
+    EXPECT_EQ(edge.from, LioState::kInitializing);
+    EXPECT_EQ(edge.to, LioState::kLost);
+  }
+  EXPECT_EQ(reinit, 1U);
 }
 
 // D31: the one new edge, TRACKING -> DEGRADED for a run of corrections the output predictor rejected.
@@ -185,8 +233,12 @@ TEST(LioLifecycle, RepeatedMapReadyDoesNotResetTheCounter) {
 TEST(LioLifecycle, InitializingIgnoresImuGapAndSigma) {
   Rig r;
   r.lc.on(Ev(Kind::kMapReady, 0));
-  ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, 60'000, 99.0)), LioState::kInitializing);
-  ExpectUnchanged(r.lc.on(Ev(Kind::kRestartSeeded, 60'005)), LioState::kInitializing);
+  // 1.9 s without a scan and a sigma of 99 m: neither is a rule of INITIALIZING (only the restart dwell is).
+  ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, 1'900, 99.0)), LioState::kInitializing);
+  ExpectUnchanged(r.lc.on(Ev(Kind::kRestartSeeded, 1'905)), LioState::kInitializing);
+  // Before the map is ready nothing is timed: no data, no attempt to judge.
+  Rig waiting;
+  ExpectUnchanged(waiting.lc.on(Ev(Kind::kImuTick, 600'000, 99.0)), LioState::kInitializing);
 }
 
 // Row 3: TRACKING, degenerate_scans consecutive degenerate scans -> DEGRADED.
@@ -286,7 +338,7 @@ TEST(LioLifecycle, DegradedGapLostOnImuTick) {
 // degenerate scan of the run (sensor time).
 TEST(LioLifecycle, DegradedDegeneracyPersistedMeasuredFromFirstDegenerateScan) {
   LioLifecycle lc(kCfg);
-  lc.on(Ev(Kind::kMapReady, 0));
+  lc.on(Ev(Kind::kMapReady, 9'900));
   for (int i = 0; i < 5; ++i) lc.on(Ev(Kind::kScanGood, 10'000 + 100 * i));  // TRACKING at t=10.4 s
   ASSERT_EQ(lc.state(), LioState::kTracking);
   // First degenerate scan at 10.5 s; the run is 3 scans long when DEGRADED is entered.
@@ -355,31 +407,166 @@ TEST(LioLifecycle, SigmaIsIgnoredOutsideTrackingAndDegraded) {
   ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, r.now_ms + 1'000, 9.0)), LioState::kLost);
 }
 
-// Row 9: LOST + kScanGood -> RESTARTING.
-TEST(LioLifecycle, LostGoodScanStartsRestarting) {
+// --- D41, AR4: LOST waits, without limit, for non-empty scans arriving without a gap for restart_dwell -------
+
+// Row 9a: LOST is a wait. Empty scans (no geometry at all) for 600 s, with 200 Hz ticks: LOST throughout.
+TEST(LioLifecycle, LostWaitsWithoutLimitOnEmptyScans) {
   Rig r;
   r.ToLost();
-  ExpectChange(r.Scan(Kind::kScanGood), LioState::kLost, LioState::kRestarting, LioReason::kGeometryReturned);
+  r.now_ms += 600;
+  for (int i = 0; i < 6'000; ++i) {  // 600 s of 10 Hz scans
+    for (int k = 1; k < 20; ++k) ASSERT_FALSE(r.lc.on(Ev(Kind::kImuTick, r.now_ms + 5 * k)).changed);
+    ASSERT_FALSE(r.Scan(Kind::kScanEmpty).changed) << r.now_ms;
+  }
+  EXPECT_EQ(r.lc.state(), LioState::kLost);
+  // An IMU-only stretch (the LiDAR gone) is a wait too: 600 s of ticks.
+  for (std::int64_t ms = r.now_ms; ms <= r.now_ms + 600'000; ms += 5) {
+    ASSERT_FALSE(r.lc.on(Ev(Kind::kImuTick, ms)).changed) << ms;
+  }
+  EXPECT_EQ(r.lc.state(), LioState::kLost);
 }
 
-TEST(LioLifecycle, LostIgnoresEverythingButGoodScan) {
+// Row 9: LOST -> RESTARTING exactly when restart_dwell has passed since the first non-empty scan, with no gap and no
+// empty scan in between. Good, degenerate and rejected-correction scans all count as non-empty: the result of the
+// registration against the frozen map is not read (critique §1).
+TEST(LioLifecycle, NonEmptyScansForTheDwellRestart) {
+  for (const Kind k : {Kind::kScanGood, Kind::kScanDegenerate}) {
+    Rig r;
+    r.ToLost();
+    const std::int64_t first = r.now_ms + 700;  // the first non-empty scan after LOST: the dwell starts here
+    r.now_ms = first - 100;
+    for (int i = 0; i < 20; ++i) {  // scans 0 .. 1.9 s after the first: never long enough
+      for (int t = 1; t < 20; ++t) ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, r.now_ms + 5 * t)), LioState::kLost);
+      ExpectUnchanged(r.Scan(i % 3 == 2 ? Kind::kScanCorrectionRejected : k), LioState::kLost);
+    }
+    ASSERT_EQ(r.now_ms, first + 1'900);
+    // The tick 1 ns before first + restart_dwell does not restart; the tick at first + restart_dwell does (>=).
+    ExpectUnchanged(r.lc.on(LioEvent{Kind::kImuTick, T(first + 1'995), 0.0}), LioState::kLost);
+    ExpectUnchanged(r.lc.on(LioEvent{Kind::kImuTick, T(first + 2'000) - time::nanoseconds(1), 0.0}), LioState::kLost);
+    ExpectChange(r.lc.on(Ev(Kind::kImuTick, first + 2'000)), LioState::kLost, LioState::kRestarting,
+                 LioReason::kStableDataDwell);
+  }
+  // A scan event can complete the dwell too (any event is evaluated).
   Rig r;
   r.ToLost();
-  ExpectUnchanged(r.Scan(Kind::kScanDegenerate), LioState::kLost);
-  ExpectUnchanged(r.Scan(Kind::kScanEmpty), LioState::kLost);
-  ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, r.now_ms + 5'000)), LioState::kLost);
-  ExpectUnchanged(r.lc.on(Ev(Kind::kMapReady, r.now_ms + 5'005)), LioState::kLost);
-  ExpectUnchanged(r.lc.on(Ev(Kind::kRestartSeeded, r.now_ms + 5'010)), LioState::kLost);
+  r.lc.on(Ev(Kind::kScanDegenerate, r.now_ms + 700));
+  r.lc.on(Ev(Kind::kImuTick, r.now_ms + 750));
+  ExpectChange(r.lc.on(Ev(Kind::kScanGood, r.now_ms + 700 + 2'000)), LioState::kLost, LioState::kRestarting,
+               LioReason::kStableDataDwell);
 }
 
-// F27: LOST + 20 good scans -> RESTARTING after the first, stays RESTARTING.
+// An empty scan, or an IMU tick with a LiDAR gap above gap_degraded, inside the dwell clears it: the wait restarts at
+// the next non-empty scan. A gap of exactly gap_degraded does not clear it.
+TEST(LioLifecycle, AnEmptyScanOrAGapInsideTheDwellRestartsTheWait) {
+  // An empty scan 1.5 s into the dwell.
+  {
+    Rig r;
+    r.ToLost();
+    const std::int64_t first = r.now_ms + 700;
+    r.now_ms = first - 100;
+    for (int i = 0; i < 15; ++i) ExpectUnchanged(r.PacedScan(Kind::kScanGood), LioState::kLost);
+    ExpectUnchanged(r.PacedScan(Kind::kScanEmpty), LioState::kLost);  // at first + 1.5 s
+    ASSERT_EQ(r.now_ms, first + 1'500);
+    const std::int64_t again = first + 1'600;  // the next non-empty scan: the wait starts again here
+    Transition tr{};
+    while (r.lc.state() == LioState::kLost && r.now_ms < again + 3'000) tr = r.PacedScan(Kind::kScanDegenerate);
+    ExpectChange(tr, LioState::kLost, LioState::kRestarting, LioReason::kStableDataDwell);
+    EXPECT_EQ(r.now_ms, again + 2'000) << "restarted at the tick restart_dwell after the scan after the empty one";
+  }
+  // A LiDAR gap (> gap_degraded on a tick) 1 s into the dwell.
+  {
+    Rig r;
+    r.ToLost();
+    const std::int64_t first = r.now_ms + 700;
+    r.now_ms = first - 100;
+    for (int i = 0; i < 11; ++i) ExpectUnchanged(r.PacedScan(Kind::kScanGood), LioState::kLost);
+    ASSERT_EQ(r.now_ms, first + 1'000);
+    // Exactly gap_degraded after the last scan: not a gap.
+    ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, first + 1'250)), LioState::kLost);
+    // The scans resume after exactly gap_degraded: the dwell still runs from `first`.
+    r.now_ms = first + 1'250;
+    for (int i = 0; i < 7; ++i) ExpectUnchanged(r.Scan(Kind::kScanGood), LioState::kLost);  // up to first + 1.95 s
+    ExpectChange(r.lc.on(Ev(Kind::kImuTick, first + 2'000)), LioState::kLost, LioState::kRestarting,
+                 LioReason::kStableDataDwell);
+  }
+  {
+    Rig r;
+    r.ToLost();
+    const std::int64_t first = r.now_ms + 700;
+    r.now_ms = first - 100;
+    for (int i = 0; i < 11; ++i) ExpectUnchanged(r.PacedScan(Kind::kScanGood), LioState::kLost);
+    ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, first + 1'251)), LioState::kLost);  // a gap: the wait is cleared
+    // No restart at first + 2 s although scans resumed at once; the dwell runs from the first scan after the gap.
+    r.now_ms = first + 1'300;
+    const std::int64_t again = r.now_ms;
+    r.lc.on(Ev(Kind::kScanGood, again));
+    for (std::int64_t ms = again + 5; ms < again + 2'000; ms += 5) {
+      ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, ms)), LioState::kLost);
+      if ((ms - again) % 100 == 0) ExpectUnchanged(r.lc.on(Ev(Kind::kScanGood, ms)), LioState::kLost);
+    }
+    ExpectChange(r.lc.on(Ev(Kind::kImuTick, again + 2'000)), LioState::kLost, LioState::kRestarting,
+                 LioReason::kStableDataDwell);
+  }
+  // Other events (a map-ready result, a restart answer) neither start the wait nor leave LOST.
+  {
+    Rig r;
+    r.ToLost();
+    ExpectUnchanged(r.lc.on(Ev(Kind::kMapReady, r.now_ms + 650)), LioState::kLost);
+    ExpectUnchanged(r.lc.on(Ev(Kind::kRestartSeeded, r.now_ms + 650)), LioState::kLost);
+  }
+}
+
+// F27: LOST + 40 good scans: RESTARTING after the dwell, never TRACKING; RESTARTING stays without its answer.
 TEST(LioLifecycle, LostNeverJumpsToTracking) {
   Rig r;
   r.ToLost();
-  ExpectChange(r.Scan(Kind::kScanGood), LioState::kLost, LioState::kRestarting, LioReason::kGeometryReturned);
-  for (int i = 0; i < 19; ++i) {
-    ExpectUnchanged(r.Scan(Kind::kScanGood), LioState::kRestarting);
-    EXPECT_EQ(r.lc.state(), LioState::kRestarting);
+  r.now_ms += 600;
+  for (int i = 0; i < 40; ++i) {
+    r.PacedScan(Kind::kScanGood);
+    EXPECT_NE(r.lc.state(), LioState::kTracking);
+  }
+  EXPECT_EQ(r.lc.state(), LioState::kRestarting);
+}
+
+// Row 9b: INITIALIZING with a ready map but no confirmation restart_dwell after kMapReady -> LOST (the attempt
+// answered itself). The same rule at boot; strictly above the dwell.
+TEST(LioLifecycle, MapReadyButNotConfirmedWithinTheDwellReturnsToLost) {
+  // After a restart: degenerate scans in the new map.
+  {
+    Rig r;
+    r.ToRestarting();
+    ExpectChange(r.lc.on(Ev(Kind::kRestartSeeded, r.now_ms)), LioState::kRestarting, LioState::kInitializing,
+                 LioReason::kRestartSeeded);
+    const std::int64_t ready = r.now_ms + 100;
+    r.lc.on(Ev(Kind::kMapReady, ready));
+    r.now_ms = ready;
+    for (int i = 0; i < 20; ++i) ExpectUnchanged(r.PacedScan(Kind::kScanDegenerate), LioState::kInitializing);
+    ASSERT_EQ(r.now_ms, ready + 2'000);
+    ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, ready + 2'000)), LioState::kInitializing);  // exactly the dwell
+    ExpectChange(r.lc.on(LioEvent{Kind::kImuTick, T(ready + 2'000) + time::nanoseconds(1), 0.0}),
+                 LioState::kInitializing, LioState::kLost, LioReason::kReinitNotConfirmed);
+  }
+  // At boot, the same rule: good scans that never make a run of five (a degenerate one every fifth).
+  {
+    Rig r;
+    r.lc.on(Ev(Kind::kMapReady, 0));
+    Transition tr{};
+    for (int i = 0; i < 30 && r.lc.state() == LioState::kInitializing; ++i) {
+      tr = r.PacedScan(i % 5 == 4 ? Kind::kScanDegenerate : Kind::kScanGood);
+    }
+    ExpectChange(tr, LioState::kInitializing, LioState::kLost, LioReason::kReinitNotConfirmed);
+    EXPECT_EQ(r.now_ms, 2'005) << "the first tick strictly after the dwell";
+  }
+  // Confirmation inside the dwell: TRACKING, and the dwell is over (TRACKING has no such rule).
+  {
+    Rig r;
+    r.lc.on(Ev(Kind::kMapReady, 0));
+    r.now_ms = 1'400;
+    for (int i = 0; i < 4; ++i) r.Scan(Kind::kScanGood);
+    ExpectChange(r.Scan(Kind::kScanGood), LioState::kInitializing, LioState::kTracking,
+                 LioReason::kConfirmationReached);
+    ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, r.now_ms + 5)), LioState::kTracking);
+    for (int i = 0; i < 30; ++i) ExpectUnchanged(r.PacedScan(Kind::kScanGood), LioState::kTracking);
   }
 }
 
@@ -394,10 +581,12 @@ TEST(LioLifecycle, RestartSeededReturnsToInitializing) {
 TEST(LioLifecycle, RestartingIgnoresOtherEvents) {
   Rig r;
   r.ToRestarting();
+  ExpectUnchanged(r.Scan(Kind::kScanGood), LioState::kRestarting);
   ExpectUnchanged(r.Scan(Kind::kScanDegenerate), LioState::kRestarting);
   ExpectUnchanged(r.Scan(Kind::kScanEmpty), LioState::kRestarting);
   ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, r.now_ms + 5'000)), LioState::kRestarting);
   ExpectUnchanged(r.lc.on(Ev(Kind::kMapReady, r.now_ms + 5'005)), LioState::kRestarting);
+  ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, r.now_ms + 600'000, 99.0)), LioState::kRestarting);
 }
 
 TEST(LioLifecycle, RestartRequiresMapReadyAndFullConfirmationAgain) {
@@ -637,9 +826,10 @@ TEST(LioLifecycle, StaleGoodScanMovesTheGapReferenceButNeverConfirms) {
     for (int i = 0; i < 4; ++i) ExpectUnchanged(r.Scan(Kind::kScanGood), LioState::kDegraded);
     ExpectChange(r.Scan(Kind::kScanGood), LioState::kDegraded, LioState::kTracking, LioReason::kConfirmationReached);
   }
-  // INITIALIZING (map ready): stale good scans never confirm, and one breaks the run.
+  // INITIALIZING (map ready): stale good scans never confirm, and one breaks the run. 11 s with a ready map: the
+  // 30 s dwell keeps the restart-dwell rule out of this test.
   {
-    Rig r;
+    Rig r(kLongDwellCfg);
     r.lc.on(Ev(Kind::kMapReady, 0));
     for (int i = 1; i <= 10; ++i) {
       r.lc.on(Ev(Kind::kImuTick, 1'000 * i));

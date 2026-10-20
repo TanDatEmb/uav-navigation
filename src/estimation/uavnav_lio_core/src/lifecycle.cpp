@@ -18,6 +18,12 @@ constexpr bool is_scan(LioEvent::Kind k) {
   return k == LioEvent::Kind::kScanGood || k == LioEvent::Kind::kScanDegenerate || k == LioEvent::Kind::kScanEmpty;
 }
 
+// D41, AR4: the scans that keep the LOST wait running (anything that arrived and is not empty).
+constexpr bool is_non_empty_scan(LioEvent::Kind k) {
+  return k == LioEvent::Kind::kScanGood || k == LioEvent::Kind::kScanDegenerate ||
+         k == LioEvent::Kind::kScanCorrectionRejected;
+}
+
 // Scans without an applied correction: degenerate, empty, or good but rejected by the output predictor (D31).
 constexpr bool is_bad_scan(LioEvent::Kind k) {
   return k == LioEvent::Kind::kScanDegenerate || k == LioEvent::Kind::kScanEmpty ||
@@ -28,7 +34,8 @@ constexpr bool is_bad_scan(LioEvent::Kind k) {
 // and -inf (a sqrt of a diagonal cannot be negative, so these are corrupt) count as exceeded.
 constexpr bool sigma_exceeded(double sigma, double limit) { return !(sigma >= 0.0 && sigma <= limit); }
 
-static_assert(is_listed(LioState::kLost, LioState::kRestarting, LioReason::kGeometryReturned));
+static_assert(is_listed(LioState::kLost, LioState::kRestarting, LioReason::kStableDataDwell));
+static_assert(is_listed(LioState::kInitializing, LioState::kLost, LioReason::kReinitNotConfirmed));
 static_assert(!is_listed(LioState::kLost, LioState::kTracking, LioReason::kConfirmationReached));
 static_assert(is_listed(LioState::kTracking, LioState::kDegraded, LioReason::kCorrectionRejected));  // D31
 
@@ -42,7 +49,8 @@ Transition LioLifecycle::go(LioState to, LioReason reason) noexcept {
   state_ = to;
   good_run_ = 0;
   bad_run_ = 0;
-  init_phase_ = InitPhase::kWaitingForMap;
+  confirming_since_.reset();
+  stable_since_.reset();
   // The degenerate run that degraded TRACKING is still the current run in DEGRADED.
   if (!(from == LioState::kTracking && to == LioState::kDegraded)) degenerate_since_.reset();
   return Transition{from, to, reason, true};
@@ -63,13 +71,14 @@ Transition LioLifecycle::on(const LioEvent& e) noexcept {
 
 Transition LioLifecycle::on_initializing(const LioEvent& e) noexcept {
   using Kind = LioEvent::Kind;
-  if (e.kind == Kind::kMapReady) {
-    if (init_phase_ == InitPhase::kConfirming) return unchanged();  // already counting; do not restart
-    init_phase_ = InitPhase::kConfirming;
+  if (!confirming_since_) {
+    if (e.kind != Kind::kMapReady) return unchanged();  // scans are not counted before the map is ready
+    confirming_since_ = e.t;
     good_run_ = 0;
     return Transition{state_, state_, LioReason::kMapReady, false};
   }
-  if (init_phase_ == InitPhase::kWaitingForMap) return unchanged();  // scans are not counted before the map is ready
+  // D41, AR4: the attempt answered itself (a repeated kMapReady does not restart the clock).
+  if (e.t - *confirming_since_ > cfg_.restart_dwell) return go(LioState::kLost, LioReason::kReinitNotConfirmed);
   if (e.kind == Kind::kScanGood) {
     if (!fresh(e)) {
       good_run_ = 0;  // D40/AR4: applied, but too old to confirm; the run is of consecutive fresh scans
@@ -126,7 +135,19 @@ Transition LioLifecycle::on_degraded(const LioEvent& e) noexcept {
 }
 
 Transition LioLifecycle::on_lost(const LioEvent& e) noexcept {
-  if (e.kind == LioEvent::Kind::kScanGood) return go(LioState::kRestarting, LioReason::kGeometryReturned);
+  using Kind = LioEvent::Kind;
+  // D41, AR4: the data is stable while scans arrive, are not empty and leave no gap. The registration result
+  // itself is not read here (critique §1): good, degenerate and rejected scans count alike.
+  if (e.kind == Kind::kScanEmpty) {
+    stable_since_.reset();
+  } else if (is_non_empty_scan(e.kind)) {
+    if (!stable_since_) stable_since_ = e.t;
+  } else if (e.kind == Kind::kImuTick && e.t - last_scan_ > cfg_.gap_degraded) {
+    stable_since_.reset();
+  }
+  if (stable_since_ && e.t - *stable_since_ >= cfg_.restart_dwell) {
+    return go(LioState::kRestarting, LioReason::kStableDataDwell);
+  }
   return unchanged();
 }
 

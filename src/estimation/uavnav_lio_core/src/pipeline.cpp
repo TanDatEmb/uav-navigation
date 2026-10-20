@@ -16,7 +16,7 @@ Result<std::unique_ptr<LioPipeline>, config::ConfigError> LioPipeline::create(
   auto channels = std::make_unique<LioChannels>();  // heap: the queues hold their slots inline
   auto backend = LioBackend::create(backend_config(config), base_T_imu, imu_T_lidar, *channels, events);
   if (!backend) return std::unexpected(backend.error());
-  auto frontend = std::make_unique<LioFrontend>(frontend_config(config), *channels, events);
+  auto frontend = std::make_unique<LioFrontend>(frontend_config(config), base_T_imu, *channels, events);
   return std::unique_ptr<LioPipeline>(
       new LioPipeline(std::move(channels), std::move(*backend), std::move(frontend)));
 }
@@ -46,14 +46,5 @@ Result<StepOutputs, EstimatorReason> LioPipeline::push_scan(ScanInput&& scan, co
   return r;
 }
 
-Result<ResetDelta, EstimatorReason> LioPipeline::restart(const SeedPose& seed, const time::TimeSnapshot& now) {
-  const auto queued = frontend_->restart(seed, now);
-  if (!queued) return std::unexpected(queued.error());
-  StepOutputs out;
-  drive(out, now);
-  // The backend answers a queued restart within the drain above; a missing answer means it never ran.
-  if (!out.restart) return std::unexpected(EstimatorReason::kBackendBusy);
-  return *std::move(out.restart);
-}
 
 }  // namespace uavnav::lio

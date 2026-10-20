@@ -154,8 +154,8 @@ struct IngestStats {
   std::uint64_t reentered;              ///< overlapping calls refused
 };
 
-/// The ingest-thread output path of LioIngest, public so that tests can feed it runner outputs that LioIngest
-/// cannot produce yet (a restart answer: the restart caller is S3/S4, D33/O25).
+/// The ingest-thread output path of LioIngest, public so that tests can feed it runner outputs directly (a restart
+/// answer: the core restarts itself, D41, so it reaches LioIngest only after a LOST and the restart dwell).
 ///
 /// State mapping (O21). base_T_imu = (R_bi, t_bi) maps IMU-frame vectors into base_link; t_bi is the IMU origin
 /// in base_link. The runner's state is the IMU's: q_world_imu (R_wi), p_world_imu, v_world_imu (output_predictor.hpp).
