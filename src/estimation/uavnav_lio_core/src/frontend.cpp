@@ -269,7 +269,8 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
   const double seed_age_s = last_imu_ ? time::to_seconds(last_imu_->t - r.t) : 0.0;
   // D33/O16: reset_to would rewind the output to an answer the predictor no longer covers: refused.
   const bool stale = r.snapshot && !predictor_.covers(r.snapshot->t);
-  if (r.kind == BackendResultKind::kRestartRejected || !r.snapshot || stale) {
+  const bool seed_refused = r.kind == BackendResultKind::kRestartRejected;
+  if (seed_refused || !r.snapshot || stale) {
     requested_epoch_ = epoch_;  // no restart pending any more
     EventBuilder b = event("LioRestartRejected", now);
     b.reason(stale ? EstimatorEventReason::kRestartAnswerStale
@@ -278,10 +279,11 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
     emit(stale ? b.value("seed_age_s", seed_age_s) : b);
     out.restart =
         std::unexpected(stale ? EstimatorReason::kStaleAnswer : EstimatorReason::kNotFinite);
-    // A stale answer stays RESTARTING: the next push_imu re-issues with a fresh seed (D33/O16). A seed the backend
-    // refused goes back to LOST and waits a full dwell (review T3 I2): re-issuing at once would repeat the refusal at
-    // the IMU rate.
-    if (!stale) {
+    // A stale answer stays RESTARTING: the next push_imu re-issues with a fresh seed (D33/O16). So does a
+    // kRestartSeeded without a snapshot (a wiring error): the backend has already switched to the new epoch, which only
+    // a new command answers (review T3b n1). Only a seed the backend refused goes back to LOST and waits a full dwell
+    // (review T3 I2): re-issuing at once would repeat the refusal at the IMU rate.
+    if (seed_refused) {
       const Transition tr = lifecycle_.on(LioEvent{LioEvent::Kind::kRestartRejected, r.t, position_sigma_m_});
       on_transition(tr, r.t, now, out, std::nullopt);
     }

@@ -339,7 +339,7 @@ struct LioBackend::Impl {
         r.snapshot = snapshot(*seeded, c.t);
         r.position_sigma_m = position_sigma_m;
       }
-    } catch (...) {  // the applicator or the ESKF reset threw: rejected, the frontend stays in RESTARTING
+    } catch (...) {  // the applicator or the ESKF reset threw: rejected; the frontend goes RESTARTING -> LOST
       r = result(BackendResultKind::kRestartRejected, c.new_epoch, 0, c.t);
       refused = EstimatorReason::kNotFinite;
       threw = true;

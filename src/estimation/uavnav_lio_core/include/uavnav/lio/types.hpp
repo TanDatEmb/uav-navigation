@@ -246,8 +246,8 @@ struct ScanJob {
 /// Rejected (kRestartRejected, backend epoch unchanged, RestartSeedRejected event) before the IMU
 /// initialisation, for a non-finite command, for `t` before the ESKF time (no rewind), or when the seed
 /// applicator refuses or throws. A throw after the map was cleared (map.clear / local map / ESKF reset) also
-/// answers kRestartRejected with the map already empty; the frontend stays RESTARTING and the next restart
-/// clears the map anyway. A kRestartSeeded the frontend refuses as stale (D33/O16) leaves the backend in
+/// answers kRestartRejected with the map already empty; the frontend goes RESTARTING -> LOST (RESTART_REJECTED)
+/// and the next restart, a dwell later, clears the map anyway. A kRestartSeeded the frontend refuses as stale (D33/O16) leaves the backend in
 /// `new_epoch`: the retry carries the same `new_epoch` with a newer `t` and seeds (and clears the map) again.
 struct RestartCommand {
   std::uint32_t new_epoch;

@@ -66,9 +66,10 @@
 // "LioInputRejected", stream kRestartStream): kNotFinite for a non-finite predictor output, kBackendBusy when the
 // request queue is full; the next push_imu tries again. The epoch switches only when the backend confirms
 // (kRestartSeeded): that call's StepOutputs::restart holds the ResetDelta (about zero: the seed is the output
-// itself; kNotFinite when the backend rejected the seed). A seed the backend refused (kRestartRejected, or an answer
-// without a snapshot) is fed to the lifecycle: RESTARTING -> LOST (RESTART_REJECTED), so the next command waits a
-// full LOST dwell instead of following at the IMU rate (review T3 I2).
+// itself; kNotFinite when the backend rejected the seed). A seed the backend refused (kRestartRejected) is fed to the
+// lifecycle: RESTARTING -> LOST (RESTART_REJECTED), so the next command waits a full LOST dwell instead of following
+// at the IMU rate (review T3 I2). A kRestartSeeded without a snapshot (a wiring error) is refused like a stale answer
+// (kNotFinite, stays RESTARTING, re-issued at the next push_imu): the backend already switched epoch (review T3b n1).
 //
 // Late answer (D33/O16): a kRestartSeeded whose time the output predictor no longer covers
 // (OutputPredictor::covers: older than kPredictorBufferSpan, or not matched) is refused, never applied by a rewinding

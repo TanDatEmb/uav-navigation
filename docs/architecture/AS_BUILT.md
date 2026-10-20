@@ -318,7 +318,7 @@ stateDiagram-v2
 | DEGRADED | LOST | `LIDAR_GAP_LOST` | `kImuTick` với `t − last_scan > gap_lost` (0.5 s) |
 | LOST | RESTARTING | `STABLE_DATA_DWELL` | sự kiện đầu tiên có `t − stable_since_ ≥ restart_dwell` (2.0 s, bằng thì chuyển). `stable_since_` đặt ở scan không rỗng đầu tiên (good, degenerate, correction-rejected; kết quả đăng ký không được đọc) khi chưa có; xoá bởi `kScanEmpty`, bởi `kImuTick` có `t − last_scan > gap_degraded` (0.25 s, chặt) và khi vào LOST. Không bộ đếm, không bỏ cuộc |
 | RESTARTING | INITIALIZING | `RESTART_SEEDED` | backend trả `kRestartSeeded` cho lệnh restart do **chính frontend** phát (dưới bảng); epoch + 1 |
-| RESTARTING | LOST | `RESTART_REJECTED` | backend từ chối seed (`kRestartRejected`, hoặc câu trả lời thiếu snapshot): lần thử kế tiếp chờ đủ một dwell ở LOST (review T3 I2). Câu trả lời **trễ** không đi qua cạnh này: ở lại RESTARTING và phát lại ngay |
+| RESTARTING | LOST | `RESTART_REJECTED` | backend từ chối seed (`kRestartRejected`): lần thử kế tiếp chờ đủ một dwell ở LOST (review T3 I2). Câu trả lời **trễ** và `kRestartSeeded` **thiếu snapshot** (lỗi nối dây) không đi qua cạnh này: backend đã sang epoch mới, nên ở lại RESTARTING và phát lại ngay (review T3b n1) |
 
 **Guard tươi trên cạnh xác nhận (D40, AR4; `lifecycle.cpp` `fresh()`).** `LioLifecycle` giữ `last_imu_t_`, stamp
 `kImuTick` mới nhất đã thấy (dữ liệu, không phải cờ; `go()` không đặt lại). Ở INITIALIZING (đang xác nhận) và DEGRADED,
@@ -395,7 +395,10 @@ sequenceDiagram
 - Câu trả lời (`apply_restart`):
   - predictor không còn `covers()` thời điểm lệnh (D33/O16, trễ) → `LioRestartRejected` `RESTART_ANSWER_STALE`, ở lại
     RESTARTING, không còn lệnh chờ, nên mẫu IMU kế tiếp phát lệnh mới với pose mới nhất;
-  - `kRestartRejected` hoặc thiếu snapshot (backend từ chối seed) → `LioRestartRejected` `RESTART_REJECTED`, rồi lifecycle
+  - `kRestartSeeded` thiếu snapshot (lỗi nối dây, `assert` ở bản debug) → `LioRestartRejected` `RESTART_REJECTED`, lỗi
+    `kNotFinite`, ở lại RESTARTING và phát lại như câu trả lời trễ (backend đã sang epoch mới;
+    `LioFrontend.SeededAnswerWithoutSnapshotIsReissuedLikeAStaleOne`);
+  - `kRestartRejected` (backend từ chối seed) → `LioRestartRejected` `RESTART_REJECTED`, rồi lifecycle
     RESTARTING → LOST (`RESTART_REJECTED`): một lệnh mỗi dwell, không phải mỗi mẫu IMU
     (`LioFrontend.BackendRefusingEverySeedGetsOneCommandPerDwell`: 10 lệnh trong 20 s, cách nhau ≥ 2 s);
   - ngược lại `reset_to`, epoch mới, `LioRestart` (reason `STABLE_DATA_DWELL`, giữ các trường old/new epoch, seed, delta,

@@ -101,8 +101,9 @@ static_assert(ReasonEnum<LioReason>);
 /// correction there (the registration against the frozen map is not read, critique §1), so a kScanGood in LOST is
 /// the backend's verdict, not an applied correction.
 ///
-/// kRestartRejected (review T3 I2): the backend refused the restart seed (its kRestartRejected answer, or an answer
-/// without a snapshot). Not a late answer: a stale kRestartSeeded is refused by the frontend and never reaches here.
+/// kRestartRejected (review T3 I2): the backend refused the restart seed (its kRestartRejected answer). Not a late
+/// answer and not a kRestartSeeded without a snapshot: the frontend refuses those itself, the backend having already
+/// switched epoch, and they never reach here (review T3b n1).
 struct LioEvent {
   enum class Kind : std::uint8_t {
     kScanGood,

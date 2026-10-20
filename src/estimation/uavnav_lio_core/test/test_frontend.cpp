@@ -679,6 +679,33 @@ TEST(LioFrontend, RestartRejectedByTheBackendReturnsToLost) {
   EXPECT_EQ(h.backend().restarts().size(), 1U);
 }
 
+// Review T3b n1: a kRestartSeeded without a snapshot (a wiring error; asserts in a debug build) is not a refused
+// seed: the backend has already switched to the new epoch, so going LOST would leave the frontend one epoch behind
+// for a whole dwell. It is refused like a stale answer: RESTARTING, nothing pending, the next IMU sample re-issues.
+TEST(LioFrontend, SeededAnswerWithoutSnapshotIsReissuedLikeAStaleOne) {
+#ifndef NDEBUG
+  GTEST_SKIP() << "a wiring error asserts in a debug build";
+#else
+  Rig h;
+  h.ToRestarting();
+  const RestartCommand cmd = IssuedCommand(h);
+  h.backend().Push(BackendResult{BackendResultKind::kRestartSeeded, cmd.new_epoch, 0, cmd.t, std::nullopt,
+                                 std::nullopt, 0.03, std::nullopt});
+  const StepOutputs out = h.Poll();
+  ASSERT_TRUE(out.restart.has_value());
+  ASSERT_FALSE(out.restart->has_value());
+  EXPECT_EQ(h.fe().state(), LioState::kRestarting);
+  EXPECT_EQ(h.fe().epoch(), 1U);
+  EXPECT_EQ(h.Events("LioRestartRejected").size(), 1U);
+  const auto next = h.Imu(h.now() + kImuPeriod);
+  ASSERT_TRUE(next.has_value());
+  h.backend().Drain();
+  ASSERT_EQ(h.backend().restarts().size(), 2U) << "re-issued at the next IMU sample";
+  EXPECT_EQ(h.backend().restarts()[1].new_epoch, 2U);
+  EXPECT_EQ(h.backend().restarts()[1].t, h.now());
+#endif
+}
+
 // Review T3 I2: a backend that refuses every seed (e.g. its own ESKF state went non-finite) gets one command per
 // restart dwell, not one per IMU sample: 20 s of non-empty scans give 10 commands, each at least restart_dwell after
 // the previous one, each with one LioRestartRejected; LIO keeps trying (no give-up).
