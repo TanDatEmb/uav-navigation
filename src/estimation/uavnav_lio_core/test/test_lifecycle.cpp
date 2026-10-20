@@ -126,13 +126,14 @@ TEST(LioLifecycleNames, ReasonNames) {
   EXPECT_EQ(to_string(LioReason::kMapReady), "MAP_READY");
   EXPECT_EQ(to_string(LioReason::kCorrectionRejected), "CORRECTION_REJECTED");
   EXPECT_EQ(to_string(LioReason::kReinitNotConfirmed), "REINIT_NOT_CONFIRMED");
+  EXPECT_EQ(to_string(LioReason::kRestartRejected), "RESTART_REJECTED");
 }
 
 TEST(LioLifecycleTable, NoEdgeFromLostToTracking) {
   for (const auto& edge : kLioTransitions) {
     EXPECT_FALSE(edge.from == LioState::kLost && edge.to == LioState::kTracking);
   }
-  EXPECT_EQ(kLioTransitions.size(), 12U);
+  EXPECT_EQ(kLioTransitions.size(), 13U);
 }
 
 // D41, AR4: LIO never gives up. Every state has a way out (no terminal state), LOST leaves only to RESTARTING (no
@@ -160,6 +161,15 @@ TEST(LioLifecycleTable, NoTerminalStateAndNoLostToTracking) {
     EXPECT_EQ(edge.to, LioState::kLost);
   }
   EXPECT_EQ(reinit, 1U);
+  // Review T3 I2: a seed the backend refused returns to LOST, so the next attempt waits a full dwell.
+  std::size_t refused = 0;
+  for (const auto& edge : kLioTransitions) {
+    if (edge.reason != LioReason::kRestartRejected) continue;
+    ++refused;
+    EXPECT_EQ(edge.from, LioState::kRestarting);
+    EXPECT_EQ(edge.to, LioState::kLost);
+  }
+  EXPECT_EQ(refused, 1U);
 }
 
 // D31: the one new edge, TRACKING -> DEGRADED for a run of corrections the output predictor rejected.
@@ -220,6 +230,16 @@ TEST(LioLifecycle, DegenerateOrEmptyScanBreaksInitializingConfirmation) {
   ExpectUnchanged(r.Scan(Kind::kScanEmpty), LioState::kInitializing);
   for (int i = 0; i < 4; ++i) ExpectUnchanged(r.Scan(Kind::kScanGood), LioState::kInitializing);
   ExpectChange(r.Scan(Kind::kScanGood), LioState::kInitializing, LioState::kTracking, LioReason::kConfirmationReached);
+}
+
+// Review T3 m6: a repeated kMapReady keeps the restart-dwell clock of the first one.
+TEST(LioLifecycle, RepeatedMapReadyDoesNotRestartTheDwellClock) {
+  Rig r;
+  r.lc.on(Ev(Kind::kMapReady, 0));
+  ExpectUnchanged(r.lc.on(Ev(Kind::kMapReady, 1'500)), LioState::kInitializing);
+  ExpectUnchanged(r.lc.on(Ev(Kind::kImuTick, 2'000)), LioState::kInitializing);
+  ExpectChange(r.lc.on(Ev(Kind::kImuTick, 2'001)), LioState::kInitializing, LioState::kLost,
+               LioReason::kReinitNotConfirmed);
 }
 
 TEST(LioLifecycle, RepeatedMapReadyDoesNotResetTheCounter) {
@@ -369,7 +389,7 @@ TEST(LioLifecycle, GoodScanRestartsTheDegenerateRunClock) {
 // Row 8: TRACKING/DEGRADED, any event with sigma > position_sigma_lost_m -> LOST.
 TEST(LioLifecycle, CovarianceExceededInTrackingOnAnyEvent) {
   for (const Kind k : {Kind::kScanGood, Kind::kScanDegenerate, Kind::kScanEmpty, Kind::kImuTick, Kind::kMapReady,
-                       Kind::kRestartSeeded, Kind::kScanCorrectionRejected}) {
+                       Kind::kRestartSeeded, Kind::kScanCorrectionRejected, Kind::kRestartRejected}) {
     Rig r;
     r.ToTracking();
     ExpectChange(r.lc.on(Ev(k, r.now_ms + 10, 0.51)), LioState::kTracking, LioState::kLost,
@@ -379,7 +399,7 @@ TEST(LioLifecycle, CovarianceExceededInTrackingOnAnyEvent) {
 
 TEST(LioLifecycle, CovarianceExceededInDegradedOnAnyEvent) {
   for (const Kind k : {Kind::kScanGood, Kind::kScanDegenerate, Kind::kScanEmpty, Kind::kImuTick, Kind::kMapReady,
-                       Kind::kRestartSeeded, Kind::kScanCorrectionRejected}) {
+                       Kind::kRestartSeeded, Kind::kScanCorrectionRejected, Kind::kRestartRejected}) {
     Rig r;
     r.ToDegraded();
     ExpectChange(r.lc.on(Ev(k, r.now_ms + 10, 0.51)), LioState::kDegraded, LioState::kLost,
@@ -578,6 +598,29 @@ TEST(LioLifecycle, RestartSeededReturnsToInitializing) {
                LioReason::kRestartSeeded);
 }
 
+// Review T3 I2: a refused seed (the backend's kRestartRejected) is RESTARTING -> LOST (RESTART_REJECTED); the
+// next attempt waits restart_dwell of stable data again, so a backend that refuses every seed gets one per dwell.
+TEST(LioLifecycle, RestartRejectedReturnsToLostAndWaitsADwell) {
+  Rig r;
+  r.ToRestarting();
+  const std::int64_t refused_at = r.now_ms + 20;
+  ExpectChange(r.lc.on(Ev(Kind::kRestartRejected, refused_at)), LioState::kRestarting, LioState::kLost,
+               LioReason::kRestartRejected);
+  r.now_ms = refused_at;
+  const std::int64_t first = r.now_ms + 100;  // the first scan after the refusal: the wait starts there
+  Transition tr{};
+  for (int i = 0; i < 30 && r.lc.state() == LioState::kLost; ++i) tr = r.PacedScan(Kind::kScanDegenerate);
+  ExpectChange(tr, LioState::kLost, LioState::kRestarting, LioReason::kStableDataDwell);
+  EXPECT_EQ(r.now_ms, first + 2'000);
+  // kRestartRejected outside RESTARTING changes nothing.
+  Rig t;
+  t.ToTracking();
+  ExpectUnchanged(t.lc.on(Ev(Kind::kRestartRejected, t.now_ms + 5)), LioState::kTracking);
+  Rig l;
+  l.ToLost();
+  ExpectUnchanged(l.lc.on(Ev(Kind::kRestartRejected, l.now_ms + 650)), LioState::kLost);
+}
+
 TEST(LioLifecycle, RestartingIgnoresOtherEvents) {
   Rig r;
   r.ToRestarting();
@@ -672,7 +715,7 @@ TEST(LioLifecycle, TransitionsAlwaysFollowTheTable) {
   std::int64_t ms = 0;
   for (int i = 0; i < 5'000; ++i) {
     seed = seed * 1664525U + 1013904223U;
-    const auto k = static_cast<Kind>((seed >> 16) % 7);  // every kind, kScanCorrectionRejected (D31) included
+    const auto k = static_cast<Kind>((seed >> 16) % 8);  // every kind, kScanCorrectionRejected (D31) included
     ms += 5 + static_cast<std::int64_t>((seed >> 8) % 120);
     const double sigma = ((seed >> 4) % 50 == 0) ? 0.9 : 0.1;
     const LioState before = lc.state();

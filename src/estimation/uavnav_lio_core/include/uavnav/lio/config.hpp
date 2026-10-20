@@ -70,7 +70,9 @@ inline FrontendConfig frontend_config(const LioConfig& c) {
 ///
 /// lifecycle_restart_dwell_s (D41, AR4): the one wait of the recovery chain, LOST -> RESTARTING after this long of
 /// non-empty scans without a gap, and INITIALIZING (map ready) -> LOST without a confirmation after this long. A fixed
-/// value (D44.7), bounds [0.5, 30] s: at least five scan periods, at most what a hover can wait without a decision.
+/// value (D44.7), bounds [0.5, 30] s, at most what a hover can wait without a decision. Cross-checked at load (review
+/// T3 I1): restart_dwell >= (confirm_scans - 1) x kScanPeriod + gap_degraded (0.65 s at beta), the longest a run of
+/// fresh confirming scans can take after kMapReady; below it TRACKING is unreachable.
 ///
 /// lifecycle_gap_degraded_s: the lower bound is limits::kGapDegradedMin (0.2 s, two scan periods; D40, AR4), the bound
 /// the lio node's future-stamp limit is asserted against.
@@ -106,6 +108,7 @@ inline constexpr auto kLioSpecs = std::to_array<config::ParamSpec>({
 /// kOutOfRange naming BOTH keys (first in `key`, both in `detail`):
 ///   lifecycle_gap_lost_s <= lifecycle_gap_degraded_s
 ///   lifecycle_degenerate_scans > lifecycle_confirm_scans * 10
+///   lifecycle_restart_dwell_s < (lifecycle_confirm_scans - 1) * kScanPeriod + lifecycle_gap_degraded_s
 /// A count key holding a non-integer value is kWrongType.
 Result<LioConfig, config::ConfigError> load_lio_config(const config::ParamValues& values);
 

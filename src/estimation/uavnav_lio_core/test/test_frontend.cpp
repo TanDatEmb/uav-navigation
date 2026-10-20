@@ -647,9 +647,9 @@ TEST(LioFrontend, RestartAppliesResetDeltaWhenTheBackendConfirms) {
   EXPECT_NEAR(Value(restarts[0], "seed_age_s"), 0.015, 1e-9);
 }
 
-// A backend rejection leaves RESTARTING with no restart pending: the next IMU sample issues a new command, which
-// asks for epoch 2 again.
-TEST(LioFrontend, RestartRejectedByTheBackendLeavesRestarting) {
+// Review T3 I2: a seed the backend refuses (kRestartRejected) returns the lifecycle to LOST (RESTART_REJECTED): no
+// command until the LOST wait has run a full dwell again.
+TEST(LioFrontend, RestartRejectedByTheBackendReturnsToLost) {
   Rig h;
   h.ToRestarting();
   const RestartCommand cmd = IssuedCommand(h);
@@ -659,19 +659,55 @@ TEST(LioFrontend, RestartRejectedByTheBackendLeavesRestarting) {
   ASSERT_TRUE(out.restart.has_value());
   ASSERT_FALSE(out.restart->has_value());
   EXPECT_EQ(out.restart->error(), EstimatorReason::kNotFinite);
-  EXPECT_EQ(h.fe().state(), LioState::kRestarting);
+  EXPECT_EQ(h.fe().state(), LioState::kLost);
   EXPECT_EQ(h.fe().epoch(), 1U);
+  ASSERT_TRUE(out.health.has_value());
+  EXPECT_EQ(out.health->reason, LioReason::kRestartRejected);
   const auto rejected = h.Events("LioRestartRejected");
   ASSERT_EQ(rejected.size(), 1U);
   EXPECT_EQ(rejected[0].reason, "RESTART_REJECTED");
+  const auto transitions = h.Events("StateTransition");
+  ASSERT_FALSE(transitions.empty());
+  EXPECT_EQ(transitions.back().state_before, "RESTARTING");
+  EXPECT_EQ(transitions.back().state_after, "LOST");
+  EXPECT_EQ(transitions.back().reason, "RESTART_REJECTED");
   EXPECT_TRUE(h.Events("LioRestart").empty());
 
-  const auto next = h.Imu(h.now() + kImuPeriod);
-  ASSERT_TRUE(next.has_value());
+  // No new command at the next IMU samples: LOST waits for stable data first.
+  h.ImuUntil(h.now() + time::milliseconds(50));
   h.backend().Drain();
-  ASSERT_EQ(h.backend().restarts().size(), 2U);
-  EXPECT_EQ(h.backend().restarts()[1].new_epoch, 2U);
-  EXPECT_EQ(h.backend().restarts()[1].t, h.now());
+  EXPECT_EQ(h.backend().restarts().size(), 1U);
+}
+
+// Review T3 I2: a backend that refuses every seed (e.g. its own ESKF state went non-finite) gets one command per
+// restart dwell, not one per IMU sample: 20 s of non-empty scans give 10 commands, each at least restart_dwell after
+// the previous one, each with one LioRestartRejected; LIO keeps trying (no give-up).
+TEST(LioFrontend, BackendRefusingEverySeedGetsOneCommandPerDwell) {
+  Rig h;
+  h.ToRestarting();  // the first command at 12.7 s
+  std::size_t answered = 0;
+  for (std::int64_t end = 12'800; end <= 32'700; end += 100) {
+    h.ImuUntil(Ms(end));
+    h.backend().Drain();
+    while (answered < h.backend().restarts().size()) {
+      const RestartCommand c = h.backend().restarts()[answered++];
+      h.backend().Push(BackendResult{BackendResultKind::kRestartRejected, c.new_epoch, 0, c.t, std::nullopt,
+                                     std::nullopt, 0.03, std::nullopt});
+    }
+    h.Poll();
+    ASSERT_TRUE(h.Scan(Ms(end - 100), Ms(end)).has_value()) << end;
+    h.backend().AnswerScan(BackendResultKind::kScanDegenerate);
+    h.Poll();
+  }
+  const std::vector<RestartCommand>& commands = h.backend().restarts();
+  ASSERT_EQ(commands.size(), 10U);  // 12.7 s, then 14.8 .. 30.8 s
+  for (std::size_t i = 1; i < commands.size(); ++i) {
+    EXPECT_GE(commands[i].t - commands[i - 1].t, time::seconds(2)) << i;
+    EXPECT_EQ(commands[i].new_epoch, 2U) << i;
+  }
+  EXPECT_EQ(h.Events("LioRestartRejected").size(), commands.size()) << "one event per refused command";
+  EXPECT_TRUE(h.Events("LioInputRejected").empty());
+  EXPECT_EQ(h.fe().epoch(), 1U);
 }
 
 // Review T2 M1, D41, AR4: in LOST (and RESTARTING) the registration ran against the frozen map with a drifted prior,
@@ -699,14 +735,14 @@ TEST(LioFrontend, FrozenMapResultsAreNotAppliedInLostOrRestarting) {
   h.DwellUntilRestarting();
   EXPECT_EQ(h.now(), Ms(12'700));
 
-  // RESTARTING with no restart pending (after a backend rejection): a frozen-map result is not applied either.
+  // RESTARTING with no restart pending (after a stale answer was refused): a frozen-map result is not applied either.
   const RestartCommand cmd = IssuedCommand(h);
-  h.backend().Push(BackendResult{BackendResultKind::kRestartRejected, cmd.new_epoch, 0, cmd.t, std::nullopt,
-                                 std::nullopt, 0.03, std::nullopt});
-  h.Poll();
+  h.ImuUntil(cmd.t + time::milliseconds(400));
+  AnswerSeeded(h, cmd);
+  ASSERT_TRUE(h.Poll().restart.has_value());
   ASSERT_EQ(h.fe().state(), LioState::kRestarting);
-  ASSERT_TRUE(h.Scan(Ms(12'600), Ms(12'700)).has_value());  // admitted before the next IMU sample re-issues
-  h.backend().AnswerScan(BackendResultKind::kScanGood, Still(Ms(12'700), Eigen::Vector3d(1.0, 0.0, 0.0)));
+  ASSERT_TRUE(h.Scan(Ms(12'600), h.now()).has_value());  // admitted before the next IMU sample re-issues
+  h.backend().AnswerScan(BackendResultKind::kScanGood, Still(h.now(), Eigen::Vector3d(1.0, 0.0, 0.0)));
   EXPECT_FALSE(h.Poll().odometry.has_value());
   h.ImuUntil(h.now() + kImuPeriod);
   EXPECT_LT((h.LastState()->sample.p_world_m - p0).norm(), 1e-9);
@@ -944,6 +980,29 @@ TEST(LioFrontend, JitteredImuAndOffGridScanEndsKeepTracking) {
   }
   EXPECT_TRUE(h.Events("PredictorCorrectionRejected").empty());
   EXPECT_GE(h.now(), Ms(13'000));
+}
+
+// issue_restart fails closed on a non-finite predictor output (review T3 m7): no command, one rate-limited
+// LioInputRejected NOT_FINITE on the restart stream; LIO stays RESTARTING. The output is driven non-finite by two
+// applied corrections whose difference overflows (+1.7e308 then -1.7e308).
+TEST(LioFrontend, NonFinitePredictorOutputRefusesTheRestartWithAnEvent) {
+  Rig h;
+  h.ToTracking();
+  h.ScanAnswered(Ms(10'100), BackendResultKind::kScanGood, Still(Ms(10'100), Eigen::Vector3d(1.7e308, 0.0, 0.0)));
+  h.ScanAnswered(Ms(10'200), BackendResultKind::kScanGood, Still(Ms(10'200), Eigen::Vector3d(-1.7e308, 0.0, 0.0)));
+  ASSERT_TRUE(h.LastHealth().has_value());
+  ASSERT_FALSE(h.LastHealth()->output_tracking_error.allFinite()) << "the overflow did not happen";
+  h.ImuUntil(Ms(10'800));  // LiDAR gap: LOST at 10.705 s
+  ASSERT_EQ(h.fe().state(), LioState::kLost);
+  h.DwellUntilRestarting();  // RESTARTING: the effect finds no finite seed
+  h.ImuUntil(h.now() + time::milliseconds(20));
+  h.backend().Drain();
+  EXPECT_TRUE(h.backend().restarts().empty());
+  EXPECT_EQ(h.fe().state(), LioState::kRestarting);
+  const auto rejected = h.Events("LioInputRejected");
+  ASSERT_EQ(rejected.size(), 1U) << "rate-limited: the first occurrence";
+  EXPECT_EQ(rejected[0].reason, "NOT_FINITE");
+  EXPECT_EQ(Value(rejected[0], "stream"), 2.0);
 }
 
 // A restart refused by a full request queue is one decision and one event (LioInputRejected BACKEND_BUSY, stream

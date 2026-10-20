@@ -665,8 +665,17 @@ TEST(LioRunner, ResultsAndStatesMatchThePipelineWhenPaced) {
   });
   ASSERT_TRUE(ready);
 
-  // The synchronous driver answers the restart inside the call that issued it (no RESTARTING after a call), the
-  // runner a call later: compare the transitions, not the per-call states.
+  // The synchronous driver answers the restart inside the call that issued it, so no call of it ends in RESTARTING;
+  // the paced runner ends one or more calls there before the answer is applied. Apart from that, the per-call state
+  // sequences are equal, and so are the transitions.
+  const auto without_restarting = [](const std::vector<LioState>& states) {
+    std::vector<LioState> out;
+    for (const LioState s : states) {
+      if (s != LioState::kRestarting && (out.empty() || out.back() != s)) out.push_back(s);
+    }
+    return out;
+  };
+  EXPECT_EQ(without_restarting(runner.states()), without_restarting(pipeline.states()));
   EXPECT_EQ(runner.Transitions(), pipeline.Transitions());
   EXPECT_EQ(runner.epoch(), pipeline.epoch());
   EXPECT_EQ(runner.epoch(), 2U);

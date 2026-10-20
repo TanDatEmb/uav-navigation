@@ -270,7 +270,7 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
   // D33/O16: reset_to would rewind the output to an answer the predictor no longer covers: refused.
   const bool stale = r.snapshot && !predictor_.covers(r.snapshot->t);
   if (r.kind == BackendResultKind::kRestartRejected || !r.snapshot || stale) {
-    requested_epoch_ = epoch_;  // no restart pending any more; the state stays RESTARTING
+    requested_epoch_ = epoch_;  // no restart pending any more
     EventBuilder b = event("LioRestartRejected", now);
     b.reason(stale ? EstimatorEventReason::kRestartAnswerStale
                    : EstimatorEventReason::kRestartRejected);
@@ -278,6 +278,13 @@ void LioFrontend::apply_restart(const BackendResult& r, StepOutputs& out,
     emit(stale ? b.value("seed_age_s", seed_age_s) : b);
     out.restart =
         std::unexpected(stale ? EstimatorReason::kStaleAnswer : EstimatorReason::kNotFinite);
+    // A stale answer stays RESTARTING: the next push_imu re-issues with a fresh seed (D33/O16). A seed the backend
+    // refused goes back to LOST and waits a full dwell (review T3 I2): re-issuing at once would repeat the refusal at
+    // the IMU rate.
+    if (!stale) {
+      const Transition tr = lifecycle_.on(LioEvent{LioEvent::Kind::kRestartRejected, r.t, position_sigma_m_});
+      on_transition(tr, r.t, now, out, std::nullopt);
+    }
     return;
   }
   const ResetDelta delta = predictor_.reset_to(*r.snapshot);
@@ -418,21 +425,21 @@ Result<StepOutputs, EstimatorReason> LioFrontend::push_scan(ScanInput&& in,
 }
 
 void LioFrontend::issue_restart(const time::TimeSnapshot& now) noexcept {
-  // By level (D41, AR4): RESTARTING and no restart pending. The predictor is aligned in RESTARTING (it took a
-  // confirmed epoch to get there); without an output or an IMU sample there is nothing to seed from.
-  if (lifecycle_.state() != LioState::kRestarting || requested_epoch_ != epoch_ || !last_imu_) return;
+  // By level (D41, AR4): RESTARTING and no restart pending.
+  if (lifecycle_.state() != LioState::kRestarting || requested_epoch_ != epoch_) return;
+  // Unreachable: RESTARTING comes only from LOST after scans were admitted (an IMU sample before each, F22), and the
+  // predictor is aligned before any map is ready (the backend's kImuInitialized precedes kMapReady in the one FIFO,
+  // and align() is the first thing a kImuInitialized does). Kept as a guard, not as a decision: nothing to seed from.
   const std::optional<OutputSample> latest = predictor_.latest();
-  if (!latest) return;
+  assert(last_imu_ && latest && "RESTARTING without an IMU sample or an aligned predictor");
+  if (!last_imu_ || !latest) return;
   const time::SensorTime t = last_imu_->t;
   // D47: the seed is the predictor's newest output (the old world's pose at t, with every applied correction),
-  // at base_link: R_wb = R_wi R_bi^T, p_wb = p_wi - R_wb t_bi. Roll, pitch and velocity come with it.
-  if (!usable(latest->q_world_imu) || !latest->p_world_m.allFinite() || !latest->v_world_mps.allFinite()) {
-    (void)reject(EstimatorReason::kNotFinite, kStreamRestart, t, now);
-    return;
-  }
-  const Eigen::Quaterniond q_world_base = (latest->q_world_imu.normalized() * q_imu_base_).normalized();
+  // at base_link: R_wb = R_wi R_bi^T, p_wb = p_wi - R_wb t_bi. Roll, pitch and velocity come with it. A non-finite
+  // output (an applied correction can overflow the buffer) fails closed: one rate-limited event, retried each sample.
+  const Eigen::Quaterniond q_world_base = (latest->q_world_imu * q_imu_base_).normalized();
   const SeedPose seed{latest->p_world_m - q_world_base * t_base_imu_, q_world_base};
-  if (!seed.p_world_m.allFinite() || !usable(seed.q_world_base)) {
+  if (!seed.p_world_m.allFinite() || !usable(seed.q_world_base) || !latest->v_world_mps.allFinite()) {
     (void)reject(EstimatorReason::kNotFinite, kStreamRestart, t, now);
     return;
   }

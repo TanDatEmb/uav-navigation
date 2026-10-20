@@ -102,12 +102,13 @@ enum class ScanKind { kRoom, kPlane, kCorridor, kEmpty };
 // changes the state is counted (a call that ends the restart dwell carries two: its own restart is answered in it).
 class Harness {
  public:
-  explicit Harness(const LioConfig& cfg = DefaultConfig(), time::Duration imu_period = kImuPeriod)
+  explicit Harness(const LioConfig& cfg = DefaultConfig(), time::Duration imu_period = kImuPeriod,
+                   const Eigen::Isometry3d& base_T_imu = scene::base_T_imu())
       : store_(std::make_shared<Store>()), imu_period_(imu_period) {
     auto recorder = events::EventRecorder::create(std::make_unique<FakeSink>(store_));
     EXPECT_TRUE(recorder.has_value());
     recorder_ = std::move(*recorder);
-    auto est = LioPipeline::create(cfg, scene::base_T_imu(), scene::imu_T_lidar(), *recorder_);
+    auto est = LioPipeline::create(cfg, base_T_imu, scene::imu_T_lidar(), *recorder_);
     EXPECT_TRUE(est.has_value()) << (est ? "" : est.error().detail);
     est_ = std::move(*est);
     traj_.t0 = kT0;
@@ -403,15 +404,17 @@ TEST(LioPipeline, PlaneOnlyScansDegradeWithoutThrowing) {
 // never confirms TRACKING (translation block rank-deficient); a corridor (floor, ceiling, x walls) is
 // translation-degenerate along y but rotation well constrained, which a swapped block would invert.
 TEST(LioPipeline, PlaneOnlyScansNeverReachTrackingAndBlocksAreNotSwapped) {
-  Harness h;
+  // The 30 s restart dwell keeps the D41 rule (a ready map unconfirmed for restart_dwell goes LOST) out of this test.
+  LioConfig cfg = DefaultConfig();
+  cfg.lifecycle.restart_dwell = time::seconds(30);
+  Harness h(cfg);
   h.Run(11);  // IMU init (1 s) and the map bootstrap scan, all faces
-  // 0.9 s of floor scans: the confirmation stays open (D41: a ready map without confirmation for 2 s goes LOST).
-  h.Run(9, ScanKind::kPlane);
+  h.Run(20, ScanKind::kPlane);
   EXPECT_EQ(h.est().state(), LioState::kInitializing);
   for (const StepOutputs& o : h.outputs()) EXPECT_FALSE(o.odometry.has_value());
 
   auto scans = h.Events("LioScan");
-  ASSERT_GE(scans.size(), 9U);
+  ASSERT_GE(scans.size(), 20U);
   const auto& plane = scans.back();
   EXPECT_EQ(plane.reason, "SCAN_DEGENERATE");
   // Floor: only z translation is observed. The smallest translation eigenvalue is not exactly zero (map
@@ -758,6 +761,49 @@ TEST(LioPipeline, RestartReturnsTheResetDeltaInTheSameCall) {
   EXPECT_EQ(h.est().state(), LioState::kInitializing);
   ASSERT_TRUE(r->health.has_value());
   EXPECT_EQ(r->health->reason, LioReason::kRestartSeeded);
+}
+
+// Review T3 m5: the seed's mount rotation (R_wb = R_wi R_bi^T, not R_wi R_bi) with a ROTATED mount (yaw 30 deg,
+// pitch 10 deg): the backend rebuilds exactly the predictor's IMU pose, so the reset moves nothing, and the seed yaw is
+// the base_link yaw of the output at the restart tick.
+TEST(LioPipeline, SelfSeedHandlesARotatedMount) {
+  Eigen::Isometry3d mount = scene::base_T_imu();
+  mount.linear() = (Eigen::AngleAxisd(0.5235987755982988, Eigen::Vector3d::UnitZ()) *
+                    Eigen::AngleAxisd(0.17453292519943295, Eigen::Vector3d::UnitY()))
+                       .toRotationMatrix();
+  Harness h(DefaultConfig(), kImuPeriod, mount);
+  h.RunUntilTracking();
+  h.Run(10, std::nullopt);  // LiDAR gap -> LOST
+  for (int i = 0; i < 30 && h.est().epoch() == 1U; ++i) h.Run(1);
+  ASSERT_EQ(h.est().epoch(), 2U);
+  std::optional<double> restart_s;
+  for (const auto& e : h.Events("StateTransition")) {
+    if (e.state_after == "RESTARTING") restart_s = Value(e, "sensor_time_s");
+  }
+  ASSERT_TRUE(restart_s.has_value());
+  std::optional<StateOutput> at_restart;
+  std::optional<Result<ResetDelta, EstimatorReason>> delta;
+  for (const StepOutputs& o : h.outputs()) {
+    for (const StateOutput& s : o.states) {
+      if (static_cast<double>(s.sample.t.ns) / 1e9 == *restart_s) at_restart = s;
+    }
+    if (o.restart) delta = o.restart;
+  }
+  ASSERT_TRUE(at_restart.has_value());
+  ASSERT_TRUE(delta.has_value() && delta->has_value());
+  EXPECT_LT((*delta)->position_m.norm(), 1e-6) << (*delta)->position_m.transpose();
+  EXPECT_NEAR((*delta)->yaw_rad, 0.0, 1e-9);
+  const Eigen::Quaterniond q_wb =
+      (at_restart->sample.q_world_imu * Eigen::Quaterniond(mount.linear()).conjugate()).normalized();
+  const Eigen::Matrix3d r_wb = q_wb.toRotationMatrix();
+  const auto restarts = h.Events("LioRestart");
+  ASSERT_EQ(restarts.size(), 1U);
+  EXPECT_NEAR(Value(restarts[0], "seed_yaw_rad"), std::atan2(r_wb(1, 0), r_wb(0, 0)), 1e-9);
+  const Eigen::Vector3d p_wb = at_restart->sample.p_world_m - q_wb * mount.translation();
+  EXPECT_NEAR(Value(restarts[0], "seed_x_m"), p_wb.x(), 1e-9);
+  EXPECT_NEAR(Value(restarts[0], "seed_z_m"), p_wb.z(), 1e-9);
+  h.RunUntilTracking();
+  EXPECT_TRUE(h.all_finite());
 }
 
 TEST(LioPipeline, OneStateTransitionEventPerTransition) {

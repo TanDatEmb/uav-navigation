@@ -46,7 +46,8 @@
 //                                    kImuRateTooHigh (once per epoch)
 //   "LioInputRejected"     frontend  EstimatorReason (rate-limited, value count), incl. kBackendBusy
 //   "LioResultDiscarded"   frontend  kStaleEpoch, kUnexpectedSequence
-//   "LioRestartRejected"   frontend  kRestartRejected: applies the backend's kRestartRejected result;
+//   "LioRestartRejected"   frontend  kRestartRejected: applies the backend's kRestartRejected result (the lifecycle
+//                                    then goes RESTARTING -> LOST, RESTART_REJECTED);
 //                                    kRestartAnswerStale (D33/O16): a kRestartSeeded whose time the output
 //                                    predictor buffer no longer covers is refused, never a rewind (values
 //                                    new_epoch, sensor_time_s; seed_age_s for a stale answer)

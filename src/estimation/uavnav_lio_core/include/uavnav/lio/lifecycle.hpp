@@ -44,7 +44,8 @@ enum class LioReason : std::uint8_t {
   kRestartSeeded,
   kMapReady,
   kCorrectionRejected,  // D31: a run of kScanGood results the output predictor did not apply
-  kReinitNotConfirmed   // D41, AR4: INITIALIZING (map ready) -> LOST, no confirmation within restart_dwell
+  kReinitNotConfirmed,  // D41, AR4: INITIALIZING (map ready) -> LOST, no confirmation within restart_dwell
+  kRestartRejected      // review T3 I2: RESTARTING -> LOST, the backend refused the seed
 };
 
 constexpr std::string_view to_string(LioState s) {
@@ -74,6 +75,7 @@ constexpr std::string_view to_string(LioReason r) {
     case LioReason::kMapReady: return "MAP_READY";
     case LioReason::kCorrectionRejected: return "CORRECTION_REJECTED";
     case LioReason::kReinitNotConfirmed: return "REINIT_NOT_CONFIRMED";
+    case LioReason::kRestartRejected: return "RESTART_REJECTED";
   }
   return "";
 }
@@ -98,6 +100,9 @@ static_assert(ReasonEnum<LioReason>);
 /// In LOST every scan kind but kScanEmpty is only "a non-empty scan arrived" (D41, AR4): the frontend applies no
 /// correction there (the registration against the frozen map is not read, critique §1), so a kScanGood in LOST is
 /// the backend's verdict, not an applied correction.
+///
+/// kRestartRejected (review T3 I2): the backend refused the restart seed (its kRestartRejected answer, or an answer
+/// without a snapshot). Not a late answer: a stale kRestartSeeded is refused by the frontend and never reaches here.
 struct LioEvent {
   enum class Kind : std::uint8_t {
     kScanGood,
@@ -106,7 +111,8 @@ struct LioEvent {
     kImuTick,
     kMapReady,
     kRestartSeeded,
-    kScanCorrectionRejected
+    kScanCorrectionRejected,
+    kRestartRejected
   } kind;
   /// IMU sample stamp, or for scan events the scan END time (what the §3.1 gap rule measures from).
   /// Must come from the range-checked converters (time::from_stamp<SensorTag>: non-negative and
@@ -158,6 +164,7 @@ inline constexpr std::array kLioTransitions = std::to_array<TransitionEdge>({
     {LioState::kDegraded, LioState::kLost, LioReason::kCovarianceExceeded},
     {LioState::kLost, LioState::kRestarting, LioReason::kStableDataDwell},
     {LioState::kRestarting, LioState::kInitializing, LioReason::kRestartSeeded},
+    {LioState::kRestarting, LioState::kLost, LioReason::kRestartRejected},
 });
 
 class LioLifecycle {
@@ -185,8 +192,15 @@ class LioLifecycle {
   ///
   /// A restart attempt answers itself (D41, AR4). In INITIALIZING the confirmation is timed from kMapReady: the
   /// first event with t - (that kMapReady) > restart_dwell goes to LOST (REINIT_NOT_CONFIRMED), checked before the
-  /// event itself counts. The same rule at boot; before kMapReady nothing is timed. So two attempts are at least
-  /// two dwells apart.
+  /// event itself counts. The same rule at boot; before kMapReady nothing is timed. A seed the backend refuses
+  /// (kRestartRejected) goes RESTARTING -> LOST (RESTART_REJECTED), so it too waits a full dwell before the next
+  /// attempt (review T3 I2). Two attempts that never confirm are therefore at least two dwells apart; an attempt that
+  /// confirms and is then lost again can come sooner: restart_dwell + (confirm_scans + 1) scan periods at the least
+  /// (about 2.6 s at beta), through TRACKING (review T3 m3).
+  ///
+  /// Both waits start at a scan END stamp (stable_since_, confirming_since_ = the kMapReady scan end) and are checked
+  /// on later events, mostly IMU ticks, so the wall of sensor time actually waited after the result arrives is shorter
+  /// by that result's latency (review T3 m9).
   ///
   /// Preconditions: every `e.t` was built by the range-checked converters (see LioEvent::t);
   /// a raw or garbage stamp can overflow the gap subtraction (undefined behaviour). "Newest scan"

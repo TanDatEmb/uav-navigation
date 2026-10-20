@@ -142,6 +142,17 @@ Result<LioConfig, ConfigError> load_lio_config(const config::ParamValues& values
                     ") must be at least kPredictorBufferSpan + 2 x kScanPeriod (" +
                     std::to_string(time::to_seconds(kGapLostMin)) + ")");
   }
+  // Review T3 I1: INITIALIZING -> LOST comes restart_dwell after kMapReady. A run of confirm_scans fresh scans takes
+  // (confirm_scans - 1) scan periods after the first one, and the last result may be gap_degraded old when it is
+  // applied (the freshness guard allows less). Below that bound TRACKING is unreachable, also at boot.
+  const time::Duration confirmation{static_cast<std::int64_t>(*confirm - 1U) * limits::kScanPeriod.ns +
+                                    gap_degraded->ns};
+  if (*restart_dwell < confirmation) {
+    return fail(Kind::kOutOfRange, "lifecycle_restart_dwell_s",
+                "lifecycle_restart_dwell_s (" + std::to_string(time::to_seconds(*restart_dwell)) +
+                    ") must be at least (lifecycle_confirm_scans - 1) x kScanPeriod + lifecycle_gap_degraded_s (" +
+                    std::to_string(time::to_seconds(confirmation)) + "): a confirmation must fit in the dwell");
+  }
   if (static_cast<std::uint64_t>(*degenerate) > static_cast<std::uint64_t>(*confirm) * 10U) {
     return fail(Kind::kOutOfRange, "lifecycle_degenerate_scans",
                 "lifecycle_degenerate_scans (" + std::to_string(*degenerate) +

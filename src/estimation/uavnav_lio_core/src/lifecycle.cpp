@@ -36,6 +36,7 @@ constexpr bool sigma_exceeded(double sigma, double limit) { return !(sigma >= 0.
 
 static_assert(is_listed(LioState::kLost, LioState::kRestarting, LioReason::kStableDataDwell));
 static_assert(is_listed(LioState::kInitializing, LioState::kLost, LioReason::kReinitNotConfirmed));
+static_assert(is_listed(LioState::kRestarting, LioState::kLost, LioReason::kRestartRejected));
 static_assert(!is_listed(LioState::kLost, LioState::kTracking, LioReason::kConfirmationReached));
 static_assert(is_listed(LioState::kTracking, LioState::kDegraded, LioReason::kCorrectionRejected));  // D31
 
@@ -153,6 +154,8 @@ Transition LioLifecycle::on_lost(const LioEvent& e) noexcept {
 
 Transition LioLifecycle::on_restarting(const LioEvent& e) noexcept {
   if (e.kind == LioEvent::Kind::kRestartSeeded) return go(LioState::kInitializing, LioReason::kRestartSeeded);
+  // Review T3 I2: a refused seed waits a full LOST dwell before the next attempt (one owner of the time budget).
+  if (e.kind == LioEvent::Kind::kRestartRejected) return go(LioState::kLost, LioReason::kRestartRejected);
   return unchanged();
 }
 

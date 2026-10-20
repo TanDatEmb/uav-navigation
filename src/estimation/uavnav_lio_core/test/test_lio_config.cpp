@@ -190,9 +190,10 @@ TEST(LioConfig, GapDegradedBelowTwoScanPeriodsIsRejected) {
 // D41, AR4: one tier (b) key for both waits of the recovery chain (LOST -> RESTARTING, INITIALIZING -> LOST),
 // bounds [0.5, 30] s inclusive, beta 2.0 s.
 TEST(LioConfig, RestartDwellLoadsAndIsRangeChecked) {
+  // confirm 2: the confirmation cross-check (RestartDwellShorterThanAConfirmationIsRejected) allows the lower bound.
   for (const auto& [text, expected] : {std::pair{"0.5", time::milliseconds(500)}, std::pair{"30", time::seconds(30)},
                                        std::pair{"7.25", time::milliseconds(7'250)}}) {
-    const auto r = Load(With("lifecycle_restart_dwell_s", text));
+    const auto r = Load(With({{"lifecycle_restart_dwell_s", text}, {"lifecycle_confirm_scans", "2"}}));
     ASSERT_TRUE(r.has_value()) << text << ": " << r.error().detail;
     EXPECT_EQ(r->lifecycle.restart_dwell, expected) << text;
   }
@@ -208,6 +209,25 @@ TEST(LioConfig, RestartDwellLoadsAndIsRangeChecked) {
     if (!line.starts_with("lifecycle_restart_dwell_s:")) missing += std::string(line) + "\n";
   }
   ExpectError(missing, Kind::kMissingKey, "lifecycle_restart_dwell_s");
+}
+
+// Review T3 I1: INITIALIZING -> LOST fires restart_dwell after kMapReady, so the dwell must leave room for a full run
+// of fresh confirming scans: (confirm_scans - 1) scan periods after the first, each result up to gap_degraded old.
+// Below that TRACKING is unreachable (also at boot). 0.65 s at beta.
+TEST(LioConfig, RestartDwellShorterThanAConfirmationIsRejected) {
+  for (const auto& [confirm, dwell] : {std::pair{"5", "0.5"}, std::pair{"5", "0.64"}, std::pair{"19", "2.0"},
+                                       std::pair{"20", "2.0"}}) {
+    const auto r = Load(With({{"lifecycle_confirm_scans", confirm}, {"lifecycle_restart_dwell_s", dwell}}));
+    ASSERT_FALSE(r.has_value()) << confirm << " scans, dwell " << dwell;
+    EXPECT_EQ(r.error().kind, Kind::kOutOfRange);
+    EXPECT_EQ(r.error().key, "lifecycle_restart_dwell_s");
+    EXPECT_NE(r.error().detail.find("lifecycle_confirm_scans"), std::string::npos) << r.error().detail;
+    EXPECT_NE(r.error().detail.find("lifecycle_gap_degraded_s"), std::string::npos) << r.error().detail;
+  }
+  for (const auto& [confirm, dwell] : {std::pair{"5", "0.65"}, std::pair{"18", "2.0"}, std::pair{"5", "2.0"}}) {
+    const auto r = Load(With({{"lifecycle_confirm_scans", confirm}, {"lifecycle_restart_dwell_s", dwell}}));
+    EXPECT_TRUE(r.has_value()) << confirm << " scans, dwell " << dwell << ": " << (r ? "" : r.error().detail);
+  }
 }
 
 TEST(LioConfig, DegeneracyKeysLoadAndAreRangeChecked) {
@@ -427,6 +447,7 @@ TEST(LioConfigHandBuilt, BoundsAreInclusive) {
   EXPECT_TRUE(load_lio_config(values).has_value());
   values["lifecycle_confirm_scans"] = 50.0;
   values["lifecycle_degenerate_scans"] = 50.0;
+  values["lifecycle_restart_dwell_s"] = 30.0;  // room for 50 confirming scans (I1 cross-check)
   EXPECT_TRUE(load_lio_config(values).has_value());
 }
 
